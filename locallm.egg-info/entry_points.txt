@@ -1,0 +1,3 @@
+[console_scripts]
+locaLLM = locallm.cli:main
+locallm = locallm.cli:main

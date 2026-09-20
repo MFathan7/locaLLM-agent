@@ -1,0 +1,152 @@
+Metadata-Version: 2.4
+Name: locallm
+Version: 0.1.0
+Summary: Local LLM CLI & Interactive TUI Platform for Ollama
+Author: locaLLM Team
+Requires-Python: >=3.9
+Description-Content-Type: text/markdown
+Requires-Dist: rich>=13.0.0
+Requires-Dist: questionary>=2.0.0
+Requires-Dist: httpx>=0.27.0
+Requires-Dist: python-telegram-bot>=20.0
+Requires-Dist: pydantic>=2.0.0
+Requires-Dist: psutil>=5.9.0
+
+# locaLLM
+
+A developer-first CLI and interactive Terminal User Interface (TUI) platform built in Python and natively integrated with **Ollama** and **LM Studio**. `locaLLM` transforms your local LLMs into turn-key capabilities: **Interactive AI Assistant**, **Telegram Bot**, **WhatsApp Bot**, **Autonomous ReAct Agent**, **Isolated Workspaces**, and **Hardware-Aware Model Manager**.
+
+---
+
+## Fitur Utama
+
+- **Terminal User Interface (TUI) Bersih**: Navigasi menu bertingkat menggunakan tombol panah keyboard (`Up`/`Down`/`Enter`) dengan tombol `Back` di setiap submenu dan tanpa karakter/ikon yang dapat merusak alignment console.
+- **Model Manager & Sizing Hardware**:
+  - Deteksi GPU (NVIDIA VRAM) dan memori sistem.
+  - Sizing kalkulator: memverifikasi apakah model lokal (misal `gemma4:12b`) muat di VRAM GPU atau membutuhkan RAM offload.
+  - Unduh (*pull*) model baru dari registry Ollama dengan indikator progress langsung di console.
+  - Dukungan multi-platform (aktif: Ollama, extensible: LM Studio).
+- **Interactive Assistant (`locaLLM chat`)**:
+  - Streaming respons Markdown secara real-time dengan syntax highlighting pada blok kode.
+  - Slash commands di dalam sesi chat: `/help`, `/model`, `/system`, `/clear`, `/back`, `/exit`.
+- **Integrations & Channels**:
+  - **Telegram (`locaLLM telegram`)**: Menjalankan model lokal sebagai bot Telegram 24/7 dengan multi-user memory dan whitelist otentikasi.
+  - **Agent & Automation (`locaLLM agent`)**: Mesin ReAct autonomous agent yang mampu menjalankan perintah shell (dengan konfirmasi keamanan), membaca file, menulis file, dan mengambil URL web.
+- **Eksekusi Langsung (`locaLLM run "<prompt>"`)**:
+  - Jalankan satu prompt langsung dari terminal untuk otomatisasi script atau piping.
+
+---
+
+## Struktur Menu TUI
+
+```text
+Main Menu:
+  [>] Assistant            (Sesi chat interaktif)
+  [>] Integrations         (Submenu kanal dan bot)
+       |-- Telegram        (Daemon bot Telegram)
+       |-- Agent & Auto    (ReAct Autonomous Agent)
+       \-- Back            (Kembali ke menu utama)
+  [>] Model Manager        (Kelola model & cek kompatibilitas VRAM)
+       |-- Ollama          (Daftar model, size, VRAM fit, pull)
+       |-- LM Studio       (Local server backend)
+       \-- Back            (Kembali ke menu utama)
+  [>] Settings             (Konfigurasi host, temperature, token)
+  [>] Exit
+```
+
+---
+
+## Instalasi & Persyaratan
+
+### Persyaratan:
+- Python 3.9+
+- Ollama service berjalan (default: `http://127.0.0.1:11434`)
+- GPU NVIDIA (opsional, untuk akselerasi VRAM)
+
+### Instalasi Dependensi:
+```powershell
+pip install -r requirements.txt
+```
+
+### Registrasi CLI Command (Opsional):
+Untuk menjalankan langsung dengan perintah `locaLLM` di terminal:
+```powershell
+pip install -e .
+```
+Atau Anda dapat menggunakan executable launcher yang sudah disediakan:
+```powershell
+.\locaLLM.bat <parameter>
+```
+
+---
+
+## Panduan Penggunaan CLI
+
+### 1. Masuk ke Interactive TUI (Menu Utama)
+Cukup jalankan tanpa argumen:
+```powershell
+locaLLM
+# atau
+python -m locallm
+```
+
+### 2. Membuka Interactive Assistant Langsung
+```powershell
+locaLLM chat
+```
+Bisa juga dengan memilih model tertentu secara langsung:
+```powershell
+locaLLM chat --model gemma4:12b
+```
+
+### 3. Menjalankan Telegram Bot
+```powershell
+locaLLM telegram
+```
+*Catatan: Jika bot token belum diisi, aplikasi akan menampilkan prompt input token dari `@BotFather` dan menyimpannya secara otomatis ke `~/.locallm/config.json`.*
+
+### 4. Menjalankan Autonomous Agent
+Mode interaktif:
+```powershell
+locaLLM agent
+```
+Mode langsung dengan tugas tertentu:
+```powershell
+locaLLM agent --task "Baca file README.md lalu buat ringkasan di summary.txt"
+```
+
+### 5. Eksekusi Prompt Sekali Jalan (Automation / Scripting)
+```powershell
+locaLLM run "Tulis fungsi Python untuk menghitung Fibonacci dengan memoization"
+```
+
+### 6. Melihat Daftar Model & Status VRAM
+```powershell
+locaLLM models
+```
+
+### 7. Cek Status Hardware & Koneksi
+```powershell
+locaLLM status
+```
+
+---
+
+## Konfigurasi
+
+Konfigurasi disimpan secara otomatis di:
+`~/.locallm/config.json` (Windows: `C:\Users\<username>\.locallm\config.json`).
+
+Format konfigurasi:
+```json
+{
+  "ollama_host": "http://127.0.0.1:11434",
+  "default_model": "gemma4:12b",
+  "temperature": 0.7,
+  "system_prompt": "You are locaLLM, a helpful, fast, and intelligent local AI assistant.",
+  "telegram_token": "YOUR_TELEGRAM_BOT_TOKEN",
+  "telegram_allowed_users": [],
+  "agent_auto_approve_commands": false
+}
+```
+Semua pengaturan di atas dapat diubah dengan mudah melalui menu `Settings` di dalam antarmuka TUI atau perintah `locaLLM config`.
