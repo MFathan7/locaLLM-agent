@@ -13,6 +13,7 @@ from locallm.config import (
     load_config,
     remove_custom_platform,
     save_config,
+    switch_active_backend,
     update_custom_platform,
 )
 from locallm.core.openai_client import OpenAIClient, get_inference_client
@@ -76,14 +77,39 @@ class TestCustomPlatforms(unittest.TestCase):
         self.assertEqual(updated.api_base, "http://127.0.0.1:9000/v1")
         self.assertEqual(updated.api_key, "new-key")
 
-        # Remove platform while active
+        # Remove platform while active and with platform-specific model selected
         config.active_backend = "vLLM"
+        config.default_model = "llama-3"
+        config.ollama_model = "gemma4:12b"
         save_config(config)
-        ok_rem, msg_rem = remove_custom_platform(config, "vLLM")
+        with patch("locallm.core.ollama_client.OllamaClient.is_connected", return_value=False):
+            ok_rem, msg_rem = remove_custom_platform(config, "vLLM")
         self.assertTrue(ok_rem)
         self.assertIsNone(get_custom_platform(config, "vLLM"))
-        # Verify fallback to ollama
+        # Verify fallback to ollama AND that model is no longer the deleted platform's model
         self.assertEqual(config.active_backend, "ollama")
+        self.assertEqual(config.default_model, "gemma4:12b")
+
+    def test_switch_active_backend_and_model_sync(self):
+        config = LocaLLMConfig(default_model="gemma4:12b", ollama_model="gemma4:12b")
+        vllm = CustomPlatformConfig(
+            name="vLLM",
+            api_base="http://127.0.0.1:8000/v1",
+            default_model="meta-llama-3-8b",
+        )
+        add_custom_platform(config, vllm)
+
+        # Switch to vLLM: active model should become vLLM's model
+        ok, msg = switch_active_backend(config, "vLLM")
+        self.assertTrue(ok)
+        self.assertEqual(config.active_backend, "vLLM")
+        self.assertEqual(config.default_model, "meta-llama-3-8b")
+
+        # Switch back to Ollama: active model should restore to Ollama's model
+        ok2, msg2 = switch_active_backend(config, "ollama")
+        self.assertTrue(ok2)
+        self.assertEqual(config.active_backend, "ollama")
+        self.assertEqual(config.default_model, "gemma4:12b")
 
     def test_legacy_lmstudio_migration(self):
         # Simulate legacy config with lmstudio_host and active_backend = lmstudio

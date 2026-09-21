@@ -9,10 +9,12 @@ from locallm.config import (
     get_custom_platform,
     remove_custom_platform,
     save_config,
+    switch_active_backend,
     update_custom_platform,
 )
 from locallm.core.service_manager import (
     is_custom_platform_reachable,
+    is_ollama_installed,
     is_ollama_running,
     start_ollama_service,
     stop_ollama_service,
@@ -49,7 +51,13 @@ def _manage_ollama_platform(config: LocaLLMConfig) -> None:
     """Ollama service control and endpoint configuration."""
     while True:
         running = is_ollama_running(config.ollama_host)
-        status_text = "[bold green]RUNNING[/]" if running else "[bold red]STOPPED[/]"
+        installed = is_ollama_installed()
+        if running:
+            status_text = "[bold green]RUNNING[/]"
+        elif not installed:
+            status_text = "[bold red]STOPPED (Not Installed in PATH)[/]"
+        else:
+            status_text = "[bold red]STOPPED[/]"
         is_active = (config.active_backend.strip().lower() == "ollama")
         active_text = "[bold green]ACTIVE BACKEND[/]" if is_active else "[dim]INACTIVE[/]"
 
@@ -77,9 +85,8 @@ def _manage_ollama_platform(config: LocaLLMConfig) -> None:
             break
 
         if action == "Set as Active Backend":
-            config.active_backend = "ollama"
-            save_config(config)
-            console.print("[success]Ollama set as active backend.[/]\n")
+            ok, msg = switch_active_backend(config, "ollama")
+            console.print(f"[success]{msg}[/]\n")
         elif action == "Start Server":
             ok, msg = start_ollama_service()
             _show_result(ok, msg)
@@ -132,9 +139,11 @@ def _manage_custom_platform(config: LocaLLMConfig, platform_name: str) -> None:
             break
 
         if action == "Set as Active Backend":
-            config.active_backend = platform.name
-            save_config(config)
-            console.print(f"[success]'{platform.name}' set as active backend.[/]\n")
+            ok, msg = switch_active_backend(config, platform.name)
+            if ok:
+                console.print(f"[success]{msg}[/]\n")
+            else:
+                console.print(f"[danger]{msg}[/]\n")
         elif action.startswith("Configure Endpoint"):
             new_url = questionary.text(
                 "Enter OpenAI-compatible API base URL:",
@@ -159,8 +168,11 @@ def _manage_custom_platform(config: LocaLLMConfig, platform_name: str) -> None:
                 style=QUESTIONARY_STYLE,
             ).ask()
             if confirm:
-                remove_custom_platform(config, platform.name)
-                console.print(f"[success]Platform '{platform.name}' removed successfully.[/]\n")
+                ok, msg = remove_custom_platform(config, platform.name)
+                if ok:
+                    console.print(f"[success]{msg}[/]\n")
+                else:
+                    console.print(f"[danger]{msg}[/]\n")
                 break
 
 
@@ -217,9 +229,8 @@ def _add_custom_platform_wizard(config: LocaLLMConfig) -> None:
             style=QUESTIONARY_STYLE,
         ).ask()
         if set_active:
-            config.active_backend = name
-            save_config(config)
-            console.print(f"[success]Active backend set to: {name}[/]\n")
+            ok_sw, msg_sw = switch_active_backend(config, name)
+            console.print(f"[success]{msg_sw}[/]\n")
     else:
         console.print(f"[danger]{msg}[/]\n")
 

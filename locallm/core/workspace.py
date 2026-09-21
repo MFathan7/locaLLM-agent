@@ -245,11 +245,106 @@ def load_workspace_context(name: str) -> str:
             combined_s = "\n\n".join(s_entries)
             sections.append(f"[Workspace Skills]\n{combined_s[:16000]}")
 
+    # 4. Project Rules & Context from Current Working Directory (CWD)
+    cwd = Path.cwd()
+    project_rules_files = ["AGENTS.md", "CLAUDE.md", "agent.md", "rules.md"]
+    for rf_name in project_rules_files:
+        rule_file = cwd / rf_name
+        if rule_file.is_file():
+            try:
+                rule_text = rule_file.read_text(encoding="utf-8", errors="replace").strip()
+                if rule_text:
+                    sections.append(f"[Project Architecture & Rules ({rf_name})]\n{rule_text[:12000]}")
+                    break
+            except Exception:
+                pass
+
+    # 5. Local Project Skills from CWD (.locallm/skills, .agents/skills, skills/)
+    for local_skill_path in [cwd / ".locallm" / "skills", cwd / ".agents" / "skills", cwd / "skills"]:
+        if local_skill_path.is_dir() and local_skill_path.resolve() != ws_path.resolve():
+            local_s_files = [f for f in local_skill_path.rglob("*") if f.is_file() and f.suffix.lower() in (".md", ".txt")]
+            if local_s_files:
+                local_s_entries: List[str] = []
+                for file in sorted(local_s_files, key=lambda p: str(p.relative_to(local_skill_path)).lower())[:10]:
+                    try:
+                        content = file.read_text(encoding="utf-8", errors="replace").strip()
+                        if content:
+                            rel_name = str(file.relative_to(local_skill_path)).replace("\\", "/")
+                            local_s_entries.append(f"--- Local Skill: {rel_name} ---\n{content[:3000]}")
+                    except Exception:
+                        continue
+                if local_s_entries:
+                    sections.append(f"[Local Project Skills]\n" + "\n\n".join(local_s_entries))
+                    break
+
     if not sections:
         return ""
 
     body = "\n\n".join(sections)
     return f"Active Workspace: '{clean_name}'\n{body}"
+
+
+def get_all_available_skills(workspace_name: Optional[str] = "default") -> List[Dict[str, str]]:
+    """Return list of all available skills across active workspace and current working directory."""
+    skills: List[Dict[str, str]] = []
+    seen_names = set()
+
+    clean_name = workspace_name.strip() if workspace_name else "default"
+    ws_skills_dir = get_workspace_path(clean_name) / "skills"
+    if ws_skills_dir.is_dir():
+        for file in sorted(ws_skills_dir.rglob("*")):
+            if file.is_file() and file.suffix.lower() in (".md", ".txt"):
+                skill_id = file.stem if file.name.lower() in ("skill.md", "readme.md") else file.name
+                if file.parent != ws_skills_dir and file.name.lower() in ("skill.md", "readme.md"):
+                    skill_id = file.parent.name
+                if skill_id.lower() not in seen_names:
+                    seen_names.add(skill_id.lower())
+                    try:
+                        first_lines = file.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                        desc = next((l.strip("#- ") for l in first_lines if l.strip() and not l.startswith("---")), "Workspace skill")
+                    except Exception:
+                        desc = "Workspace skill"
+                    skills.append({
+                        "name": skill_id,
+                        "source": f"workspace:{clean_name}",
+                        "path": str(file.resolve()),
+                        "description": desc[:160],
+                    })
+
+    cwd = Path.cwd()
+    for local_skill_path in [cwd / ".locallm" / "skills", cwd / ".agents" / "skills", cwd / "skills"]:
+        if local_skill_path.is_dir():
+            for file in sorted(local_skill_path.rglob("*")):
+                if file.is_file() and file.suffix.lower() in (".md", ".txt"):
+                    skill_id = file.stem if file.name.lower() in ("skill.md", "readme.md") else file.name
+                    if file.parent != local_skill_path and file.name.lower() in ("skill.md", "readme.md"):
+                        skill_id = file.parent.name
+                    if skill_id.lower() not in seen_names:
+                        seen_names.add(skill_id.lower())
+                        try:
+                            first_lines = file.read_text(encoding="utf-8", errors="replace").strip().splitlines()
+                            desc = next((l.strip("#- ") for l in first_lines if l.strip() and not l.startswith("---")), "Project skill")
+                        except Exception:
+                            desc = "Project skill"
+                        skills.append({
+                            "name": skill_id,
+                            "source": "local_project",
+                            "path": str(file.resolve()),
+                            "description": desc[:160],
+                        })
+    return skills
+
+
+def get_skill_content(skill_name: str, workspace_name: Optional[str] = "default") -> Optional[str]:
+    """Retrieve full text content for a skill by name from active workspace or project."""
+    clean_target = skill_name.strip().lower()
+    for s in get_all_available_skills(workspace_name):
+        if s["name"].lower() == clean_target or clean_target in s["name"].lower():
+            try:
+                return Path(s["path"]).read_text(encoding="utf-8", errors="replace")
+            except Exception:
+                return None
+    return None
 
 
 def sanitize_workspace_content(text: str) -> str:

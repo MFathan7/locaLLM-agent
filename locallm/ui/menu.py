@@ -3,7 +3,7 @@
 import sys
 import questionary
 from locallm.config import LocaLLMConfig
-from locallm.core.ollama_client import OllamaClient
+from locallm.core.openai_client import get_inference_client
 from locallm.modules.agent import run_agent_menu
 from locallm.modules.assistant import run_assistant
 from locallm.modules.models_manager import run_models_manager
@@ -15,17 +15,35 @@ from locallm.modules.workspace_manager import run_workspace_menu
 from locallm.ui.banner import render_banner
 from locallm.ui.chat_view import render_application_farewell
 from locallm.ui.theme import QUESTIONARY_STYLE, console
+from typing import Any, Optional
 
 
-def start_main_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
+def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Launch top-level interactive console menu loop."""
     while True:
         console.clear()
+        client = get_inference_client(config)
         render_banner(config, client)
 
-        choice = questionary.select(
-            "Main Menu:",
-            choices=[
+        service_ready = False
+        if client and hasattr(client, "is_connected"):
+            try:
+                service_ready = client.is_connected()
+            except Exception:
+                service_ready = False
+
+        if not service_ready:
+            console.print("[#bbbbbb]Notice: No active LLM service is currently online or configured.[/]")
+            console.print("[#bbbbbb]Please configure or start a service in [cyan]Services[/] to unlock full features.[/]\n")
+            menu_prompt = "Main Menu (Setup Required):"
+            menu_choices = [
+                "Services",
+                "Settings",
+                "Exit",
+            ]
+        else:
+            menu_prompt = "Main Menu:"
+            menu_choices = [
                 "Assistant",
                 "Workspaces",
                 "Integrations",
@@ -33,7 +51,11 @@ def start_main_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
                 "Services",
                 "Settings",
                 "Exit",
-            ],
+            ]
+
+        choice = questionary.select(
+            menu_prompt,
+            choices=menu_choices,
             style=QUESTIONARY_STYLE,
         ).ask()
 
@@ -60,10 +82,11 @@ def start_main_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
             run_settings(config)
 
 
-def _run_integrations_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
+def _run_integrations_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Submenu for integrations, channels, and autonomous runners."""
     while True:
         console.clear()
+        client = get_inference_client(config)
         render_banner(config, client)
 
         choice = questionary.select(

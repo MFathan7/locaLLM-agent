@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import httpx
 
 
@@ -23,6 +23,10 @@ def resolve_smart_path(raw_path: str) -> Path:
     clean = raw_path.strip().strip("'\"")
     expanded = os.path.expanduser(os.path.expandvars(clean))
     candidate = Path(expanded)
+
+    # If explicit absolute path (e.g. C:\..., /opt/...), resolve directly anywhere on system
+    if candidate.is_absolute():
+        return candidate.resolve()
 
     if candidate.exists():
         return candidate.resolve()
@@ -158,6 +162,72 @@ ASSISTANT_TOOLS: List[Dict[str, Any]] = [
                     "location": {
                         "type": "string",
                         "description": "City or location name",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "description": "Write or overwrite text content to a file anywhere on the system. Automatically creates parent directories if needed.",
+            "parameters": {
+                "type": "object",
+                "required": ["path", "content"],
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "File path to write (absolute path or relative path, e.g. 'C:/Users/.../config.py', 'downloads/project/main.py', or 'README.md')",
+                    },
+                    "content": {
+                        "type": "string",
+                        "description": "The exact text content to write into the file",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "create_directory",
+            "description": "Create a new directory/folder anywhere on the system, including any intermediate parent directories.",
+            "parameters": {
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": {
+                        "type": "string",
+                        "description": "Directory path to create (e.g. 'C:/Users/.../Bot Signal', 'downloads/new_project', or 'src/utils')",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "list_skills",
+            "description": "List all available agent skills and specialized instruction workflows in the workspace and project.",
+            "parameters": {
+                "type": "object",
+                "properties": {},
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "read_skill",
+            "description": "Read the complete instructions, rules, or cheatsheet of a specific skill by name.",
+            "parameters": {
+                "type": "object",
+                "required": ["skill_name"],
+                "properties": {
+                    "skill_name": {
+                        "type": "string",
+                        "description": "The exact name or identifier of the skill to read",
                     },
                 },
             },
@@ -328,8 +398,53 @@ WHATSAPP_TOOLS: List[Dict[str, Any]] = list(ASSISTANT_TOOLS) + [
 ]
 
 
-def execute_tool(name: str, arguments: Dict[str, Any]) -> str:
-    """Execute a requested tool and return a string observation."""
+def execute_tool(
+    name: str,
+    arguments: Dict[str, Any],
+    permission_policy: str = "always_allow",
+    interactive: bool = True,
+    session_state: Optional[Dict[str, Any]] = None,
+    workspace_name: Optional[str] = "default",
+) -> str:
+    """Execute a requested tool with permission policy and return a string observation."""
+    mutating_tools = {"write_file", "create_directory", "execute_command"}
+
+    if name in mutating_tools:
+        effective_policy = permission_policy.lower()
+        if session_state and "permission_override" in session_state:
+            effective_policy = session_state["permission_override"]
+
+        if effective_policy == "deny":
+            return f"[Permission Denied] Policy is set to 'deny'. Mutating action '{name}' was blocked."
+
+        if effective_policy == "ask" and interactive:
+            import questionary
+            from locallm.ui.theme import QUESTIONARY_STYLE, console
+
+            console.print(f"\n[bold yellow]✦ Permission Request:[/] Agent requests permission to execute [bold cyan]{name}[/]")
+            if name == "write_file":
+                console.print(f"  [#aaaaaa]Path:[/] [bold]{arguments.get('path', '')}[/]")
+            elif name == "create_directory":
+                console.print(f"  [#aaaaaa]Directory:[/] [bold]{arguments.get('path', '')}[/]")
+            elif name == "execute_command":
+                console.print(f"  [#aaaaaa]Command:[/] [bold]{arguments.get('command', '')}[/]")
+
+            ans = questionary.select(
+                f"Authorize agent to execute {name}?",
+                choices=[
+                    "Allow Once",
+                    "Always Allow (this session)",
+                    "Deny",
+                ],
+                style=QUESTIONARY_STYLE,
+            ).ask()
+
+            if ans == "Always Allow (this session)":
+                if session_state is not None:
+                    session_state["permission_override"] = "always_allow"
+            elif ans != "Allow Once":
+                return f"[Permission Denied] User rejected execution of '{name}'."
+
     if name == "get_current_time":
         now = datetime.now()
         tz_name = time.tzname[time.daylight] if time.daylight else time.tzname[0]
@@ -443,12 +558,56 @@ def execute_tool(name: str, arguments: Dict[str, Any]) -> str:
         if not loc:
             return "Error: Location is required."
         try:
-            with httpx.Client(timeout=4.0) as client:
-                res = client.get(f"https://wttr.in/{loc}?format=3")
+            with httpx.Client(timeout=8.0) as client:
+                res = client.get(f"https://wttr.in/{loc}?format=%l:+%C,+%t")
                 if res.status_code == 200:
-                    return res.text.strip()
-                return f"Unable to fetch weather (status {res.status_code})"
+                    text = res.text.replace("\u00b0", " deg ").strip()
+                    return text
         except Exception as exc:
             return f"Weather lookup error: {exc}"
+
+    elif name == "write_file":
+        path_str = arguments.get("path", "")
+        content = arguments.get("content", "")
+        if not path_str:
+            return "Error: File path is required."
+        file_path = resolve_smart_path(path_str)
+        try:
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(content, encoding="utf-8", errors="replace")
+            return f"Successfully wrote {len(content)} characters to '{file_path}'."
+        except Exception as exc:
+            return f"Error writing file '{file_path}': {exc}"
+
+    elif name == "create_directory":
+        path_str = arguments.get("path", "")
+        if not path_str:
+            return "Error: Directory path is required."
+        dir_path = resolve_smart_path(path_str)
+        try:
+            dir_path.mkdir(parents=True, exist_ok=True)
+            return f"Successfully created directory '{dir_path}'."
+        except Exception as exc:
+            return f"Error creating directory '{dir_path}': {exc}"
+
+    elif name == "list_skills":
+        from locallm.core.workspace import get_all_available_skills
+        skills = get_all_available_skills(workspace_name)
+        if not skills:
+            return "No custom agent skills found in active workspace or project."
+        lines = [f"Available Agent Skills ({len(skills)} total):"]
+        for s in skills:
+            lines.append(f"- {s['name']} [{s['source']}]: {s['description']}")
+        return "\n".join(lines)
+
+    elif name == "read_skill":
+        from locallm.core.workspace import get_skill_content
+        skill_name = arguments.get("skill_name", "")
+        if not skill_name:
+            return "Error: 'skill_name' parameter is required."
+        content = get_skill_content(skill_name, workspace_name)
+        if not content:
+            return f"Error: Skill '{skill_name}' not found."
+        return f"=== Skill Content for '{skill_name}' ===\n" + content[:6000]
 
     return f"Unknown tool: '{name}'"

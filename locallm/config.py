@@ -35,6 +35,10 @@ class LocaLLMConfig(BaseModel):
         default="http://127.0.0.1:11434",
         description="Ollama API base URL",
     )
+    ollama_model: str = Field(
+        default="gemma4:12b",
+        description="Saved default active model for Ollama",
+    )
     custom_platforms: List[CustomPlatformConfig] = Field(
         default_factory=list,
         description="User-configured custom OpenAI-compatible platforms",
@@ -83,6 +87,10 @@ class LocaLLMConfig(BaseModel):
         default=False,
         description="Whether autonomous agent runs commands without prompt",
     )
+    agent_permission_policy: str = Field(
+        default="ask",
+        description="Agent permission policy for mutating tools: 'always_allow', 'ask', 'deny'",
+    )
     active_workspace: str = Field(
         default="default",
         description="Currently active workspace identifier",
@@ -117,7 +125,22 @@ def load_config() -> LocaLLMConfig:
             if str(data.get("active_backend", "")).lower() == "lmstudio":
                 data["active_backend"] = "ollama"
             data.pop("lmstudio_host", None)
-            return LocaLLMConfig(**data)
+            if "ollama_model" not in data and "default_model" in data:
+                data["ollama_model"] = data["default_model"]
+            if "agent_permission_policy" not in data:
+                if data.get("agent_auto_approve_commands"):
+                    data["agent_permission_policy"] = "always_allow"
+                else:
+                    data["agent_permission_policy"] = "ask"
+            cfg = LocaLLMConfig(**data)
+            # Ensure active_backend is valid
+            if cfg.active_backend.lower() != "ollama":
+                plat = get_custom_platform(cfg, cfg.active_backend)
+                if not plat:
+                    cfg.active_backend = "ollama"
+                    cfg.default_model = cfg.ollama_model
+                    save_config(cfg)
+            return cfg
     except Exception:
         # Fallback to defaults on corruption
         return LocaLLMConfig()
@@ -156,21 +179,90 @@ def add_custom_platform(config: LocaLLMConfig, platform: CustomPlatformConfig) -
     return True, f"Platform '{clean_name}' added successfully."
 
 
+def switch_active_backend(config: LocaLLMConfig, backend_name: str) -> Tuple[bool, str]:
+    """Switch active inference backend and synchronize model selection per platform."""
+    target = backend_name.strip()
+    target_lower = target.lower()
+    curr_backend = config.active_backend.strip().lower()
+
+    # 1. Persist current active model to current backend before switching
+    if curr_backend == "ollama":
+        config.ollama_model = config.default_model
+    else:
+        curr_plat = get_custom_platform(config, curr_backend)
+        if curr_plat:
+            curr_plat.default_model = config.default_model
+
+    # 2. Switch to Ollama
+    if target_lower == "ollama":
+        config.active_backend = "ollama"
+        config.default_model = config.ollama_model or "gemma4:12b"
+        save_config(config)
+        return True, f"Active backend switched to: Ollama (Model: {config.default_model})"
+
+    # 3. Switch to Custom Platform
+    platform = get_custom_platform(config, target)
+    if not platform:
+        return False, f"Platform '{target}' not found."
+
+    config.active_backend = platform.name
+
+    # If platform already has a preferred model, use it
+    if platform.default_model and platform.default_model.strip():
+        config.default_model = platform.default_model.strip()
+    else:
+        # Discover first available model from platform if endpoint is reachable
+        try:
+            from locallm.core.openai_client import OpenAIClient
+            client = OpenAIClient(api_base=platform.api_base, api_key=platform.api_key)
+            if client.is_connected(max_cache_age=0.0):
+                models = client.list_models()
+                if models:
+                    first_id = models[0].get("id") or models[0].get("name", "")
+                    if first_id:
+                        platform.default_model = first_id
+                        config.default_model = first_id
+        except Exception:
+            pass
+
+    save_config(config)
+    return True, f"Active backend switched to: {platform.name} (Model: {config.default_model})"
+
+
 def remove_custom_platform(config: LocaLLMConfig, name: str) -> Tuple[bool, str]:
-    """Remove a custom platform configuration by name."""
+    """Remove a custom platform configuration by name, cleaning up model references."""
     clean_name = name.strip()
     existing = get_custom_platform(config, clean_name)
     if not existing:
         return False, f"Platform '{clean_name}' not found."
 
+    deleted_model = existing.default_model.strip()
+    was_active = (config.active_backend.strip().lower() == clean_name.lower())
+    had_model = (bool(deleted_model) and config.default_model.strip() == deleted_model)
+
     config.custom_platforms = [p for p in config.custom_platforms if p.name.strip().lower() != clean_name.lower()]
 
-    # If the active backend was this platform, fallback to ollama
-    if config.active_backend.strip().lower() == clean_name.lower():
+    # If the removed platform was active or its model was selected, fallback to Ollama cleanly
+    if was_active or had_model:
         config.active_backend = "ollama"
+        config.default_model = config.ollama_model or "gemma4:12b"
+        try:
+            from locallm.core.ollama_client import OllamaClient
+            ollama_client = OllamaClient(base_url=config.ollama_host)
+            if ollama_client.is_connected():
+                models = ollama_client.list_models()
+                model_names = [m.get("name") for m in models if m.get("name")]
+                if model_names and config.default_model not in model_names:
+                    config.default_model = model_names[0]
+                    config.ollama_model = model_names[0]
+        except Exception:
+            pass
 
     save_config(config)
-    return True, f"Platform '{clean_name}' removed successfully."
+    msg = f"Platform '{clean_name}' removed successfully."
+    if was_active or had_model:
+        msg += f" Fallback to Ollama with model '{config.default_model}'."
+    return True, msg
 
 
 def update_custom_platform(
@@ -192,6 +284,8 @@ def update_custom_platform(
         platform.api_key = api_key.strip()
     if default_model is not None:
         platform.default_model = default_model.strip()
+        if config.active_backend.strip().lower() == clean_name.lower():
+            config.default_model = platform.default_model
 
     save_config(config)
     return True, f"Platform '{clean_name}' updated successfully."

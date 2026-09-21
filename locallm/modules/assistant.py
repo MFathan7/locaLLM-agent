@@ -31,10 +31,20 @@ from locallm.ui.spinner import thinking_spinner
 from locallm.ui.theme import QUESTIONARY_STYLE, console
 
 
-def run_assistant(config: LocaLLMConfig, client: OllamaClient) -> None:
-    """Run interactive chat session with Ollama and native tool automation."""
+def run_assistant(config: LocaLLMConfig, client: Any) -> None:
+    """Run interactive chat session with active backend and native tool automation."""
     if not client.is_connected():
-        console.print(f"[danger]Error: Ollama service is not reachable at[/] {config.ollama_host}")
+        target_endpoint = (
+            config.ollama_host
+            if config.active_backend.lower() == "ollama"
+            else getattr(client, "api_base", "endpoint")
+        )
+        backend_title = (
+            "Ollama"
+            if config.active_backend.lower() == "ollama"
+            else config.active_backend
+        )
+        console.print(f"[danger]Error: {backend_title} service is not reachable at[/] {target_endpoint}")
         return
 
     features = client.get_model_features(config.default_model)
@@ -47,11 +57,14 @@ def run_assistant(config: LocaLLMConfig, client: OllamaClient) -> None:
         f"{config.system_prompt}\n"
         f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}.\n"
         "Capabilities & Direct Tool Access:\n"
-        "You have built-in function calling tools to interact directly with the local system: "
-        "'list_directory' and 'read_file' for files/folders, 'get_current_time', 'get_current_directory', "
-        "'execute_command', and 'fetch_web' for web pages/GitHub URLs.\n"
-        "When the user asks you to check, list, or read any files, folders (e.g. downloads, desktop), URLs, "
-        "or time, always invoke the appropriate tool instead of declining. Never say you cannot access files or are just an AI.\n"
+        "You have full authority and built-in function calling tools to interact directly with the local system: "
+        "'create_directory' to create directories anywhere on the filesystem, "
+        "'write_file' to write or create code, configuration, or documentation files anywhere on the filesystem, "
+        "'list_directory' and 'read_file' for inspecting files and folders, 'get_current_time', 'get_current_directory', "
+        "'execute_command', 'get_weather' for real-time weather and temperature, and 'fetch_web' for web pages/GitHub URLs.\n"
+        "When the user asks you to create files, write code files, construct a directory structure, check weather, "
+        "list or read files/folders, URLs, or time, always invoke the appropriate tools directly instead of declining. "
+        "Never say you cannot access files, cannot create files, or are just an AI.\n"
         "When tool results are returned, synthesize the answer directly without boilerplate greetings."
     )
 
@@ -88,15 +101,36 @@ def run_assistant(config: LocaLLMConfig, client: OllamaClient) -> None:
                     break
                 continue
 
+            # Resolve model: Auto Router vs static default model (multi-turn history aware)
+            active_model = config.default_model
+            if config.default_model.lower() == "auto":
+                from locallm.core.router import route_prompt
+                route_res = route_prompt(user_input, config, client, history=memory.history)
+                active_model = route_res.selected_model
+                console.print(
+                    f"[bold #00d7ff]✦ Auto Router:[/] [bold white]{active_model}[/] "
+                    f"[#aaaaaa]({route_res.reason})[/]"
+                )
+
             memory.add_user_message(user_input)
 
+            model_features = client.get_model_features(active_model) if hasattr(client, "get_model_features") else []
+            has_tools = "Tools" in model_features
+
             try:
-                _process_assistant_turn(config, client, memory, has_tools)
+                _process_assistant_turn(
+                    config,
+                    client,
+                    memory,
+                    has_tools,
+                    model_name=active_model,
+                    session_state=session_state,
+                )
                 save_workspace_session(
                     active_ws,
                     session_state["id"],
                     memory,
-                    metadata={"type": "assistant", "model": config.default_model},
+                    metadata={"type": "assistant", "model": active_model},
                 )
             except Exception as exc:
                 console.print(f"[danger]Generation error:[/] {exc}")
@@ -108,89 +142,114 @@ def run_assistant(config: LocaLLMConfig, client: OllamaClient) -> None:
 
 def _process_assistant_turn(
     config: LocaLLMConfig,
-    client: OllamaClient,
+    client: Any,
     memory: ConversationMemory,
     has_tools: bool,
+    model_name: Optional[str] = None,
+    session_state: Optional[Dict[str, Any]] = None,
 ) -> None:
-    """Process a chat turn with silent native tool calling and context usage telemetry."""
+    """Process an autonomous multi-step agent turn with native tool calling and context usage telemetry."""
     context_limit = getattr(config, "context_window", 8192)
     stats: Dict[str, Any] = {}
+    target_model = model_name or config.default_model
+    active_ws = getattr(config, "active_workspace", "default")
+    permission_policy = getattr(config, "agent_permission_policy", "ask")
+
+    MAX_TOOL_STEPS = 25
 
     if has_tools:
-        # Check if the model decides to invoke any built-in tool
-        turn_msg = None
-        with thinking_spinner("locaLLM is thinking..."):
-            try:
-                turn_msg = client.chat_turn(
-                    model=config.default_model,
-                    messages=memory.get_messages(),
-                    tools=ASSISTANT_TOOLS,
-                    temperature=config.temperature,
-                    num_ctx=context_limit,
-                    stats_out=stats,
-                )
-            except Exception:
-                turn_msg = None
+        step = 0
+        executed_any_tool = False
 
-        if turn_msg and turn_msg.get("tool_calls"):
-            # Execute all requested tools silently under the thinking spinner
-            tool_calls = turn_msg["tool_calls"]
-            memory.history.append(turn_msg)
+        while step < MAX_TOOL_STEPS:
+            step += 1
+            turn_msg = None
+            spinner_msg = "locaLLM is thinking..." if step == 1 else f"locaLLM is planning step {step}..."
+            with thinking_spinner(spinner_msg):
+                try:
+                    turn_msg = client.chat_turn(
+                        model=target_model,
+                        messages=memory.get_messages(),
+                        tools=ASSISTANT_TOOLS,
+                        temperature=config.temperature,
+                        num_ctx=context_limit,
+                        stats_out=stats,
+                    )
+                except Exception:
+                    turn_msg = None
 
-            with thinking_spinner("locaLLM is thinking..."):
-                for tc in tool_calls:
+            if not turn_msg:
+                break
+
+            tool_calls = turn_msg.get("tool_calls")
+            if tool_calls:
+                executed_any_tool = True
+                memory.history.append(turn_msg)
+
+                for idx, tc in enumerate(tool_calls):
                     func_name = tc.get("function", {}).get("name", "")
                     func_args = tc.get("function", {}).get("arguments", {})
+                    tc_id = tc.get("id") or f"call_{step}_{idx}"
                     if isinstance(func_args, str):
                         try:
                             func_args = json.loads(func_args)
                         except Exception:
                             func_args = {}
-                    obs = execute_tool(func_name, func_args)
-                    memory.history.append({"role": "tool", "content": obs})
 
-            # Stream final synthesized response using tool results with telemetry
-            stream_stats: Dict[str, Any] = {}
-            tokens = client.chat_stream(
-                model=config.default_model,
-                messages=memory.get_messages(),
-                temperature=config.temperature,
-                num_ctx=context_limit,
-                stats_out=stream_stats,
-            )
-            final_text = stream_assistant_response(tokens, stats=stream_stats, context_limit=context_limit)
+                    with thinking_spinner(f"locaLLM is executing {func_name}..."):
+                        obs = execute_tool(
+                            func_name,
+                            func_args,
+                            permission_policy=permission_policy,
+                            interactive=True,
+                            session_state=session_state,
+                            workspace_name=active_ws,
+                        )
 
-            # Robust fallback: if streaming yielded empty text, run non-streaming fallback
-            if not final_text or not final_text.strip():
-                with thinking_spinner("locaLLM is finalizing response..."):
-                    fallback_turn = client.chat_turn(
-                        model=config.default_model,
-                        messages=memory.get_messages(),
+                    memory.history.append({
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": obs,
+                    })
+
+                # Loop back: let LLM examine tool observations and plan next step or conclude
+                continue
+
+            # No tool calls: model returned final answer
+            content = turn_msg.get("content", "")
+            if content and content.strip():
+                print_assistant_response(content, stats=stats, context_limit=context_limit)
+                memory.add_assistant_message(content)
+                return
+            else:
+                # Empty content without tool calls: break to fallback
+                break
+
+        # If tools were executed but model finished with empty text, request a final completion summary
+        if executed_any_tool:
+            with thinking_spinner("locaLLM is summarizing actions..."):
+                try:
+                    summary_turn = client.chat_turn(
+                        model=target_model,
+                        messages=memory.get_messages() + [
+                            {"role": "user", "content": "All requested actions have been executed. Provide a clear summary of the completed tasks."}
+                        ],
                         temperature=config.temperature,
                         num_ctx=context_limit,
-                        stats_out=stream_stats,
+                        stats_out=stats,
                     )
-                content = fallback_turn.get("content", "")
-                if content and content.strip():
-                    print_assistant_response(content, stats=stream_stats, context_limit=context_limit)
-                    memory.add_assistant_message(content)
-                    return
-                else:
-                    console.print("[yellow]Notice: Model could not generate a response. Please rephrase or check folder path.[/]\n")
-                    return
-
-            memory.add_assistant_message(final_text)
-            return
-
-        elif turn_msg and turn_msg.get("content"):
-            print_assistant_response(turn_msg["content"], stats=stats, context_limit=context_limit)
-            memory.add_assistant_message(turn_msg["content"])
-            return
+                    content = summary_turn.get("content", "")
+                    if content and content.strip():
+                        print_assistant_response(content, stats=stats, context_limit=context_limit)
+                        memory.add_assistant_message(content)
+                        return
+                except Exception:
+                    pass
 
     # Direct token streaming fallback
     stream_stats: Dict[str, Any] = {}
     tokens = client.chat_stream(
-        model=config.default_model,
+        model=target_model,
         messages=memory.get_messages(),
         temperature=config.temperature,
         num_ctx=context_limit,
@@ -200,7 +259,7 @@ def _process_assistant_turn(
     if not response or not response.strip():
         with thinking_spinner("locaLLM is thinking..."):
             fallback_turn = client.chat_turn(
-                model=config.default_model,
+                model=target_model,
                 messages=memory.get_messages(),
                 temperature=config.temperature,
                 num_ctx=context_limit,
@@ -441,14 +500,18 @@ def _manage_sessions(
 
 def _show_session_stats(
     config: LocaLLMConfig,
-    client: OllamaClient,
+    client: Any,
     memory: ConversationMemory,
 ) -> None:
     """Display runtime session, model telemetry, and hardware metrics."""
     gpu = get_gpu_info()
-    info = client.get_model_info(config.default_model)
-    details = info.get("details", {})
-    features = client.get_model_features(config.default_model)
+    if config.default_model.lower() == "auto":
+        features = ["Auto Router (Dynamic Dispatch)"]
+        details = {"parameter_size": "Dynamic", "quantization_level": "Dynamic", "format": "Dynamic"}
+    else:
+        info = client.get_model_info(config.default_model) if hasattr(client, "get_model_info") else {}
+        details = info.get("details", {})
+        features = client.get_model_features(config.default_model) if hasattr(client, "get_model_features") else []
     ctx_limit = getattr(config, "context_window", 8192)
 
     table = Table(border_style="cyan", header_style="bold cyan")
@@ -469,8 +532,13 @@ def _show_session_stats(
     else:
         table.add_row("GPU Hardware", "CPU Mode (No GPU detected)")
 
+    target_endpoint = (
+        config.ollama_host
+        if config.active_backend.lower() == "ollama"
+        else getattr(client, "api_base", config.ollama_host)
+    )
     table.add_row("Conversation Turns", f"{len(memory.history)} messages in memory")
-    table.add_row("Inference Endpoint", config.ollama_host)
+    table.add_row("Inference Endpoint", target_endpoint)
     table.add_row("Sampling Temperature", str(config.temperature))
 
     console.print()
@@ -478,14 +546,20 @@ def _show_session_stats(
     console.print()
 
 
-def _switch_model(config: LocaLLMConfig, client: OllamaClient) -> None:
-    """Prompt user to select another local model."""
+def _switch_model(config: LocaLLMConfig, client: Any) -> None:
+    """Prompt user to select another active model."""
     models = client.list_models()
+    backend_title = (
+        "Ollama"
+        if config.active_backend.lower() == "ollama"
+        else config.active_backend
+    )
     if not models:
-        console.print("[warning]No local models found on Ollama server.[/]")
+        console.print(f"[warning]No models found on {backend_title} server.[/]")
         return
 
-    choices = [m["name"] for m in models]
+    choices = ["Auto (Smart Router)"] + [m.get("name") or m.get("id") for m in models]
+    choices = [c for c in choices if c]
     chosen = questionary.select(
         "Select active model:",
         choices=choices,
@@ -493,9 +567,19 @@ def _switch_model(config: LocaLLMConfig, client: OllamaClient) -> None:
     ).ask()
 
     if chosen:
-        config.default_model = chosen
+        if chosen == "Auto (Smart Router)":
+            config.default_model = "auto"
+        else:
+            config.default_model = chosen
+            if config.active_backend.lower() == "ollama":
+                config.ollama_model = chosen
+            else:
+                from locallm.config import get_custom_platform
+                platform = get_custom_platform(config, config.active_backend)
+                if platform:
+                    platform.default_model = chosen
         save_config(config)
-        print_system_info(f"Active model switched to: {chosen}")
+        console.print(f"[success]Active model switched to:[/] [bold cyan]{config.default_model}[/]")
 
 
 def _change_system_prompt(config: LocaLLMConfig, memory: ConversationMemory) -> None:

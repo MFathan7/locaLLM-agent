@@ -44,12 +44,17 @@ def render_banner(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     else:
         gpu_str = "CPU Mode (No GPU detected)"
 
-    features = (
-        client.get_model_features(config.default_model)
-        if (is_online and client and hasattr(client, "get_model_features"))
-        else []
-    )
-    features_str = ", ".join(features) if features else "Text Generation"
+    if config.default_model.lower() == "auto":
+        model_display = "[bold #00d7ff]Auto (Smart Router)[/]"
+        features_display = "[bold #00ff87]Dynamic Capability Dispatch[/]"
+    elif is_online and client and hasattr(client, "get_model_features"):
+        features = client.get_model_features(config.default_model)
+        features_str = ", ".join(features) if features else "Text Generation"
+        features_display = f"[bold green]{features_str}[/]"
+        model_display = f"[bold cyan]{config.default_model}[/]"
+    else:
+        features_display = "[#aaaaaa]None (Service Offline)[/]"
+        model_display = f"[dim]{config.default_model}[/] [dim red](Offline)[/]"
 
     grid = Table.grid(expand=True, padding=(0, 2))
     grid.add_column(justify="left", ratio=1)
@@ -60,8 +65,8 @@ def render_banner(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
         f"[dim]Endpoint:[/] [cyan]{endpoint}[/]",
     )
     grid.add_row(
-        f"[dim]Active Model:[/] [bold cyan]{config.default_model}[/]",
-        f"[dim]Model Features:[/] [bold green]{features_str}[/]",
+        f"[dim]Active Model:[/] {model_display}",
+        f"[dim]Model Features:[/] {features_display}",
     )
     active_ws = getattr(config, "active_workspace", "default")
     grid.add_row(

@@ -1,7 +1,7 @@
 """HTTP client for Ollama API communication."""
 
 import json
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple, Union
 import httpx
 
 
@@ -123,6 +123,72 @@ class OllamaClient:
                 # If architecture length is very large, cap standard local window to 32768
                 return min(v, 32768) if v > 32768 else v
         return default
+
+    def get_model_architecture_info(self, model_name: str) -> Dict[str, Any]:
+        """Extract model architectural parameters (layers, kv_heads, head_dim, context_length) from /api/show."""
+        info = self.get_model_info(model_name)
+        model_info = info.get("model_info", {})
+
+        # 1. Layers (block_count)
+        layers: Optional[int] = None
+        for k, v in model_info.items():
+            if k.endswith(".block_count") and isinstance(v, int) and "vision" not in k:
+                layers = v
+                break
+
+        # 2. KV Heads (head_count_kv or head_count)
+        kv_heads: Optional[Union[int, List[int]]] = None
+        for k, v in model_info.items():
+            if k.endswith(".attention.head_count_kv") and "vision" not in k:
+                kv_heads = v
+                break
+        if kv_heads is None:
+            for k, v in model_info.items():
+                if k.endswith(".attention.head_count") and "vision" not in k and isinstance(v, int):
+                    kv_heads = v
+                    break
+
+        # 3. Head Dim (key_length or embedding_length // head_count)
+        head_dim: Optional[int] = None
+        for k, v in model_info.items():
+            if (k.endswith(".attention.key_length") or k.endswith(".attention.head_dimension")) and isinstance(v, int):
+                head_dim = v
+                break
+        if head_dim is None:
+            emb_len = None
+            head_cnt = None
+            for k, v in model_info.items():
+                if k.endswith(".embedding_length") and isinstance(v, int) and "vision" not in k:
+                    emb_len = v
+                if k.endswith(".attention.head_count") and isinstance(v, int) and "vision" not in k:
+                    head_cnt = v
+            if emb_len and head_cnt and head_cnt > 0:
+                head_dim = emb_len // head_cnt
+
+        ctx_len = self.get_model_context_length(model_name, default=8192)
+
+        # 4. Sliding Window Attention (SWA) parameters (e.g. Gemma, Mistral)
+        sliding_window: Optional[int] = None
+        swa_pattern: Optional[List[bool]] = None
+        head_dim_swa: Optional[int] = None
+
+        for k, v in model_info.items():
+            if k.endswith(".attention.sliding_window") and isinstance(v, int):
+                sliding_window = v
+            elif k.endswith(".attention.sliding_window_pattern") and isinstance(v, list):
+                swa_pattern = [bool(x) for x in v]
+            elif k.endswith(".attention.key_length_swa") and isinstance(v, int):
+                head_dim_swa = v
+
+        return {
+            "layers": layers,
+            "kv_heads": kv_heads,
+            "head_dim": head_dim,
+            "context_length": ctx_len,
+            "sliding_window": sliding_window,
+            "swa_pattern": swa_pattern,
+            "head_dim_swa": head_dim_swa,
+        }
 
     def chat_turn(
         self,
@@ -269,7 +335,7 @@ class OllamaClient:
             return 0
 
         loaded = self.get_loaded_models()
-        if not loaded and fallback_model:
+        if not loaded and fallback_model and fallback_model.lower() != "auto":
             loaded = [fallback_model]
 
         unloaded_count = 0
@@ -277,4 +343,24 @@ class OllamaClient:
             if self.unload_model(model):
                 unloaded_count += 1
         return unloaded_count
+
+    def delete_model(self, model_name: str) -> Tuple[bool, str]:
+        """Delete a model from local Ollama storage and unload from memory."""
+        clean_name = model_name.strip()
+        if not clean_name:
+            return False, "Model name cannot be empty."
+
+        try:
+            # First unload from VRAM if loaded
+            self.unload_model(clean_name)
+            with httpx.Client(base_url=self.base_url, timeout=10.0) as client:
+                res = client.request("DELETE", "/api/delete", json={"name": clean_name})
+                if res.status_code == 200:
+                    return True, f"Model '{clean_name}' deleted successfully."
+                elif res.status_code == 404:
+                    return False, f"Model '{clean_name}' not found on Ollama server."
+                else:
+                    return False, f"Failed to delete model '{clean_name}': {res.text}"
+        except Exception as exc:
+            return False, f"Network/server error deleting model '{clean_name}': {exc}"
 

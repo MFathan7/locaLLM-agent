@@ -3,7 +3,7 @@
 import shutil
 import subprocess
 import time
-from typing import NamedTuple, Optional, Tuple
+from typing import Any, List, NamedTuple, Optional, Tuple, Union
 import psutil
 
 _cached_gpu_info: Optional["GPUInfo"] = None
@@ -89,29 +89,201 @@ def get_system_resources() -> SystemResources:
     )
 
 
-def check_vram_compatibility(model_size_bytes: int) -> Tuple[bool, str]:
-    """Determine if a model size fits comfortably in available VRAM.
+class VRAMSizingResult(NamedTuple):
+    """Container for detailed VRAM breakdown and model compatibility."""
+
+    model_weights_gb: float
+    kv_cache_gb: float
+    cuda_overhead_gb: float
+    total_vram_gb: float
+    usable_vram_gb: float
+    headroom_gb: float
+    is_fit: bool
+    status: str
+    status_message: str
+    max_context_tokens: int
+    context_tokens: int
+    bytes_per_token: int
+
+
+_DEFAULT_GPU_SENTINEL = object()
+
+
+def calculate_vram_breakdown(
+    model_size_bytes: int,
+    context_tokens: int = 8192,
+    layers: Optional[int] = None,
+    kv_heads: Optional[Union[int, List[int]]] = None,
+    head_dim: Optional[int] = None,
+    precision_bytes: int = 2,
+    cuda_overhead_gb: float = 0.6,
+    gpu_info: Any = _DEFAULT_GPU_SENTINEL,
+    sliding_window: Optional[int] = None,
+    swa_pattern: Optional[List[bool]] = None,
+    head_dim_swa: Optional[int] = None,
+) -> VRAMSizingResult:
+    """Calculate exact KV cache, total inference VRAM, headroom, and max context tokens.
+
+    Supports GQA and Sliding Window Attention (SWA) architecture scaling.
+    """
+    gpu = get_gpu_info() if gpu_info is _DEFAULT_GPU_SENTINEL else gpu_info
+    model_weights_gb = round(model_size_bytes / (1024**3), 3)
+
+    # Resolve architecture parameters (with defensive heuristic fallbacks if missing)
+    if layers is None or layers <= 0:
+        if model_weights_gb <= 4.0:
+            layers = 28
+        elif model_weights_gb <= 9.0:
+            layers = 32
+        elif model_weights_gb <= 16.0:
+            layers = 40
+        else:
+            layers = 64
+
+    if head_dim is None or head_dim <= 0:
+        head_dim = 128
+
+    # Calculate total channels and KV cache bytes (SWA-aware)
+    if swa_pattern and isinstance(kv_heads, list) and len(kv_heads) == len(swa_pattern):
+        window_size = sliding_window or 1024
+        total_kv_bytes = 0
+        swa_fixed_bytes = 0
+        full_bytes_per_token = 0
+
+        for i, h in enumerate(kv_heads):
+            is_swa = bool(swa_pattern[i])
+            dim = head_dim_swa if (is_swa and head_dim_swa) else head_dim
+            if is_swa:
+                layer_tokens = min(context_tokens, window_size)
+                total_kv_bytes += 2 * h * dim * max(1, precision_bytes) * layer_tokens
+                swa_fixed_bytes += 2 * h * dim * max(1, precision_bytes) * window_size
+            else:
+                total_kv_bytes += 2 * h * dim * max(1, precision_bytes) * context_tokens
+                full_bytes_per_token += 2 * h * dim * max(1, precision_bytes)
+
+        kv_cache_bytes = total_kv_bytes
+        bytes_per_token = (
+            int(total_kv_bytes // max(1, context_tokens))
+            if context_tokens > 0
+            else full_bytes_per_token
+        )
+    else:
+        if isinstance(kv_heads, list) and len(kv_heads) > 0:
+            total_channels = sum(h for h in kv_heads if isinstance(h, int)) * head_dim
+        else:
+            if kv_heads is None or (isinstance(kv_heads, int) and kv_heads <= 0):
+                kv_heads = 8  # Standard modern GQA head count
+            total_channels = layers * kv_heads * head_dim
+
+        bytes_per_token = 2 * total_channels * max(1, precision_bytes)
+        kv_cache_bytes = bytes_per_token * max(0, context_tokens)
+        swa_fixed_bytes = 0
+        full_bytes_per_token = bytes_per_token
+
+    kv_cache_gb = round(kv_cache_bytes / (1024**3), 3)
+    total_vram_gb = round(model_weights_gb + kv_cache_gb + cuda_overhead_gb, 3)
+
+    if not gpu:
+        return VRAMSizingResult(
+            model_weights_gb=model_weights_gb,
+            kv_cache_gb=kv_cache_gb,
+            cuda_overhead_gb=cuda_overhead_gb,
+            total_vram_gb=total_vram_gb,
+            usable_vram_gb=0.0,
+            headroom_gb=-total_vram_gb,
+            is_fit=False,
+            status="CPU MODE",
+            status_message=f"No GPU detected (CPU mode, ~{total_vram_gb:.1f} GB RAM)",
+            max_context_tokens=0,
+            context_tokens=context_tokens,
+            bytes_per_token=bytes_per_token,
+        )
+
+    usable_vram_gb = round(gpu.free_vram_mb / 1024, 3)
+    total_gpu_gb = round(gpu.total_vram_mb / 1024, 3)
+    headroom_gb = round(usable_vram_gb - total_vram_gb, 3)
+
+    # Max context tokens
+    max_kv_allowed_gb = usable_vram_gb - model_weights_gb - cuda_overhead_gb
+    if max_kv_allowed_gb > 0:
+        max_kv_allowed_bytes = max_kv_allowed_gb * (1024**3)
+        if swa_pattern and full_bytes_per_token > 0:
+            rem_bytes = max_kv_allowed_bytes - swa_fixed_bytes
+            if rem_bytes > 0:
+                max_context_tokens = int(rem_bytes // full_bytes_per_token)
+            else:
+                max_context_tokens = int(max_kv_allowed_bytes // max(1, bytes_per_token))
+        elif bytes_per_token > 0:
+            max_context_tokens = int(max_kv_allowed_bytes // bytes_per_token)
+        else:
+            max_context_tokens = 0
+    else:
+        max_context_tokens = 0
+
+    if total_vram_gb <= usable_vram_gb:
+        is_fit = True
+        status = "100% GPU"
+        status_message = (
+            f"FIT (100% GPU, +{headroom_gb:.1f} GB Free, max ~{max_context_tokens:,} ctx)"
+        )
+    elif total_vram_gb <= total_gpu_gb:
+        is_fit = True
+        status = "FIT (RELOAD)"
+        status_message = (
+            f"FIT (Fits Total VRAM: {total_vram_gb:.1f} GB <= {total_gpu_gb:.1f} GB Total)"
+        )
+    else:
+        is_fit = False
+        status = "SPILLOVER"
+        status_message = (
+            f"NOT FIT (SPILLOVER: Need {total_vram_gb:.1f} GB > {usable_vram_gb:.1f} GB Free, offload needed)"
+        )
+
+    return VRAMSizingResult(
+        model_weights_gb=model_weights_gb,
+        kv_cache_gb=kv_cache_gb,
+        cuda_overhead_gb=cuda_overhead_gb,
+        total_vram_gb=total_vram_gb,
+        usable_vram_gb=usable_vram_gb,
+        headroom_gb=headroom_gb,
+        is_fit=is_fit,
+        status=status,
+        status_message=status_message,
+        max_context_tokens=max_context_tokens,
+        context_tokens=context_tokens,
+        bytes_per_token=bytes_per_token,
+    )
+
+
+def check_vram_compatibility(
+    model_size_bytes: int,
+    context_tokens: int = 8192,
+    layers: Optional[int] = None,
+    kv_heads: Optional[Union[int, List[int]]] = None,
+    head_dim: Optional[int] = None,
+    precision_bytes: int = 2,
+    cuda_overhead_gb: float = 0.6,
+    sliding_window: Optional[int] = None,
+    swa_pattern: Optional[List[bool]] = None,
+    head_dim_swa: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """Determine if a model size and KV cache fit comfortably in available VRAM.
+
+    Backwards-compatible wrapper around calculate_vram_breakdown.
 
     Returns:
         Tuple[bool, str]: (is_compatible, status_message)
     """
-    gpu = get_gpu_info()
-    model_mb = model_size_bytes / (1024 * 1024)
-    model_gb = model_mb / 1024
-
-    if not gpu:
-        return False, f"No GPU detected (CPU mode, ~{model_gb:.1f} GB RAM)"
-
-    # User formula: Required VRAM = Model Size + 2 GB (KV Cache & context overhead)
-    buffer_gb = 2.0
-    required_gb = model_gb + buffer_gb
-    total_gb = gpu.total_vram_mb / 1024
-    free_gb = gpu.free_vram_mb / 1024
-
-    if required_gb <= free_gb:
-        return True, f"FIT (Free VRAM OK: {required_gb:.1f} GB <= {free_gb:.1f} GB Free)"
-
-    if required_gb <= total_gb:
-        return True, f"FIT (Fits Total VRAM: {required_gb:.1f} GB <= {total_gb:.1f} GB Total)"
-
-    return False, f"NOT FIT (Exceeds: {required_gb:.1f} GB > {total_gb:.1f} GB, offload needed)"
+    res = calculate_vram_breakdown(
+        model_size_bytes=model_size_bytes,
+        context_tokens=context_tokens,
+        layers=layers,
+        kv_heads=kv_heads,
+        head_dim=head_dim,
+        precision_bytes=precision_bytes,
+        cuda_overhead_gb=cuda_overhead_gb,
+        sliding_window=sliding_window,
+        swa_pattern=swa_pattern,
+        head_dim_swa=head_dim_swa,
+    )
+    return res.is_fit, res.status_message

@@ -117,6 +117,12 @@ class OpenAIClient:
                     "tool_call_id": msg.get("tool_call_id", "tool_call_1"),
                     "content": str(content),
                 })
+            elif role == "assistant" and msg.get("tool_calls"):
+                converted.append({
+                    "role": "assistant",
+                    "content": str(content) if content else None,
+                    "tool_calls": msg["tool_calls"],
+                })
             else:
                 converted.append({"role": role, "content": str(content)})
         return converted
@@ -249,6 +255,36 @@ class OpenAIClient:
     def unload_all_models(self, fallback_model: Optional[str] = None) -> int:
         """No-op for standard OpenAI endpoints."""
         return 0
+
+    def delete_model(self, model_name: str) -> Tuple[bool, str]:
+        """Delete a model from the OpenAI-compatible platform endpoint if supported."""
+        clean_name = model_name.strip()
+        if not clean_name:
+            return False, "Model name cannot be empty."
+
+        try:
+            res = self.client.models.delete(clean_name)
+            deleted = getattr(res, "deleted", True)
+            if deleted:
+                return True, f"Model '{clean_name}' deleted successfully."
+            return False, f"Endpoint responded without confirming deletion: {res}"
+        except Exception as exc:
+            # Fallback direct HTTP DELETE request if SDK method fails or backend requires custom handling
+            try:
+                headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key != "not-needed" else {}
+                url = f"{self.api_base}/models/{clean_name}"
+                with httpx.Client(timeout=10.0, headers=headers) as http_client:
+                    r = http_client.delete(url)
+                    if r.status_code in (200, 204):
+                        return True, f"Model '{clean_name}' deleted successfully."
+                    elif r.status_code == 405:
+                        return False, f"Platform at '{self.api_base}' does not support deleting models (Method Not Allowed)."
+                    elif r.status_code == 404:
+                        return False, f"Model '{clean_name}' not found on platform."
+                    else:
+                        return False, f"Platform failed to delete model '{clean_name}': {r.text or r.status_code}"
+            except Exception:
+                return False, f"Platform does not support model deletion: {exc}"
 
 
 def get_inference_client(config: LocaLLMConfig) -> Union[OllamaClient, OpenAIClient]:

@@ -451,11 +451,16 @@ async def _process_and_reply(
         if raw_text in ("stats", "/stats", "context", "/context", "telemetry"):
             limit = getattr(config, "context_window", 8192)
             usage = session.get_context_usage(default_limit=limit)
-            features = client.get_model_features(config.default_model)
+            active_name = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
+            features = (
+                client.get_model_features(config.default_model)
+                if config.default_model.lower() != "auto"
+                else ["Dynamic Capability Dispatch"]
+            )
             feat_str = ", ".join(features) if features else "Text Generation"
             stats_msg = (
                 "<b>locaLLM Context & Telemetry</b>\n\n"
-                f"• <b>Active Model:</b> <code>{html.escape(config.default_model)}</code> ({feat_str})\n"
+                f"• <b>Active Model:</b> <code>{html.escape(active_name)}</code> ({feat_str})\n"
                 f"• <b>Context Usage:</b> <code>{usage['total_tokens']:,} / {usage['limit']:,} tokens</code> ({usage['percentage']:.1f}%)\n"
                 f"• <b>Speed:</b> <code>{usage['tps']:.1f} tok/s</code>\n"
                 f"• <b>Workspace:</b> <code>{html.escape(active_ws)}</code>\n"
@@ -465,53 +470,89 @@ async def _process_and_reply(
             await update.message.reply_text(stats_msg, parse_mode="HTML")
             return
 
-    features = client.get_model_features(config.default_model)
+    target_model = config.default_model
+    if config.default_model.lower() == "auto":
+        from locallm.core.router import route_prompt
+        user_prompt = update.message.text or update.message.caption or ""
+        has_photo = bool(update.message.photo)
+        route = route_prompt(user_prompt, config, client, has_image=has_photo, history=session.history)
+        target_model = route.selected_model
+        console.print(f"[dim cyan][Telegram Auto Router][/] Dispatched to: {target_model} ({route.reason})")
+
+    features = client.get_model_features(target_model)
     has_tools = "Tools" in features
     context_limit = getattr(config, "context_window", 8192)
     stats: Dict[str, Any] = {}
 
     try:
-        turn_msg = await asyncio.to_thread(
-            client.chat_turn,
-            model=config.default_model,
-            messages=session.get_messages(),
-            tools=TELEGRAM_TOOLS if has_tools else None,
-            temperature=config.temperature,
-            num_ctx=context_limit,
-            stats_out=stats,
-        )
+        MAX_TELEGRAM_TOOL_STEPS = 15
+        step = 0
+        response_text = ""
+        tools_schema = TELEGRAM_TOOLS if has_tools else None
 
-        if turn_msg and turn_msg.get("tool_calls"):
-            tool_calls = turn_msg["tool_calls"]
-            session.history.append(turn_msg)
-
-            for tc in tool_calls:
-                func_name = tc.get("function", {}).get("name", "")
-                func_args = tc.get("function", {}).get("arguments", {})
-                if isinstance(func_args, str):
-                    try:
-                        func_args = json.loads(func_args)
-                    except Exception:
-                        func_args = {}
-                console.print(f"[dim cyan][Telegram Tool][/] Executing: {func_name}({func_args})")
-                if func_name.startswith("telegram_"):
-                    obs = await _execute_telegram_tool(func_name, func_args, update)
-                else:
-                    obs = execute_tool(func_name, func_args)
-                session.history.append({"role": "tool", "content": obs})
-
+        while step < MAX_TELEGRAM_TOOL_STEPS:
+            step += 1
             await update.message.chat.send_action("typing")
-            synthesized = await asyncio.to_thread(
+            turn_msg = await asyncio.to_thread(
                 client.chat_turn,
-                model=config.default_model,
+                model=target_model,
                 messages=session.get_messages(),
+                tools=tools_schema,
                 temperature=config.temperature,
                 num_ctx=context_limit,
                 stats_out=stats,
             )
-            response_text = synthesized.get("content", "")
-        else:
-            response_text = turn_msg.get("content", "") if turn_msg else ""
+
+            if not turn_msg:
+                break
+
+            tool_calls = turn_msg.get("tool_calls")
+            if tool_calls:
+                session.history.append(turn_msg)
+
+                for idx, tc in enumerate(tool_calls):
+                    func_name = tc.get("function", {}).get("name", "")
+                    func_args = tc.get("function", {}).get("arguments", {})
+                    tc_id = tc.get("id") or f"call_{step}_{idx}"
+                    if isinstance(func_args, str):
+                        try:
+                            func_args = json.loads(func_args)
+                        except Exception:
+                            func_args = {}
+                    console.print(f"[dim cyan][Telegram Tool][/] Executing: {func_name}({func_args})")
+                    if func_name.startswith("telegram_"):
+                        obs = await _execute_telegram_tool(func_name, func_args, update)
+                    else:
+                        obs = execute_tool(
+                            func_name,
+                            func_args,
+                            permission_policy=config.agent_permission_policy,
+                            interactive=False,
+                            workspace_name=active_ws,
+                        )
+                    session.history.append({"role": "tool", "tool_call_id": tc_id, "content": obs})
+                continue
+
+            content = turn_msg.get("content", "")
+            if content and content.strip():
+                response_text = content
+                break
+            else:
+                break
+
+        if not response_text and step > 1:
+            await update.message.chat.send_action("typing")
+            summary_turn = await asyncio.to_thread(
+                client.chat_turn,
+                model=target_model,
+                messages=session.get_messages() + [
+                    {"role": "user", "content": "All requested actions have been executed. Provide a clear summary of the completed tasks."}
+                ],
+                temperature=config.temperature,
+                num_ctx=context_limit,
+                stats_out=stats,
+            )
+            response_text = summary_turn.get("content", "")
 
         if not response_text or not response_text.strip():
             response_text = "(Model did not produce any text response. Please try rephrasing.)"
@@ -528,7 +569,7 @@ async def _process_and_reply(
                 "type": "telegram",
                 "user_id": user_id,
                 "user_name": user_name,
-                "model": config.default_model,
+                "model": target_model,
             },
         )
 
@@ -580,11 +621,16 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
 
     async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         user = update.effective_user
-        features = client.get_model_features(config.default_model)
+        active_model_name = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
+        features = (
+            client.get_model_features(config.default_model)
+            if config.default_model.lower() != "auto"
+            else ["Dynamic Capability Dispatch"]
+        )
         feat_str = ", ".join(features) if features else "Text Generation"
         welcome_msg = (
             f"Hello {user.first_name if user else 'there'}!\n\n"
-            f"Powered by local model: <code>{html.escape(config.default_model)}</code>\n"
+            f"Powered by local model: <code>{html.escape(active_model_name)}</code>\n"
             f"Capabilities: <code>{html.escape(feat_str)}</code>\n\n"
             "<b>Commands & Keywords:</b>\n"
             "• <code>/new</code> - Start a fresh session\n"
@@ -632,10 +678,15 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
 
     async def model_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if update.message:
-            features = client.get_model_features(config.default_model)
+            active_model_name = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
+            features = (
+                client.get_model_features(config.default_model)
+                if config.default_model.lower() != "auto"
+                else ["Dynamic Capability Dispatch"]
+            )
             feat_str = ", ".join(features) if features else "Text Generation"
             await update.message.reply_text(
-                f"Current local model: <code>{html.escape(config.default_model)}</code>\n"
+                f"Current local model: <code>{html.escape(active_model_name)}</code>\n"
                 f"Capabilities: <code>{html.escape(feat_str)}</code>",
                 parse_mode="HTML",
             )

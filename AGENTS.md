@@ -1,48 +1,33 @@
-# locaLLM Development & Architectural Rules for Antigravity AI Assistant
+# locaLLM Architectural & Development Rules
 
-This document defines the architectural standards, Terminal User Interface (TUI) design guidelines, menu governance, and technical specifications that must be strictly followed when developing **locaLLM**. All rules below are synthesized directly from user evaluations, reviews, and design requirements.
-
----
-
-## 1. Core Principles & Philosophy
-1. **Developer-First Local LLM Platform**: `locaLLM` functions as a fast, autonomous local AI workspace powered by local backends (Ollama and OpenAI-compatible custom platforms).
-2. **Deterministic & Manual Server Control**: Never auto-spawn background server daemons silently. Daemon lifecycles must remain strictly under user control via the `Services` menu or the CLI `start` and `stop` commands.
-3. **No Slop & High Contrast**: The console UI must be clean, responsive, aligned, and readable on Windows terminal environments (PowerShell, CMD, Windows Terminal) with dark backgrounds.
-4. **Strict English-Only in Codebase**: All source code, docstrings, comments, UI text, menu options, CLI help guides, error messages, and bot responses must strictly be written in English. Do not use Indonesian or mixed-language strings anywhere in the codebase to maintain clean, professional, and consistent architecture.
+Architectural standards, TUI design guidelines, menu governance, and technical specifications for **locaLLM**.
 
 ---
 
-## 2. Console UI & Typography Rules
-1. **NO EMOJIS OR ICONS IN QUESTIONARY MENU CHOICES (`choices=[]`)**:
-   - Emojis break monospace font column alignment on Windows terminals.
-   - Menu labels **must be pure text**:
-     - *Correct*: `Assistant`, `Integrations`, `Model Manager`, `Services`, `Settings`, `Back`, `Exit`.
-     - *Forbidden*: `💬 Assistant`, `🤖 Integrations`, `⚙️ Settings`.
-2. **Terminal Typography & High-Contrast Colors (No Dark Purple / Dim on Windows)**:
-   - Avoid dark/dim purple (`[dim]` in Rich) for commands, hints, or status indicators, as it is nearly invisible on dark Windows terminals.
-   - Use high-contrast light gray (`#bbbbbb` or `#aaaaaa`) for dimmed/secondary text and command hints.
-   - Use `cyan` (`#00d7ff`) for model names, commands, and active highlights.
-   - Use `green` (`#00ff87`) for success and normal status indicators.
-   - Use `white` (`#ffffff`) for primary text and output.
-3. **Minimalist & Uniform Header Banner**:
-   - Always display the Unicode banner: `✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦`.
-   - Display server status, endpoint, active model, detected capabilities (`Model Features: Tools, Vision, Reasoning`), and GPU VRAM capacity.
-   - Do not add redundant title strings like *"Local LLM Platform"* inside the banner.
-4. **Square Snake Loading Spinner**:
-   - Use the custom **Square Snake Spinner** (`▘▀▝▐▗▄▖▌`) whenever the model is thinking or processing ReAct agent tool steps before the first stream token is emitted.
+## 1. Core Principles
+1. **Platform**: Autonomous local AI workspace powered by Ollama and OpenAI-compatible custom platforms.
+2. **Deterministic Control**: Never auto-spawn background daemons silently. Control lifecycle via `Services` menu or CLI `start`/`stop`.
+3. **Strict English-Only in Codebase**: All source code, docstrings, comments, UI text, menu options, CLI help, error messages, and bot responses must strictly be in English. No Indonesian or mixed-language strings anywhere in the codebase.
+4. **Code Quality**: Strict Python type hints, UTF-8 console output (`sys.stdout.reconfigure(encoding='utf-8')`), and all changes verified with `python -m unittest discover -s tests -p "test_*.py"` (`self.skipTest()` when external services offline).
 
 ---
 
-## 3. Menu Architecture & TUI Navigation
-Any menu additions or refactorings must strictly follow this hierarchical structure:
+## 2. Console UI & Typography
+1. **Pure Text Menu Choices**: **NO EMOJIS OR ICONS** in Questionary `choices=[]` (breaks Windows monospace alignment). Use pure text: `Assistant`, `Integrations`, `Model Manager`, `Services`, `Settings`, `Back`, `Exit`.
+2. **High-Contrast Palette (No Dark Purple)**: Dim/secondary: `#aaaaaa` / `#bbbbbb`; Highlights/models/commands: `#00d7ff` (cyan); Success: `#00ff87` (green); Primary: `#ffffff` (white). Never use dim purple (`[dim]` in Rich).
+3. **Minimalist Header Banner**: Unicode banner `✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦` displaying service status, endpoint, active model, model features (`Tools`, `Vision`, `Reasoning`), and GPU VRAM. No redundant title strings.
+4. **Square Snake Spinner**: Custom spinner `▘▀▝▐▗▄▖▌` during model thinking or ReAct tool planning before stream tokens emit.
 
+---
+
+## 3. Menu Hierarchy & Navigation
 ```text
 Main Menu:
   ├── Assistant             -> Interactive standalone chat session
   ├── Workspaces            -> Isolated environments: Switch, Create, Delete, Details, Back
-  ├── Integrations          -> Channels & runner integrations
-  │     ├── Telegram        -> Telegram Bot runner: Start Bot, Configure Token, Whitelist Users, Back
-  │     ├── WhatsApp        -> WhatsApp Bot runner: Start Bot, Configure Whitelist, Clear Session, Back
+  ├── Integrations          -> Channels & runners
+  │     ├── Telegram        -> Telegram Bot: Start Bot, Configure Token, Whitelist Users, Back
+  │     ├── WhatsApp        -> WhatsApp Bot: Start Bot, Configure Whitelist, Clear Session, Back
   │     ├── Agent & Auto    -> Autonomous Agent: Run Task, Toggle Auto-Approve Commands, Back
   │     └── Back            -> Return to Main Menu
   ├── Model Manager         -> Model management per platform
@@ -55,113 +40,60 @@ Main Menu:
   │     ├── [Custom Platform] -> Status, Set Active, Configure Endpoint/Key, Delete, Back
   │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global inference parameters only (Backend, Temp, Context Window, Prompt, Reset)
-  └── Exit                  -> Terminate application
+  ├── Settings              -> Global inference only: Backend, Temp, Context Window, Prompt, Reset
+  └── Exit                  -> Unload VRAM and terminate application
 ```
 
-### Submenu Navigation Rules:
-1. **Every Submenu Must Have a `Back` Option**: Users must always be able to return to the parent menu without exiting the application.
-2. **Platform & Domain Separation**:
-   - Telegram bot tokens and user ID whitelists belong in `Integrations -> Telegram`, NOT in `Settings`.
-   - Shell auto-approve command toggles belong in `Integrations -> Agent & Auto`, NOT in `Settings`.
-   - Host endpoints belong in `Services -> [Platform] -> Configure Endpoint`.
-   - The `Settings` menu is strictly reserved for general model inference settings (`Active Backend`, `Sampling Temperature`, `Context Window Limit`, `System Prompt`).
-3. **Prevent Screen Flash Clear**:
-   - After executing an action that outputs text (e.g., bot tests, agent task runs, or service status checks), **always pause before returning**:
-     ```python
-     questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
-     ```
-   - Do not let the menu loop invoke `console.clear()` before the user has read the execution output.
+### Navigation Rules:
+- **Every Submenu Must Have `Back`**: Always allow returning to parent without exiting.
+- **Domain Separation**: Telegram token/whitelist in `Integrations -> Telegram`; Shell auto-approve in `Integrations -> Agent & Auto`; Endpoints in `Services -> [Platform] -> Configure Endpoint`; `Settings` strictly for general inference parameters.
+- **Anti-Screen-Flash-Clear**: Pause before clearing console after actions with output: `questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()`.
 
 ---
 
-## 4. Interactive Assistant & Chat Session Standards
-1. **Silent Tool Execution**:
-   - In interactive assistant sessions (`locaLLM chat`), tool invocations (`list_directory`, `read_file`, `fetch_web`, `get_current_time`, etc.) **must execute silently behind the thinking spinner**.
-   - Do not print verbose raw execution logs such as `• Executing Tool:...` or `• Tool Result:...` in the chat window, keeping chat history clean and concise.
-2. **Accurate Context Usage Telemetry (Active Session vs Limit)**:
-   - Render a real-time telemetry line beneath every AI response showing the cumulative token context used in the active session compared to the model's context window limit (`num_ctx`, default `8,192` tokens):
-     ```text
-     • Context: 2,681/8,192 tokens (32.7%) • Speed: 37.8 tok/s
-     ```
-   - Never display per-response tokens (`Prompt: ... | Response: ...`). Always display the cumulative active conversation usage.
-   - Dynamic threshold colors: **Green** (<70%), **Yellow** (70–90%), **Red** (>=90%).
-3. **No Redundant Welcome Greeting**:
-   - Do not print lines like `Interactive Assistant session started. Using model: ...` or capabilities lists inside the chat prompt, as this is already visible in the Header Banner.
-   - Only display a brief, high-contrast light gray command hint:
-     ```text
-     Commands: /help, /stats, /model, /clear, /back, /exit
-     ```
-4. **Double Fallback for Silent Responses**:
-   - If token streaming returns 0 tokens, the system **must automatically execute a non-streaming fallback turn** or display an informative notice. The AI must never silently stop after thinking without delivering an answer.
+## 4. Chat & Cross-Platform Parity (CLI, Telegram, WhatsApp)
+1. **Silent Tool Execution**: Tools (`list_directory`, `read_file`, `fetch_web`, `get_current_time`, `execute_command`, `get_weather`, etc.) must run silently behind loading indicators (spinner in CLI, `typing` action in bots). Never print raw JSON payloads into chat history.
+2. **Context Telemetry**: Render cumulative active session token usage vs model context window (`num_ctx`, default `8,192`):
+   `• Context: 2,681/8,192 tokens (32.7%) • Speed: 37.8 tok/s`
+   Dynamic threshold colors: **Green** (<70%), **Yellow** (70–90%), **Red** (>=90%). Never show per-response prompt/eval tokens.
+3. **Universal Slash Commands & Keywords**:
+   - `/stats` (`stats`, `context`, `telemetry`): Model, tokens/limit, %, speed (`tok/s`), workspace, history depth.
+   - `/model` (`model`): Active model name and features (Tools, Vision, Reasoning).
+   - `/clear` / `/reset` (`reset`, `clear`, `start fresh`): Wipe session history and free memory.
+   - `/help` (`help`): Command and keyword reference.
+4. **Chat Ergonomics**: No redundant welcome greetings. Show concise command hint: `Commands: /help, /stats, /model, /clear, /back, /exit`. If streaming returns 0 tokens, run non-streaming fallback turn.
 
 ---
 
-## 5. Tools & Filesystem Intelligence Standards
-1. **Smart Path Resolution (`resolve_smart_path`)**:
-   - Any tool accepting file or directory paths (`list_directory`, `read_file`, agent execution tools) must use smart path resolution.
-   - OS directory aliases must automatically map to the user's real home directories:
-     - `downloads` / `download` -> `Path.home() / "Downloads"`
-     - `desktop` -> `Path.home() / "Desktop"`
-     - `documents` -> `Path.home() / "Documents"`
-     - `~` or `%USERPROFILE%` -> `Path.home()`
-2. **Folder-First Directory Listing**:
-   - `list_directory` must prioritize all subdirectories (`[DIR]`) at the very top (up to 80 folders) before listing files (`[FILE]`).
-   - Include a summary header (`Total: X folders, Y files`) so target folders are never buried or truncated by long file lists.
-3. **Web & GitHub Fetching (`fetch_web`)**:
-   - Provide `fetch_web` for webpage inspections. If the link is a GitHub repository, fetch the raw `README.md` directly so the model can summarize the project instantly without requiring shell commands.
-4. **Tool Authority Mandate & RLHF Refusal Prevention**:
-   - System prompts must explicitly instruct the model that it possesses direct local tool execution authority and **is strictly forbidden from rejecting local file/directory requests with canned refusals like "I am only an AI"**.
-   - The system prompt architecture must remain modular and composable, allowing future **Skills**, **Knowledge (RAG)**, or **Custom Agent Rules** to be appended without breaking core tool authority.
+## 5. Tools & Filesystem Intelligence
+1. **Smart Path Resolution (`resolve_smart_path`)**: Automatically map aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`) to real home directories.
+2. **Folder-First Listing (`list_directory`)**: Prioritize subdirectories (`[DIR]`, up to 80) above files (`[FILE]`) with summary header (`Total: X folders, Y files`).
+3. **Web & GitHub (`fetch_web`)**: Direct raw `README.md` fetch for GitHub URLs.
+4. **Tool Authority Mandate**: System prompts must establish direct local execution authority. Never return canned refusals like "I am only an AI".
 
 ---
 
 ## 6. Hardware & GPU Sizing Formula
-1. **VRAM Sizing Formula**:
-   $$\text{Required VRAM} = \text{Model Size (GB)} + 2.0\text{ GB (KV Cache \& Runtime Buffer)}$$
-2. **Compatibility Status**:
-   - Display `[bold green]FIT[/]` if $\text{Model Size} + 2.0 \le \text{Free VRAM}$.
-   - Display `[bold red]OFFLOAD (CPU/RAM)[/]` if it exceeds free GPU VRAM.
+1. **KV Cache (GB)**:
+   $$\text{Bytes\_per\_Token} = 2 \times \text{Channels} \times \text{Precision\_Bytes} \quad (\text{Channels} = \text{Layers} \times \text{KV\_Heads} \times \text{Head\_Dim})$$
+   $$\text{KV\_Cache\_GB} = \frac{\text{Bytes\_per\_Token} \times \text{Context\_Tokens}}{1024^3}$$
+   - *Precision*: 2 bytes (FP16 default) or 1 byte (FP8/Q8 quantized).
+   - *GQA Awareness*: Uses `KV_Heads` (not query heads) for exact Grouped-Query Attention scaling.
+2. **Usable VRAM (GB)**: $\text{Usable\_VRAM} = \text{Total\_VRAM} - \text{OS\_Display\_Usage}$ (measured via idle `free_vram` from `nvidia-smi`).
+3. **Total Inference VRAM (GB)**: $\text{Total\_VRAM} = \text{Model\_Weights\_GB} + \text{KV\_Cache\_GB} + \text{CUDA\_Overhead\_GB}$ ($\sim 0.6\text{ GB}$ CUDA runtime & activation buffer).
+4. **Validation**:
+   - `[bold #00ff87]100% GPU[/]`: $\text{Total\_VRAM} \le \text{Usable\_VRAM}$ ($\text{Headroom} \ge 0$).
+   - `[bold red]SPILLOVER[/]`: $\text{Total\_VRAM} > \text{Usable\_VRAM}$ (partial CPU offload or RAM swap needed).
+5. **Max Context Tokens**: $\text{Max\_Context} = \frac{(\text{Usable\_VRAM} - \text{Model\_Weights} - \text{CUDA\_Overhead}) \times 1024^3}{\text{Bytes\_per\_Token}}$ (maximum safe window without spillover).
 
 ---
 
-## 7. Code Quality & Testing Policy
-1. **Strict Type Safety & Windows Encoding**:
-   - Always include standard Python type hints on new and modified functions.
-   - Ensure the console is configured for UTF-8: `sys.stdout.reconfigure(encoding='utf-8')`.
-2. **Mandatory Test Verification**:
-   - All code changes must be verified against the test suite:
-     ```powershell
-     python -m unittest discover -s tests -p "test_*.py"
-     ```
-   - Integration tests requiring external running daemons must use `self.skipTest()` when the service is offline so that the suite remains green across all environments.
-
----
-
-## 8. Strict English-Only in Codebase
-1. **Strict English Requirement**:
-   - All source code, docstrings, comments, variable names, UI text, Questionary menu choices, CLI help guides, error messages, test fixtures, and bot responses must strictly be written in English.
-   - Never use Indonesian or mixed-language strings in any script or user-facing interface.
-
----
-
-## 9. Cross-Platform Uniformity & Context Telemetry Standard
-1. **Symmetrical Multi-Platform Experience (CLI, Telegram, WhatsApp)**:
-   - All supported platforms (`Interactive CLI Assistant`, `Telegram Bot`, and `WhatsApp Bot`) must maintain strict feature, visual, and telemetry parity.
-   - **Real-Time Context Usage Telemetry**:
-     - Every inference turn across all channels must calculate and expose cumulative active session tokens against the model's context limit (`num_ctx`, default `8,192` tokens):
-       ```text
-       • Context: 2,681/8,192 tokens (32.7%) • Speed: 37.8 tok/s
-       ```
-     - Dynamic threshold styling: **Green** (<70%), **Yellow** (70–90%), **Red** (>=90%).
-   - **Universal Slash Commands & Natural Keywords**:
-     - All bot platforms must support identical essential operational commands:
-       - `/stats` (or natural keywords `stats`, `context`, `telemetry`): Returns active model, cumulative token usage against limit, percentage, tokens/sec speed, active workspace, and session history depth.
-       - `/model` (or `model`): Displays current model name and detected features (Tools, Vision, Reasoning).
-       - `/clear` / `/reset` (or `reset`, `clear`, `start fresh`): Wipes session history and frees memory cleanly.
-       - `/help` (or `help`): Displays command reference and keyword guide.
-   - **Silent Tool Execution**:
-     - In all interactive channels, function and tool execution must proceed silently behind native loading feedback (custom square snake spinner in CLI, `typing` chat action in Telegram and WhatsApp) without polluting the chat history with raw JSON execution payloads.
-
-
-
+## 7. Autonomous Agent & Capability-Driven Routing Architecture
+1. **No Brittle Keyword Dictionaries**: Never gate tools or route models using hardcoded language-specific regex dictionaries (e.g. slang, localized phrasing, or test-case keywords). Natural language is multilingual and combinatorial.
+2. **Native Tool Calling Autonomy**: The LLM itself determines when to invoke tools via function calling schemas (`tools=[]`), not external regex gatekeepers. Both Assistant and Agent modes must always expose full tools (`write_file`, `create_directory`, `read_file`, `list_directory`, `execute_command`, `fetch_web`, etc.).
+3. **Capability-First Model Hierarchy**: Prioritize models declaring `"Tools"` capability and adequate parameter capacity. Never downgrade an active, capable model to a lightweight model merely because a prompt is brief or conversational.
+4. **Sticky Routing (Anti-Thrashing)**: If the currently loaded model is capable and fits within VRAM headroom, retain it. Swaps only occur for explicit modality shifts (e.g. `has_image` for Vision) or dedicated specialist tasks.
+5. **Unrestricted Filesystem Access**: Tools must support any valid absolute or relative path anywhere across the user's filesystem (all drives and directories), automatically scaffolding parent folders as required.
+6. **Autonomous Multi-Step ReAct Loop**: The LLM autonomously determines the sequence of actions and stopping conditions. Turns loop continuously while `tool_calls` are emitted (up to `MAX_TOOL_STEPS = 25`), executing tools, updating spinners silently, and feeding observations back to the model until it outputs its final summary.
+7. **Permission Policy (`always_allow`, `ask`, `deny`)**: Mutating tools (`write_file`, `create_directory`, `execute_command`) adhere to the configured policy: `always_allow` executes without prompting; `ask` interactively requests user authorization (`Allow Once`, `Always Allow (session)`, `Deny`); `deny` strictly blocks mutating operations in read-only mode.
+8. **Skills & Knowledge Architecture**: Project context (`AGENTS.md`, `CLAUDE.md`) and skills (`.locallm/skills/`, `.agents/skills/`, `skills/`, and workspace knowledge) are discovered automatically from both active workspace and project root, and queryable via native tools (`list_skills`, `read_skill`).

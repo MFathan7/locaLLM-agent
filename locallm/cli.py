@@ -102,7 +102,7 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers.add_parser(
         "models",
         help="Inspect, manage, and pull local inference models",
-        description="View installed local models, inspect parameter sizes, check GPU VRAM compatibility (Model Size + 2GB formula), switch active default, and pull new models from Ollama registry.",
+        description="View installed local models, inspect parameter sizes, check GPU VRAM compatibility (precision architecture-aware GQA & SWA formula), switch active default, and manage models.",
     )
 
     # Settings
@@ -455,6 +455,7 @@ def _handle_platform_cli(args, config) -> None:
         get_custom_platform,
         remove_custom_platform,
         save_config,
+        switch_active_backend,
     )
     from locallm.core.service_manager import is_custom_platform_reachable, is_ollama_running
 
@@ -499,18 +500,11 @@ def _handle_platform_cli(args, config) -> None:
 
     elif action == "use":
         target = args.name.strip()
-        if target.lower() == "ollama":
-            config.active_backend = "ollama"
-            save_config(config)
-            console.print("[success]Active backend switched to: Ollama[/]")
+        ok, msg = switch_active_backend(config, target)
+        if ok:
+            console.print(f"[success]{msg}[/]")
         else:
-            existing = get_custom_platform(config, target)
-            if not existing:
-                console.print(f"[danger]Platform '{target}' not found. Use 'locallm platform list' to inspect registered platforms.[/]")
-            else:
-                config.active_backend = existing.name
-                save_config(config)
-                console.print(f"[success]Active backend switched to: {existing.name}[/]")
+            console.print(f"[danger]{msg}[/]")
 
 
 if __name__ == "__main__":

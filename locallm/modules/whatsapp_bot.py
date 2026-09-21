@@ -93,10 +93,11 @@ def run_whatsapp_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
         status_text = "[bold green]ONLINE[/]" if client.is_connected() else "[bold red]OFFLINE[/]"
         whitelist_count = len(config.whatsapp_allowed_numbers)
         whitelist_desc = f"{whitelist_count} allowed number(s)" if whitelist_count > 0 else "All numbers allowed"
+        model_display = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
 
         panel_content = (
             f"Backend Service   : {status_text} (Ollama)\n"
-            f"Active Model      : [bold cyan]{config.default_model}[/]\n"
+            f"Active Model      : [bold cyan]{model_display}[/]\n"
             f"Allowed Whitelist : [#00ff87]{whitelist_desc}[/]\n"
             f"Session Directory : [cyan]{get_whatsapp_session_dir(config)}[/]"
         )
@@ -327,11 +328,16 @@ def process_whatsapp_message(
 
     if normalized_query in ("stats", "/stats", "context", "/context", "status", "telemetry"):
         usage = session.get_context_usage(default_limit=context_limit)
-        features = client.get_model_features(config.default_model)
+        active_name = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
+        features = (
+            client.get_model_features(config.default_model)
+            if config.default_model.lower() != "auto"
+            else ["Dynamic Capability Dispatch"]
+        )
         feat_str = ", ".join(features) if features else "Text Generation"
         return (
             "*locaLLM Context & Telemetry*\n\n"
-            f"• *Active Model:* `{config.default_model}` ({feat_str})\n"
+            f"• *Active Model:* `{active_name}` ({feat_str})\n"
             f"• *Context Usage:* `{usage['total_tokens']:,} / {usage['limit']:,} tokens` ({usage['percentage']:.1f}%)\n"
             f"• *Speed:* `{usage['tps']:.1f} tok/s`\n"
             f"• *Workspace:* `{active_ws}`\n"
@@ -340,9 +346,14 @@ def process_whatsapp_message(
         )
 
     if normalized_query in ("model", "/model"):
-        features = client.get_model_features(config.default_model)
+        active_name = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
+        features = (
+            client.get_model_features(config.default_model)
+            if config.default_model.lower() != "auto"
+            else ["Dynamic Capability Dispatch"]
+        )
         feat_str = ", ".join(features) if features else "Text Generation"
-        return f"*Current Model:* `{config.default_model}`\n*Capabilities:* `{feat_str}`"
+        return f"*Current Model:* `{active_name}`\n*Capabilities:* `{feat_str}`"
 
     if normalized_query in ("help", "/help", "menu"):
         return (
@@ -355,7 +366,14 @@ def process_whatsapp_message(
 
     session.add_user_message(message_text, images=[image_b64] if image_b64 else None)
 
-    features = client.get_model_features(config.default_model)
+    target_model = config.default_model
+    if config.default_model.lower() == "auto":
+        from locallm.core.router import route_prompt
+        route = route_prompt(message_text, config, client, has_image=bool(image_b64), history=session.history)
+        target_model = route.selected_model
+        console.print(f"[dim cyan][WhatsApp Auto Router][/] Dispatched to: {target_model} ({route.reason})")
+
+    features = client.get_model_features(target_model)
     has_tools = "Tools" in features
     context_limit = getattr(config, "context_window", 8192)
     stats: Dict[str, Any] = {}
@@ -363,7 +381,7 @@ def process_whatsapp_message(
     try:
         # Check tool execution
         turn_msg = client.chat_turn(
-            model=config.default_model,
+            model=target_model,
             messages=session.get_messages(),
             tools=WHATSAPP_TOOLS if has_tools else None,
             temperature=config.temperature,
@@ -389,7 +407,7 @@ def process_whatsapp_message(
 
             # Synthesize final answer after tool observation
             final_turn = client.chat_turn(
-                model=config.default_model,
+                model=target_model,
                 messages=session.get_messages(),
                 temperature=config.temperature,
                 num_ctx=context_limit,
@@ -413,7 +431,7 @@ def process_whatsapp_message(
             metadata={
                 "type": "whatsapp",
                 "phone_number": clean_number,
-                "model": config.default_model,
+                "model": target_model,
             },
         )
 

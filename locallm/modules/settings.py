@@ -1,7 +1,7 @@
 """Application settings and configuration editor."""
 
 import questionary
-from locallm.config import LocaLLMConfig, save_config
+from locallm.config import LocaLLMConfig, save_config, switch_active_backend
 from locallm.ui.theme import QUESTIONARY_STYLE, console
 
 
@@ -56,14 +56,12 @@ def _switch_active_backend(config: LocaLLMConfig) -> None:
     if chosen == "Add Custom Platform":
         from locallm.modules.service_manager import _add_custom_platform_wizard
         _add_custom_platform_wizard(config)
-    elif chosen == "Ollama":
-        config.active_backend = "ollama"
-        save_config(config)
-        console.print("[success]Active backend switched to: Ollama[/]\n")
     else:
-        config.active_backend = chosen
-        save_config(config)
-        console.print(f"[success]Active backend switched to: {chosen}[/]\n")
+        ok, msg = switch_active_backend(config, chosen)
+        if ok:
+            console.print(f"[success]{msg}[/]\n")
+        else:
+            console.print(f"[danger]{msg}[/]\n")
 
 
 def _edit_temperature(config: LocaLLMConfig) -> None:
@@ -132,5 +130,6 @@ def _reset_defaults(config: LocaLLMConfig) -> None:
         config.system_prompt = default_cfg.system_prompt
         config.telegram_token = default_cfg.telegram_token
         config.agent_auto_approve_commands = default_cfg.agent_auto_approve_commands
+        config.agent_permission_policy = default_cfg.agent_permission_policy
         save_config(config)
         console.print("[success]Settings reset to default.[/]\n")

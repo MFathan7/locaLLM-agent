@@ -27,9 +27,9 @@ def execute_prompt(prompt: str, config: LocaLLMConfig, client: OllamaClient) -> 
         "Capabilities & Direct Tool Access:\n"
         "You have built-in function calling tools to interact directly with the local system: "
         "'list_directory' and 'read_file' for files/folders, 'get_current_time', 'get_current_directory', "
-        "'execute_command', and 'fetch_web' for web pages/GitHub URLs.\n"
-        "When the user asks you to check, list, or read any files, folders (e.g. downloads, desktop), URLs, "
-        "or time, always invoke the appropriate tool instead of declining. Never say you cannot access files or are just an AI.\n"
+        "'execute_command', 'get_weather' for real-time weather and temperature, and 'fetch_web' for web pages/GitHub URLs.\n"
+        "When the user asks you to check weather, list or read any files, folders (e.g. downloads, desktop), URLs, "
+        "or time, always invoke the appropriate tool instead of declining. Never say you cannot access files, the internet, or are just an AI.\n"
         "When tool results are returned, synthesize the answer directly without boilerplate greetings."
     )
 
@@ -42,63 +42,111 @@ def execute_prompt(prompt: str, config: LocaLLMConfig, client: OllamaClient) -> 
         {"role": "user", "content": prompt},
     ]
 
-    features = client.get_model_features(config.default_model)
+    target_model = config.default_model
+    if config.default_model.lower() == "auto":
+        from locallm.core.router import route_prompt
+        route = route_prompt(prompt, config, client)
+        target_model = route.selected_model
+        console.print(f"[bold #00d7ff]✦ Auto Router:[/] {route.selected_model} [dim]({route.reason})[/]\n")
+
+    features = client.get_model_features(target_model)
     has_tools = "Tools" in features
     context_limit = getattr(config, "context_window", 8192)
 
     try:
         stats: dict = {}
         if has_tools:
-            turn_msg = None
-            with thinking_spinner("locaLLM is thinking..."):
-                try:
-                    turn_msg = client.chat_turn(
-                        model=config.default_model,
-                        messages=messages,
-                        tools=ASSISTANT_TOOLS,
-                        temperature=config.temperature,
-                        num_ctx=context_limit,
-                        stats_out=stats,
-                    )
-                except Exception:
-                    turn_msg = None
+            MAX_TOOL_STEPS = 25
+            step = 0
+            executed_any_tool = False
+            active_ws = getattr(config, "active_workspace", "default")
+            permission_policy = getattr(config, "agent_permission_policy", "ask")
 
-            if turn_msg and turn_msg.get("tool_calls"):
-                messages.append(turn_msg)
-                with thinking_spinner("locaLLM is thinking..."):
-                    for tc in turn_msg["tool_calls"]:
+            while step < MAX_TOOL_STEPS:
+                step += 1
+                turn_msg = None
+                spinner_text = "locaLLM is thinking..." if step == 1 else f"locaLLM is planning step {step}..."
+                with thinking_spinner(spinner_text):
+                    try:
+                        turn_msg = client.chat_turn(
+                            model=target_model,
+                            messages=messages,
+                            tools=ASSISTANT_TOOLS,
+                            temperature=config.temperature,
+                            num_ctx=context_limit,
+                            stats_out=stats,
+                        )
+                    except Exception:
+                        turn_msg = None
+
+                if not turn_msg:
+                    break
+
+                tool_calls = turn_msg.get("tool_calls")
+                if tool_calls:
+                    executed_any_tool = True
+                    messages.append(turn_msg)
+                    for idx, tc in enumerate(tool_calls):
                         func_name = tc.get("function", {}).get("name", "")
                         func_args = tc.get("function", {}).get("arguments", {})
+                        tc_id = tc.get("id") or f"call_{step}_{idx}"
                         if isinstance(func_args, str):
                             try:
                                 func_args = json.loads(func_args)
                             except Exception:
                                 func_args = {}
-                        obs = execute_tool(func_name, func_args)
-                        messages.append({"role": "tool", "content": obs})
+                        with thinking_spinner(f"locaLLM is executing {func_name}..."):
+                            obs = execute_tool(
+                                func_name,
+                                func_args,
+                                permission_policy=permission_policy,
+                                interactive=True,
+                                workspace_name=active_ws,
+                            )
+                        messages.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": obs,
+                        })
+                    continue
 
-                stream_stats: dict = {}
-                tokens = client.chat_stream(
-                    model=config.default_model,
-                    messages=messages,
-                    temperature=config.temperature,
-                    num_ctx=context_limit,
-                    stats_out=stream_stats,
-                )
-                stream_assistant_response(tokens, stats=stream_stats, context_limit=context_limit)
-                return
+                content = turn_msg.get("content", "")
+                if content and content.strip():
+                    console.print("[bold green]locaLLM >[/] ", end="")
+                    console.print(content)
+                    console.print()
+                    from locallm.ui.chat_view import render_response_stats
+                    render_response_stats(stats, context_limit=context_limit)
+                    return
+                else:
+                    break
 
-            elif turn_msg and turn_msg.get("content"):
-                console.print("[bold green]locaLLM >[/] ", end="")
-                console.print(turn_msg["content"])
-                console.print()
-                from locallm.ui.chat_view import render_response_stats
-                render_response_stats(stats, context_limit=context_limit)
-                return
+            if executed_any_tool:
+                with thinking_spinner("locaLLM is summarizing actions..."):
+                    try:
+                        summary_turn = client.chat_turn(
+                            model=target_model,
+                            messages=messages + [
+                                {"role": "user", "content": "All requested actions have been executed. Provide a clear summary of the completed tasks."}
+                            ],
+                            temperature=config.temperature,
+                            num_ctx=context_limit,
+                            stats_out=stats,
+                        )
+                        content = summary_turn.get("content", "")
+                        if content and content.strip():
+                            console.print("[bold green]locaLLM >[/] ", end="")
+                            console.print(content)
+                            console.print()
+                            from locallm.ui.chat_view import render_response_stats
+                            render_response_stats(stats, context_limit=context_limit)
+                            return
+                    except Exception:
+                        pass
 
         stream_stats = {}
         tokens = client.chat_stream(
-            model=config.default_model,
+            model=target_model,
             messages=messages,
             temperature=config.temperature,
             num_ctx=context_limit,

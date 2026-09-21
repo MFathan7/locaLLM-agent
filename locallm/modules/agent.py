@@ -49,9 +49,10 @@ Always provide valid JSON within triple backticks.
 class AgentEngine:
     """ReAct execution loop using local Ollama model."""
 
-    def __init__(self, config: LocaLLMConfig, client: OllamaClient):
+    def __init__(self, config: LocaLLMConfig, client: OllamaClient, model_name: Optional[str] = None):
         self.config = config
         self.client = client
+        self.model_name = model_name or config.default_model
         self.max_steps = 10
 
     def run_task(self, task_instruction: str) -> None:
@@ -74,7 +75,7 @@ class AgentEngine:
             try:
                 with thinking_spinner(f"Agent is planning step {step}/{self.max_steps}...", style="bold magenta"):
                     response = self.client.chat(
-                        model=self.config.default_model,
+                        model=self.model_name,
                         messages=history,
                         temperature=0.2,
                     )
@@ -190,23 +191,52 @@ class AgentEngine:
             return f"Error fetching URL: {exc}"
 
 
+def configure_permission_policy(config: LocaLLMConfig) -> None:
+    """Prompt user to configure agent permission policy for mutating actions."""
+    current = getattr(config, "agent_permission_policy", "ask").lower()
+    choice = questionary.select(
+        "Agent Permission Policy (for write_file, create_directory, execute_command):",
+        choices=[
+            "always_allow (Unrestricted execution)",
+            "ask (Prompt for confirmation before mutating actions)",
+            "deny (Read-only mode; block file creation and shell execution)",
+            "Back",
+        ],
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if choice is None or choice == "Back":
+        return
+
+    new_policy = choice.split(" ")[0].strip()
+    config.agent_permission_policy = new_policy
+    config.agent_auto_approve_commands = (new_policy == "always_allow")
+    save_config(config)
+    console.print(f"[success]Agent permission policy updated to: [bold cyan]{new_policy}[/][/]\n")
+
+
 def toggle_agent_auto_approve(config: LocaLLMConfig) -> None:
     """Toggle whether agent automatically executes shell commands without confirmation."""
-    config.agent_auto_approve_commands = not config.agent_auto_approve_commands
+    current = getattr(config, "agent_permission_policy", "ask")
+    if current == "always_allow":
+        config.agent_permission_policy = "ask"
+        config.agent_auto_approve_commands = False
+    else:
+        config.agent_permission_policy = "always_allow"
+        config.agent_auto_approve_commands = True
     save_config(config)
-    status = "ENABLED" if config.agent_auto_approve_commands else "DISABLED"
-    console.print(f"[success]Agent command auto-approval is now: {status}[/]\n")
+    console.print(f"[success]Agent permission policy is now: [bold cyan]{config.agent_permission_policy}[/][/]\n")
 
 
 def run_agent_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
     """Interactive submenu for Autonomous Agent & Automation."""
     while True:
-        status_label = "ENABLED" if config.agent_auto_approve_commands else "DISABLED"
+        policy = getattr(config, "agent_permission_policy", "ask")
         choice = questionary.select(
             "Agent & Automation:",
             choices=[
                 "Run Agent Task",
-                f"Auto-Approve Shell Commands (Current: {status_label})",
+                f"Permission Policy (Current: {policy})",
                 "Back",
             ],
             style=QUESTIONARY_STYLE,
@@ -218,8 +248,8 @@ def run_agent_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
         if choice == "Run Agent Task":
             run_agent_interactive(config, client)
             questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
-        elif choice.startswith("Auto-Approve Shell Commands"):
-            toggle_agent_auto_approve(config)
+        elif choice.startswith("Permission Policy"):
+            configure_permission_policy(config)
 
 
 def run_agent_interactive(config: LocaLLMConfig, client: OllamaClient) -> None:
@@ -229,10 +259,16 @@ def run_agent_interactive(config: LocaLLMConfig, client: OllamaClient) -> None:
         return
 
     active_ws = getattr(config, "active_workspace", "default")
+    policy = getattr(config, "agent_permission_policy", "ask")
+    model_display = (
+        "[bold #00d7ff]Auto (Smart Router)[/]"
+        if config.default_model.lower() == "auto"
+        else f"[bold green]{config.default_model}[/]"
+    )
     console.print(
-        f"[#aaaaaa]Model:[/] [bold green]{config.default_model}[/] "
+        f"[#aaaaaa]Model:[/] {model_display} "
         f"[#aaaaaa]| Workspace:[/] [bold cyan]{active_ws}[/] "
-        f"[#aaaaaa]| Auto-approve:[/] {config.agent_auto_approve_commands}\n"
+        f"[#aaaaaa]| Policy:[/] [bold cyan]{policy}[/]\n"
     )
 
     task = questionary.text(
@@ -244,5 +280,12 @@ def run_agent_interactive(config: LocaLLMConfig, client: OllamaClient) -> None:
         console.print("[#aaaaaa]Task entry cancelled.[/]")
         return
 
-    engine = AgentEngine(config, client)
+    target_model = config.default_model
+    if config.default_model.lower() == "auto":
+        from locallm.core.router import route_prompt
+        route = route_prompt(task.strip(), config, client, is_agent_task=True)
+        target_model = route.selected_model
+        console.print(f"[bold #00d7ff]✦ Auto Router:[/] {route.selected_model} [dim]({route.reason})[/]\n")
+
+    engine = AgentEngine(config, client, model_name=target_model)
     engine.run_task(task.strip())

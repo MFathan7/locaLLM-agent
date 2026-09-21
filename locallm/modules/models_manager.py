@@ -1,17 +1,18 @@
 """Model management module supporting multiple local inference backends."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 import questionary
+from rich.live import Live
 from rich.table import Table
 from locallm.config import LocaLLMConfig, get_custom_platform, save_config
-from locallm.core.hardware import check_vram_compatibility, get_gpu_info
+from locallm.core.hardware import calculate_vram_breakdown, check_vram_compatibility, get_gpu_info
 from locallm.core.ollama_client import OllamaClient
 from locallm.core.openai_client import OpenAIClient
 from locallm.ui.theme import QUESTIONARY_STYLE, console
 
 
-def run_models_manager(config: LocaLLMConfig, client: OllamaClient) -> None:
+def run_models_manager(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Entry point for model management across backends."""
     while True:
         choices = ["Ollama"]
@@ -37,21 +38,30 @@ def run_models_manager(config: LocaLLMConfig, client: OllamaClient) -> None:
             _manage_custom_platform_models(config, choice)
 
 
-def _manage_ollama_models(config: LocaLLMConfig, client: OllamaClient) -> None:
+def _manage_ollama_models(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Ollama models browser, hardware sizing, and pull manager."""
+    ollama_client = OllamaClient(base_url=config.ollama_host)
     while True:
-        if not client.is_connected():
+        if not ollama_client.is_connected():
             console.print(f"[danger]Ollama service is unreachable at[/] {config.ollama_host}")
             break
 
-        models = client.list_models()
-        _display_ollama_table(models, config.default_model, is_ollama_active=(config.active_backend == "ollama"))
+        models = ollama_client.list_models()
+        is_ollama_active = (config.active_backend.strip().lower() == "ollama")
+        _display_ollama_table(
+            models,
+            config.default_model,
+            is_ollama_active=is_ollama_active,
+            client=ollama_client,
+            context_tokens=config.context_window,
+        )
 
         action = questionary.select(
             "Ollama Actions:",
             choices=[
                 "Set Active Model",
                 "Pull New Model",
+                "Delete Model",
                 "Refresh List",
                 "Back",
             ],
@@ -64,11 +74,19 @@ def _manage_ollama_models(config: LocaLLMConfig, client: OllamaClient) -> None:
         if action == "Set Active Model":
             _select_active_model(models, config, platform_name="ollama")
         elif action == "Pull New Model":
-            _pull_model_wizard(client)
+            _pull_model_wizard(ollama_client)
+        elif action == "Delete Model":
+            _delete_model_wizard(ollama_client, config, platform_name="ollama")
 
 
-def _display_ollama_table(models: List[Dict[str, Any]], active_model: str, is_ollama_active: bool = True) -> None:
-    """Render Rich table of models with VRAM compatibility status."""
+def _display_ollama_table(
+    models: List[Dict[str, Any]],
+    active_model: str,
+    is_ollama_active: bool = True,
+    client: Optional[OllamaClient] = None,
+    context_tokens: int = 8192,
+) -> None:
+    """Render Rich table of models with precision VRAM compatibility status."""
     gpu = get_gpu_info()
     table = Table(
         title="Installed Local Models (Ollama)",
@@ -99,10 +117,36 @@ def _display_ollama_table(models: List[Dict[str, Any]], active_model: str, is_ol
             else "[dim]INACTIVE[/]"
         )
 
-        is_ok, status_msg = check_vram_compatibility(size_bytes)
-        vram_display = (
-            f"[green]{status_msg}[/]" if is_ok else f"[yellow]{status_msg}[/]"
+        arch: Dict[str, Any] = {}
+        if client and hasattr(client, "get_model_architecture_info"):
+            arch = client.get_model_architecture_info(name)
+
+        res = calculate_vram_breakdown(
+            model_size_bytes=size_bytes,
+            context_tokens=context_tokens,
+            layers=arch.get("layers"),
+            kv_heads=arch.get("kv_heads"),
+            head_dim=arch.get("head_dim"),
+            sliding_window=arch.get("sliding_window"),
+            swa_pattern=arch.get("swa_pattern"),
+            head_dim_swa=arch.get("head_dim_swa"),
         )
+
+        if not gpu:
+            vram_display = f"[#aaaaaa]CPU Mode (~{res.total_vram_gb:.1f} GB RAM)[/]"
+        elif res.is_fit:
+            max_k = (
+                f"~{res.max_context_tokens // 1000}k ctx"
+                if res.max_context_tokens >= 1000
+                else f"{res.max_context_tokens} ctx"
+            )
+            vram_display = (
+                f"[bold #00ff87]100% GPU[/] [#00ff87](+{res.headroom_gb:.1f} GB Free, max {max_k})[/]"
+            )
+        else:
+            vram_display = (
+                f"[bold red]SPILLOVER[/] [red](Need {res.total_vram_gb:.1f} GB > {res.usable_vram_gb:.1f} GB)[/]"
+            )
 
         table.add_row(
             is_active,
@@ -116,9 +160,10 @@ def _display_ollama_table(models: List[Dict[str, Any]], active_model: str, is_ol
     console.print(table)
     if gpu:
         console.print(
-            f"[dim]Detected GPU: [bold white]{gpu.name}[/] | "
-            f"VRAM: [bold green]{gpu.free_vram_mb / 1024:.1f} GB Free[/] / "
-            f"[bold cyan]{gpu.total_vram_mb / 1024:.1f} GB Total[/][/]\n"
+            f"[#aaaaaa]Detected GPU: [bold white]{gpu.name}[/] | "
+            f"VRAM: [bold #00ff87]{gpu.free_vram_mb / 1024:.1f} GB Free[/] / "
+            f"[bold #00d7ff]{gpu.total_vram_mb / 1024:.1f} GB Total[/] | "
+            f"Active Context: [bold #00d7ff]{context_tokens:,}[/] tokens[/]\n"
         )
 
 
@@ -180,6 +225,7 @@ def _manage_custom_platform_models(config: LocaLLMConfig, platform_name: str) ->
             f"{platform.name} Model Actions:",
             choices=[
                 "Set Active Model",
+                "Delete Model",
                 "Refresh List",
                 "Back",
             ],
@@ -191,6 +237,8 @@ def _manage_custom_platform_models(config: LocaLLMConfig, platform_name: str) ->
 
         if action == "Set Active Model":
             _select_active_model(models, config, platform_name=platform.name)
+        elif action == "Delete Model":
+            _delete_model_wizard(openai_client, config, platform_name=platform.name)
 
 
 def _select_active_model(
@@ -203,8 +251,9 @@ def _select_active_model(
         console.print("[warning]No models available to select.[/]")
         return
 
-    choices = [m.get("name") or m.get("id") for m in models]
-    choices = [c for c in choices if c] + ["Cancel"]
+    model_names = [m.get("name") or m.get("id") for m in models]
+    model_names = [c for c in model_names if c]
+    choices = ["Auto (Smart Router)"] + model_names + ["Cancel"]
 
     chosen = questionary.select(
         "Choose model to set as default:",
@@ -213,17 +262,37 @@ def _select_active_model(
     ).ask()
 
     if chosen and chosen != "Cancel":
+        if chosen == "Auto (Smart Router)":
+            config.default_model = "auto"
+            if platform_name.lower() == "ollama":
+                config.ollama_model = "auto"
+                config.active_backend = "ollama"
+            else:
+                platform = get_custom_platform(config, platform_name)
+                if platform:
+                    platform.default_model = "auto"
+                config.active_backend = platform_name
+            save_config(config)
+            console.print("[success]Default active model set to:[/] [bold cyan]Auto (Smart Router)[/]\n")
+            return
+
         config.default_model = chosen
-        if platform_name != "ollama":
+        if platform_name.lower() == "ollama":
+            config.ollama_model = chosen
+            config.active_backend = "ollama"
+        else:
+            platform = get_custom_platform(config, platform_name)
+            if platform:
+                platform.default_model = chosen
             config.active_backend = platform_name
         save_config(config)
         console.print(f"[success]Default active model set to:[/] [bold cyan]{chosen}[/]")
-        if platform_name != "ollama":
+        if platform_name.lower() != "ollama":
             console.print(f"[success]Active backend switched to:[/] [bold cyan]{platform_name}[/]\n")
 
 
 def _pull_model_wizard(client: OllamaClient) -> None:
-    """Pull model from Ollama library with status output."""
+    """Pull model from Ollama library with dynamic single-line progress output."""
     model_name = questionary.text(
         "Enter model tag to pull (e.g. qwen2.5:7b, mistral, llama3.2):",
         style=QUESTIONARY_STYLE,
@@ -233,25 +302,141 @@ def _pull_model_wizard(client: OllamaClient) -> None:
         return
 
     model_name = model_name.strip()
-    console.print(f"[bold cyan]Pulling model '{model_name}' from Ollama...[/]")
+    console.print(f"\n[bold cyan]Initiating pull for model '{model_name}'...[/]")
 
     try:
-        last_status = ""
-        for chunk in client.pull_model_stream(model_name):
-            status = chunk.get("status", "")
-            completed = chunk.get("completed", 0)
-            total = chunk.get("total", 0)
+        full_bar = "━" * 20
+        with Live(console=console, refresh_per_second=12, transient=False) as live:
+            for chunk in client.pull_model_stream(model_name):
+                if "error" in chunk:
+                    raise RuntimeError(chunk["error"])
 
-            if total > 0:
-                pct = (completed / total) * 100
-                display_msg = f"{status}: {completed / (1024**2):.1f} MB / {total / (1024**2):.1f} MB ({pct:.1f}%)"
-            else:
-                display_msg = status
+                status = chunk.get("status", "")
+                completed = chunk.get("completed", 0)
+                total = chunk.get("total", 0)
 
-            if display_msg != last_status:
-                console.print(f"[dim info]>[/] {display_msg}")
-                last_status = display_msg
+                if status == "success":
+                    line = f"[bold cyan]Pulling {model_name}:[/] [#00ff87]Complete[/] [bold green]{full_bar}[/] [bold green](100.0%)[/]"
+                elif total > 0:
+                    pct = (completed / total) * 100
+                    if total >= 1024**3:
+                        size_str = f"{completed / (1024**3):.2f} GB / {total / (1024**3):.2f} GB"
+                    else:
+                        size_str = f"{completed / (1024**2):.1f} MB / {total / (1024**2):.1f} MB"
 
-        console.print(f"[bold green]Successfully pulled '{model_name}'.[/]")
+                    bar_len = 20
+                    filled = int(bar_len * completed // total)
+                    bar = "━" * filled + ("╸" if filled < bar_len else "")
+                    bar = bar.ljust(bar_len, "─")
+
+                    line = f"[bold cyan]Pulling {model_name}:[/] [#00d7ff]{status}[/] [bold green]{bar}[/] [#00ff87]{size_str}[/] ([bold cyan]{pct:.1f}%[/])"
+                else:
+                    line = f"[bold cyan]Pulling {model_name}:[/] [#bbbbbb]{status}[/]"
+
+                live.update(line)
+
+        console.print()
+        console.print(f"[bold green]Successfully pulled model '{model_name}'.[/]\n")
+        questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
     except Exception as exc:
-        console.print(f"[danger]Failed to pull model:[/] {exc}")
+        console.print()
+        console.print(f"[danger]Failed to pull model '{model_name}':[/] {exc}\n")
+        questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+
+
+def _handle_deleted_model_fallback(
+    config: LocaLLMConfig,
+    platform_name: str,
+    deleted_model: str,
+    remaining_models: List[Dict[str, Any]],
+) -> None:
+    """Safely fallback and re-sync active model if the deleted model was active."""
+    remaining_names = [
+        m.get("name") or m.get("id")
+        for m in remaining_models
+        if m.get("name") or m.get("id")
+    ]
+    remaining_names = [n for n in remaining_names if n != deleted_model]
+    fallback_model = remaining_names[0] if remaining_names else ""
+
+    is_ollama = platform_name.strip().lower() == "ollama"
+    config_changed = False
+
+    if is_ollama:
+        if config.ollama_model == deleted_model:
+            config.ollama_model = fallback_model or "gemma4:12b"
+            config_changed = True
+            console.print(f"[dim]Ollama default model set to:[/] [bold cyan]{config.ollama_model}[/]")
+        if config.active_backend.strip().lower() == "ollama" and config.default_model == deleted_model:
+            config.default_model = config.ollama_model
+            config_changed = True
+            console.print(f"[dim]Active session model set to:[/] [bold cyan]{config.default_model}[/]")
+    else:
+        platform = get_custom_platform(config, platform_name)
+        if platform:
+            if platform.default_model == deleted_model:
+                platform.default_model = fallback_model
+                config_changed = True
+                console.print(f"[dim]{platform_name} default model set to:[/] [bold cyan]{platform.default_model or 'None'}[/]")
+            if config.active_backend.strip().lower() == platform_name.strip().lower() and config.default_model == deleted_model:
+                config.default_model = platform.default_model or fallback_model
+                config_changed = True
+                console.print(f"[dim]Active session model set to:[/] [bold cyan]{config.default_model or 'None'}[/]")
+
+    if config_changed:
+        save_config(config)
+
+
+def _delete_model_wizard(
+    client: Any,
+    config: LocaLLMConfig,
+    platform_name: str = "ollama",
+) -> None:
+    """General wizard to safely delete a model across any supported inference platform."""
+    if not hasattr(client, "list_models") or not hasattr(client, "delete_model"):
+        console.print("[danger]Platform client does not support model management.[/]\n")
+        questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+        return
+
+    models = client.list_models()
+    if not models:
+        console.print(f"[warning]No models available to delete on {platform_name}.[/]\n")
+        questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+        return
+
+    choices = [m.get("name") or m.get("id") for m in models]
+    choices = [c for c in choices if c] + ["Cancel"]
+
+    chosen = questionary.select(
+        f"Select model to delete from {platform_name}:",
+        choices=choices,
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if not chosen or chosen == "Cancel":
+        return
+
+    confirmed = questionary.confirm(
+        f"Are you sure you want to delete model '{chosen}' from {platform_name}?",
+        default=False,
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if not confirmed:
+        console.print("[dim]Deletion cancelled.[/]\n")
+        return
+
+    console.print(f"\n[bold cyan]Deleting model '{chosen}' from {platform_name}...[/]")
+    try:
+        success, message = client.delete_model(chosen)
+        if success:
+            console.print(f"[bold green]{message}[/]")
+            remaining = client.list_models() or []
+            _handle_deleted_model_fallback(config, platform_name, chosen, remaining)
+        else:
+            console.print(f"[danger]{message}[/]")
+    except Exception as exc:
+        console.print(f"[danger]Unexpected error deleting model '{chosen}':[/] {exc}")
+
+    console.print()
+    questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()

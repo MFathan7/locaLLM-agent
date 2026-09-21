@@ -39,6 +39,11 @@ def is_ollama_running(host: str = "http://127.0.0.1:11434", max_cache_age: float
         return False
 
 
+def is_ollama_installed() -> bool:
+    """Check if Ollama executable is available in system PATH."""
+    return shutil.which("ollama") is not None
+
+
 def start_ollama_service() -> Tuple[bool, str]:
     """Start Ollama server process explicitly upon user request."""
     if is_ollama_running():
