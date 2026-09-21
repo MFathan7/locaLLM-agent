@@ -7,11 +7,12 @@ from typing import Any, Dict, List, Optional
 import questionary
 from rich.panel import Panel
 from rich.table import Table
+from prompt_toolkit.key_binding import KeyBindings
 from locallm.config import LocaLLMConfig, save_config
 from locallm.core.hardware import get_gpu_info
 from locallm.core.memory import ConversationMemory
 from locallm.core.ollama_client import OllamaClient
-from locallm.core.tools import ASSISTANT_TOOLS, execute_tool
+from locallm.core.tools import ASSISTANT_TOOLS, describe_tool_action, execute_tool, format_live_tool_report
 from locallm.core.workspace import (
     clear_all_workspace_sessions,
     delete_workspace_session,
@@ -29,6 +30,25 @@ from locallm.ui.chat_view import (
 )
 from locallm.ui.spinner import thinking_spinner
 from locallm.ui.theme import QUESTIONARY_STYLE, console
+
+
+def _create_chat_key_bindings() -> KeyBindings:
+    """Create key bindings for interactive chat: Enter submits, Ctrl+J or Ctrl+Down creates a newline."""
+    kb = KeyBindings()
+
+    @kb.add("c-j")
+    def _insert_newline_ctrl_j(event: Any) -> None:
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("c-down")
+    def _insert_newline_ctrl_down(event: Any) -> None:
+        event.current_buffer.insert_text("\n")
+
+    @kb.add("enter")
+    def _submit(event: Any) -> None:
+        event.current_buffer.validate_and_handle()
+
+    return kb
 
 
 def run_assistant(config: LocaLLMConfig, client: Any) -> None:
@@ -62,8 +82,12 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
         "'write_file' to write or create code, configuration, or documentation files anywhere on the filesystem, "
         "'list_directory' and 'read_file' for inspecting files and folders, 'get_current_time', 'get_current_directory', "
         "'execute_command', 'get_weather' for real-time weather and temperature, and 'fetch_web' for web pages/GitHub URLs.\n"
-        "When the user asks you to create files, write code files, construct a directory structure, check weather, "
-        "list or read files/folders, URLs, or time, always invoke the appropriate tools directly instead of declining. "
+        "CRITICAL AUTONOMOUS EXECUTION DIRECTIVE:\n"
+        "When the user asks to create, write, modify, generate, or execute any files, directories, scripts, or system tasks:\n"
+        "- DO NOT provide manual terminal, shell, or command-prompt instructions for the user to run themselves.\n"
+        "- DO NOT ask or expect the user to manually create directories or save files.\n"
+        "- You MUST directly invoke the appropriate tools ('create_directory', 'write_file', 'execute_command') "
+        "via native function calling to perform the requested actions immediately on the local system.\n"
         "Never say you cannot access files, cannot create files, or are just an AI.\n"
         "When tool results are returned, synthesize the answer directly without boilerplate greetings."
     )
@@ -77,12 +101,18 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
     memory = ConversationMemory(system_prompt=enhanced_prompt)
     session_state = {"id": f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}"}
 
-    console.print("[#bbbbbb]Commands: /help, /sessions, /new, /delete, /stats, /model, /clear, /back, /exit[/]\n")
+    console.print("[#bbbbbb]Commands: /help, /sessions, /new, /delete, /stats, /model, /clear, /back, /exit[/]")
+    console.print("[#777777]Tips: [bold cyan]Enter[/] to send, [bold cyan]Ctrl+J[/] for a newline[/]\n")
+
+    chat_kb = _create_chat_key_bindings()
 
     while True:
         try:
             user_input = questionary.text(
                 "You:",
+                multiline=True,
+                instruction="",
+                key_bindings=chat_kb,
                 style=QUESTIONARY_STYLE,
             ).ask()
 
@@ -164,7 +194,11 @@ def _process_assistant_turn(
         while step < MAX_TOOL_STEPS:
             step += 1
             turn_msg = None
-            spinner_msg = "locaLLM is thinking..." if step == 1 else f"locaLLM is planning step {step}..."
+            spinner_msg = (
+                "locaLLM is thinking..."
+                if step == 1
+                else "locaLLM is analyzing results & planning next action..."
+            )
             with thinking_spinner(spinner_msg):
                 try:
                     turn_msg = client.chat_turn(
@@ -182,6 +216,14 @@ def _process_assistant_turn(
                 break
 
             tool_calls = turn_msg.get("tool_calls")
+            if not tool_calls and turn_msg.get("content"):
+                from locallm.core.tools import extract_fallback_tool_calls
+                tool_names = {t.get("function", {}).get("name") for t in ASSISTANT_TOOLS}
+                recovered = extract_fallback_tool_calls(turn_msg.get("content", ""), tool_names)
+                if recovered:
+                    tool_calls = recovered
+                    turn_msg["tool_calls"] = recovered
+
             if tool_calls:
                 executed_any_tool = True
                 memory.history.append(turn_msg)
@@ -196,7 +238,8 @@ def _process_assistant_turn(
                         except Exception:
                             func_args = {}
 
-                    with thinking_spinner(f"locaLLM is executing {func_name}..."):
+                    action_label = describe_tool_action(func_name, func_args)
+                    with thinking_spinner(action_label):
                         obs = execute_tool(
                             func_name,
                             func_args,
@@ -205,6 +248,8 @@ def _process_assistant_turn(
                             session_state=session_state,
                             workspace_name=active_ws,
                         )
+
+                    console.print(format_live_tool_report(func_name, func_args, obs))
 
                     memory.history.append({
                         "role": "tool",
@@ -227,7 +272,7 @@ def _process_assistant_turn(
 
         # If tools were executed but model finished with empty text, request a final completion summary
         if executed_any_tool:
-            with thinking_spinner("locaLLM is summarizing actions..."):
+            with thinking_spinner("locaLLM is summarizing completed actions..."):
                 try:
                     summary_turn = client.chat_turn(
                         model=target_model,

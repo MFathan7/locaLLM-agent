@@ -7,7 +7,7 @@ from pathlib import Path
 import re
 import subprocess
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 import httpx
 
 
@@ -611,3 +611,176 @@ def execute_tool(
         return f"=== Skill Content for '{skill_name}' ===\n" + content[:6000]
 
     return f"Unknown tool: '{name}'"
+
+
+def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) -> str:
+    """Generate clean, human-friendly action text for terminal spinners and notifications."""
+    args = arguments or {}
+    if name == "create_directory":
+        path = args.get("path", "")
+        name_str = Path(path).name if path else ""
+        return f"locaLLM is creating folder '{name_str or path}'..." if (name_str or path) else "locaLLM is creating folder..."
+
+    elif name == "write_file":
+        path = args.get("path", "")
+        name_str = Path(path).name if path else ""
+        return f"locaLLM is writing file '{name_str or path}'..." if (name_str or path) else "locaLLM is writing file..."
+
+    elif name == "list_directory":
+        path = args.get("path", ".")
+        name_str = Path(path).name if path not in (".", "") else "workspace"
+        return f"locaLLM is inspecting folder '{name_str}'..."
+
+    elif name == "read_file":
+        path = args.get("path", "")
+        name_str = Path(path).name if path else ""
+        return f"locaLLM is reading '{name_str or path}'..." if (name_str or path) else "locaLLM is reading file..."
+
+    elif name == "execute_command":
+        cmd = args.get("command", "").strip()
+        short_cmd = (cmd[:35] + "...") if len(cmd) > 35 else cmd
+        return f"locaLLM is running command: {short_cmd}..." if short_cmd else "locaLLM is running system command..."
+
+    elif name == "fetch_web":
+        url = args.get("url", "").strip()
+        clean_url = re.sub(r"^https?://(www\.)?", "", url)
+        short_url = (clean_url[:35] + "...") if len(clean_url) > 35 else clean_url
+        return f"locaLLM is fetching web content ({short_url})..." if short_url else "locaLLM is fetching web content..."
+
+    elif name == "get_weather":
+        loc = args.get("location", "")
+        return f"locaLLM is checking weather for '{loc}'..." if loc else "locaLLM is checking weather..."
+
+    elif name == "get_current_time":
+        return "locaLLM is checking current time..."
+
+    elif name == "get_current_directory":
+        return "locaLLM is checking working directory..."
+
+    elif name == "list_skills":
+        return "locaLLM is discovering available skills..."
+
+    elif name == "read_skill":
+        sname = args.get("skill_name", "")
+        return f"locaLLM is reading skill instructions for '{sname}'..." if sname else "locaLLM is reading skill..."
+
+    return f"locaLLM is executing {name}..."
+
+
+def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], observation: str) -> str:
+    """Format a persistent real-time completion report line for display in terminal/logs."""
+    args = arguments or {}
+    obs_lower = observation.lower()
+    is_error = obs_lower.startswith("error") or "permission denied" in obs_lower or "failed" in obs_lower
+
+    if is_error:
+        clean_obs = observation.replace("[Permission Denied] ", "")
+        return f"  [bold red]✖[/] [red]{name} failed:[/] [dim]{clean_obs}[/]"
+
+    if name == "create_directory":
+        path = args.get("path", "")
+        return f"  [bold #00ff87]✔[/] [#00ff87]Created directory:[/] [bold cyan]{path}[/]"
+
+    elif name == "write_file":
+        path = args.get("path", "")
+        content = args.get("content", "")
+        return f"  [bold #00ff87]✔[/] [#00ff87]Written file:[/] [bold cyan]{path}[/] [dim]({len(content)} chars)[/]"
+
+    elif name == "list_directory":
+        path = args.get("path", ".")
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Inspected directory:[/] [bold cyan]{path}[/]"
+
+    elif name == "read_file":
+        path = args.get("path", "")
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Read file:[/] [bold cyan]{path}[/]"
+
+    elif name == "execute_command":
+        cmd = args.get("command", "").strip()
+        short_cmd = (cmd[:40] + "...") if len(cmd) > 40 else cmd
+        return f"  [bold #00ff87]✔[/] [#00ff87]Executed:[/] [bold cyan]{short_cmd}[/]"
+
+    elif name == "fetch_web":
+        url = args.get("url", "").strip()
+        clean_url = re.sub(r"^https?://(www\.)?", "", url)
+        short_url = (clean_url[:40] + "...") if len(clean_url) > 40 else clean_url
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Fetched web:[/] [dim cyan]{short_url}[/]"
+
+    elif name == "get_weather":
+        loc = args.get("location", "")
+        return f"  [bold #00ff87]✔[/] [#00ff87]Weather ({loc}):[/] [dim white]{observation}[/]"
+
+    elif name == "get_current_time":
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Checked time:[/] [dim white]{observation}[/]"
+
+    elif name == "get_current_directory":
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Working directory:[/] [dim white]{observation}[/]"
+
+    elif name == "list_skills":
+        return "  [bold #00d7ff]✔[/] [#00d7ff]Discovered skills[/]"
+
+    elif name == "read_skill":
+        sname = args.get("skill_name", "")
+        return f"  [bold #00d7ff]✔[/] [#00d7ff]Loaded skill:[/] [dim cyan]{sname}[/]"
+
+    return f"  [bold #00ff87]✔[/] [#00ff87]Executed:[/] [bold cyan]{name}[/]"
+
+
+def extract_fallback_tool_calls(
+    content: str,
+    valid_names: Optional[Set[str]] = None,
+) -> List[Dict[str, Any]]:
+    """Extract tool calls emitted as raw or markdown JSON in the content string.
+
+    Handles single JSON objects, newline-delimited JSON objects, array of JSON objects,
+    and markdown code-fenced json blocks when the backend engine leaves tool_calls empty.
+    """
+    if not content or "{" not in content:
+        return []
+
+    if valid_names is None:
+        valid_names = {t.get("function", {}).get("name") for t in ASSISTANT_TOOLS}
+
+    calls: List[Dict[str, Any]] = []
+    decoder = json.JSONDecoder()
+    idx = 0
+    length = len(content)
+
+    while idx < length:
+        idx = content.find("{", idx)
+        if idx == -1:
+            break
+        try:
+            obj, end_idx = decoder.raw_decode(content[idx:])
+            idx += end_idx
+            if isinstance(obj, dict):
+                name = obj.get("name") or obj.get("tool")
+                if not name and isinstance(obj.get("function"), dict):
+                    name = obj.get("function", {}).get("name")
+                elif not name and isinstance(obj.get("function"), str):
+                    name = obj.get("function")
+
+                args = obj.get("arguments") or obj.get("args") or obj.get("parameters")
+                if args is None and isinstance(obj.get("function"), dict):
+                    args = obj.get("function", {}).get("arguments") or obj.get("function", {}).get("parameters")
+                if args is None:
+                    args = {}
+
+                if isinstance(name, str) and name in valid_names:
+                    if isinstance(args, str):
+                        try:
+                            args = json.loads(args)
+                        except Exception:
+                            args = {}
+                    calls.append({
+                        "id": f"call_fallback_{len(calls)}",
+                        "type": "function",
+                        "function": {
+                            "name": name,
+                            "arguments": args,
+                        },
+                    })
+        except Exception:
+            idx += 1
+
+    return calls
+

@@ -507,6 +507,14 @@ async def _process_and_reply(
                 break
 
             tool_calls = turn_msg.get("tool_calls")
+            if not tool_calls and turn_msg.get("content"):
+                from locallm.core.tools import extract_fallback_tool_calls
+                tool_names = {t.get("function", {}).get("name") for t in (tools_schema or [])}
+                recovered = extract_fallback_tool_calls(turn_msg.get("content", ""), tool_names)
+                if recovered:
+                    tool_calls = recovered
+                    turn_msg["tool_calls"] = recovered
+
             if tool_calls:
                 session.history.append(turn_msg)
 
@@ -639,7 +647,7 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
             "• <code>/model</code> - Check active model & capabilities\n"
             "• <code>/help</code> - Full guide & keyword examples\n"
             "• <code>/reset</code> - Reset conversation\n\n"
-            "<i>Tip: Press the <b>[Menu]</b> button at the bottom of the chat to trigger commands!</i>"
+            "<i>Tips: Press the <b>[Menu]</b> button at the bottom of the chat to trigger commands!</i>"
         )
         if update.message:
             await update.message.reply_text(welcome_msg, parse_mode="HTML")

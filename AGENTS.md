@@ -75,16 +75,18 @@ Main Menu:
 
 ## 6. Hardware & GPU Sizing Formula
 1. **KV Cache (GB)**:
-   $$\text{Bytes\_per\_Token} = 2 \times \text{Channels} \times \text{Precision\_Bytes} \quad (\text{Channels} = \text{Layers} \times \text{KV\_Heads} \times \text{Head\_Dim})$$
-   $$\text{KV\_Cache\_GB} = \frac{\text{Bytes\_per\_Token} \times \text{Context\_Tokens}}{1024^3}$$
+   - `Channels = Layers × KV_Heads × Head_Dim`
+   - `Bytes_per_Token = 2 × Channels × Precision_Bytes`
+   - `KV_Cache_GB = (Bytes_per_Token × Context_Tokens) / (1024³)`
    - *Precision*: 2 bytes (FP16 default) or 1 byte (FP8/Q8 quantized).
    - *GQA Awareness*: Uses `KV_Heads` (not query heads) for exact Grouped-Query Attention scaling.
-2. **Usable VRAM (GB)**: $\text{Usable\_VRAM} = \text{Total\_VRAM} - \text{OS\_Display\_Usage}$ (measured via idle `free_vram` from `nvidia-smi`).
-3. **Total Inference VRAM (GB)**: $\text{Total\_VRAM} = \text{Model\_Weights\_GB} + \text{KV\_Cache\_GB} + \text{CUDA\_Overhead\_GB}$ ($\sim 0.6\text{ GB}$ CUDA runtime & activation buffer).
-4. **Validation**:
-   - `[bold #00ff87]100% GPU[/]`: $\text{Total\_VRAM} \le \text{Usable\_VRAM}$ ($\text{Headroom} \ge 0$).
-   - `[bold red]SPILLOVER[/]`: $\text{Total\_VRAM} > \text{Usable\_VRAM}$ (partial CPU offload or RAM swap needed).
-5. **Max Context Tokens**: $\text{Max\_Context} = \frac{(\text{Usable\_VRAM} - \text{Model\_Weights} - \text{CUDA\_Overhead}) \times 1024^3}{\text{Bytes\_per\_Token}}$ (maximum safe window without spillover).
+   - *SWA Awareness*: Hybrid models (e.g. Gemma 4) bound local attention layers to `Window_l = 1,024` tokens.
+2. **Usable VRAM (GB)**: `Usable_VRAM = Total_GPU_VRAM - OS_Display_Usage` (measured via idle `free_vram` from `pynvml` / `nvidia-smi`).
+3. **Total Inference VRAM (GB)**: `Total_VRAM = Model_Weights_GB + KV_Cache_GB + CUDA_Overhead_GB` (~0.6 GB CUDA runtime & activation buffer).
+4. **Validation Classification**:
+   - `100% GPU (FIT)`: `Total_VRAM ≤ Usable_VRAM` (Headroom ≥ 0).
+   - `SPILLOVER`: `Total_VRAM > Usable_VRAM` (partial CPU offload or RAM swap needed).
+5. **Max Context Tokens**: `Max_Context = (Usable_VRAM - Model_Weights - CUDA_Overhead) × 1024³ / Bytes_per_Token` (maximum safe window without spillover).
 
 ---
 

@@ -270,6 +270,37 @@ class TestModelRouter(unittest.TestCase):
             self.assertEqual(r5.selected_model, "gemma4:12b-it-qat")
             self.assertFalse(r5.is_swapped)
 
+    def test_route_prompt_coder_parameter_hierarchy_and_vram_fallback(self):
+        """Verify that multiple coder models are prioritized by parameter size, with VRAM fallback."""
+        mock_client = MagicMock()
+        mock_client.list_models.return_value = [
+            {"name": "gemma4:12b", "size": 7 * 1024**3},
+            {"name": "qwen2.5-coder:14b", "size": 9 * 1024**3},
+            {"name": "qwen2.5-coder:7b", "size": 4 * 1024**3},
+        ]
+        mock_client.get_loaded_models.return_value = ["gemma4:12b"]
+        mock_client.get_model_features.return_value = ["Tools"]
+
+        # Scenario A: Both 14b and 7b fit in VRAM -> 14b is selected due to higher parameter size
+        with patch("locallm.core.router.check_model_vram_fit", return_value=True):
+            prompt = "Bisa buatkan script python bot di folder ini C:\\Users\\mfath\\Downloads\\Bot Signal"
+            route = route_prompt(prompt, self.config, mock_client)
+            self.assertEqual(route.selected_model, "qwen2.5-coder:14b")
+            self.assertEqual(route.task_type, TaskType.TOOLS)
+            self.assertIn("Specialist Coding Agent", route.reason)
+
+        # Scenario B: 14b exceeds VRAM, but 7b fits -> falls back to 7b seamlessly
+        def mock_vram_fit(model_name, *args, **kwargs):
+            return "14b" not in model_name
+
+        with patch("locallm.core.router.check_model_vram_fit", side_effect=mock_vram_fit):
+            prompt = "Bisa buatkan script python bot di folder ini C:\\Users\\mfath\\Downloads\\Bot Signal"
+            route = route_prompt(prompt, self.config, mock_client)
+            self.assertEqual(route.selected_model, "qwen2.5-coder:7b")
+            self.assertEqual(route.task_type, TaskType.TOOLS)
+            self.assertIn("Specialist Coding Agent", route.reason)
+
 
 if __name__ == "__main__":
     unittest.main()
+

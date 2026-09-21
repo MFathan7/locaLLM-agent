@@ -190,7 +190,13 @@ def route_prompt(
         name = m.get("name") or m.get("id")
         if name and name not in model_names:
             model_names.append(name)
-            model_size_map[name] = m.get("size", 0)
+            size = m.get("size", 0)
+            if not size:
+                # Estimate size in bytes from parameter tag in name (e.g. 14b -> 14GB, 7b -> 7GB)
+                match = re.search(r"(\d+(?:\.\d+)?)[bB]\b", name)
+                if match:
+                    size = int(float(match.group(1)) * 1024**3)
+            model_size_map[name] = size
 
     # Determine baseline fallback model
     fallback_model = (
@@ -250,70 +256,123 @@ def route_prompt(
     tool_models.sort(key=lambda m: -model_size_map.get(m, 0))
     fast_models.sort(key=lambda m: (0 if any(k in m.lower() for k in ("hermes", "mini", "3b", "7b", "8b")) else 1, model_size_map.get(m, 0)))
 
+    def _pick_first_fitting(candidates: List[str]) -> Optional[str]:
+        """Return the highest-ranked candidate that fits inside available VRAM."""
+        for cand in candidates:
+            if check_model_vram_fit(cand, raw_models, client, config):
+                return cand
+        return None
+
     selected = current_model
     final_reason = ""
-    is_swapped = False
 
-    # Selection Strategy with Sticky Routing (Anti-Swap)
+    # Selection Strategy with Sticky Routing (Anti-Swap) and VRAM Fit
     if task_type == TaskType.VISION:
         if current_model in vision_models:
             selected = current_model
             final_reason = f"{reason_prefix} -> Retained active Vision model: {selected}"
         elif vision_models:
-            selected = vision_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Vision model: {selected}"
+            fit_cand = _pick_first_fitting(vision_models)
+            if fit_cand:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Vision model: {selected}"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
         else:
             selected = current_model
             final_reason = f"{reason_prefix} -> No dedicated Vision model, retained: {selected}"
 
     elif task_type == TaskType.REASONING:
-        # For deep reasoning, prefer dedicated reasoning engine if available and not currently active
         if reasoning_models and current_model not in reasoning_models:
-            selected = reasoning_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Reasoning specialist: {selected} (Deep Thinking)"
+            fit_cand = _pick_first_fitting(reasoning_models)
+            if fit_cand:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Reasoning specialist: {selected} (Deep Thinking)"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
         elif reasoning_models and any(k in reasoning_models[0].lower() for k in ("r1", "qwq", "qwen")) and not any(k in current_model.lower() for k in ("r1", "qwq", "qwen")):
-            selected = reasoning_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Primary Reasoning specialist: {selected}"
+            fit_cand = _pick_first_fitting(reasoning_models)
+            if fit_cand:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Primary Reasoning specialist: {selected}"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
         else:
             selected = current_model
             final_reason = f"{reason_prefix} -> Retained active engine: {selected} (Deep Thinking)"
 
     elif task_type == TaskType.CODING:
-        # If current model is already coder or capable generalist, stick with it
         if current_model in coder_models:
             selected = current_model
             final_reason = f"{reason_prefix} -> Retained active Coder: {selected}"
         elif coder_models:
-            selected = coder_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Coding specialist: {selected}"
+            fit_cand = _pick_first_fitting(coder_models)
+            if fit_cand:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Coding specialist: {selected}"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
         else:
             selected = current_model
             final_reason = f"{reason_prefix} -> Generalist handling code: {selected}"
 
     elif task_type == TaskType.TOOLS:
-        # If currently loaded model is a small fast model and a higher-capacity tool specialist is available,
-        # elevate to the primary tool specialist for complex schema and execution reliability
-        should_elevate = (
-            tool_models
-            and tool_models[0] != current_model
-            and (current_model in fast_models or model_size_map.get(tool_models[0], 0) > model_size_map.get(current_model, 0))
+        coder_tool_models = [m for m in coder_models if m in tool_models]
+        coder_tool_models.sort(key=lambda m: -model_size_map.get(m, 0))
+
+        clean_lower = prompt.lower()
+        is_coding_context = (
+            "code" in reason_prefix.lower()
+            or "architecture" in reason_prefix.lower()
+            or any(k in clean_lower for k in ("code", "script", "project", "app", "file", "program", "def ", "class "))
         )
-        if should_elevate:
-            selected = tool_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Primary Tool specialist: {selected}"
-        elif current_model in tool_models:
-            selected = current_model
-            final_reason = f"{reason_prefix} -> Retained Tool-capable model: {selected}"
-        elif tool_models:
-            selected = tool_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Tool specialist: {selected}"
+
+        if is_coding_context and coder_tool_models:
+            if current_model in coder_tool_models:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Retained active Coding Tool specialist: {selected}"
+            else:
+                fit_cand = _pick_first_fitting(coder_tool_models)
+                if fit_cand:
+                    selected = fit_cand
+                    final_reason = f"{reason_prefix} -> Dispatched to Specialist Coding Agent: {selected}"
+                else:
+                    selected = current_model
+                    final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
         else:
-            selected = current_model
-            final_reason = f"{reason_prefix} -> Retained active model for tools: {selected}"
+            should_elevate = (
+                tool_models
+                and tool_models[0] != current_model
+                and (current_model in fast_models or model_size_map.get(tool_models[0], 0) > model_size_map.get(current_model, 0))
+            )
+            if should_elevate:
+                fit_cand = _pick_first_fitting(tool_models)
+                if fit_cand:
+                    selected = fit_cand
+                    final_reason = f"{reason_prefix} -> Dispatched to Primary Tool specialist: {selected}"
+                else:
+                    selected = current_model
+                    final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
+            elif current_model in tool_models:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Retained Tool-capable model: {selected}"
+            elif tool_models:
+                fit_cand = _pick_first_fitting(tool_models)
+                if fit_cand:
+                    selected = fit_cand
+                    final_reason = f"{reason_prefix} -> Dispatched to Tool specialist: {selected}"
+                else:
+                    selected = current_model
+                    final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Retained active model for tools: {selected}"
 
     else:  # FAST_CHAT
-        # If current model is a heavy reasoning engine with CoT thinking overhead,
-        # dispatch to fast direct model for zero-thinking-overhead response
         current_features: List[str] = []
         if hasattr(client, "get_model_features"):
             try:
@@ -323,65 +382,16 @@ def route_prompt(
         is_current_reasoning = "Reasoning" in current_features or any(k in current_model.lower() for k in ("r1", "qwq", "thinking"))
 
         if is_current_reasoning and fast_models and current_model not in fast_models:
-            selected = fast_models[0]
-            final_reason = f"{reason_prefix} -> Dispatched to Fast Direct model: {selected} (No Thinking Overhead)"
+            fit_cand = _pick_first_fitting(fast_models)
+            if fit_cand:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Fast Direct model: {selected} (No Thinking Overhead)"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Direct fast execution on active model: {selected}"
         else:
             selected = current_model
             final_reason = f"{reason_prefix} -> Direct fast execution on active model: {selected}"
-
-    # VRAM Safety Guard Check: ensure selected model fits VRAM
-    if selected != current_model and raw_models:
-        candidate_meta = next((m for m in raw_models if (m.get("name") or m.get("id")) == selected), None)
-        if candidate_meta:
-            size_bytes = candidate_meta.get("size", 0)
-            arch: Dict[str, Any] = {}
-            if hasattr(client, "get_model_architecture_info"):
-                try:
-                    arch = client.get_model_architecture_info(selected) or {}
-                except Exception:
-                    arch = {}
-            native_ctx = None
-            layers_val = None
-            kv_heads_val = None
-            head_dim_val = None
-            sliding_window_val = None
-            swa_pattern_val = None
-            head_dim_swa_val = None
-
-            if isinstance(arch, dict):
-                val = arch.get("context_length")
-                if isinstance(val, (int, float)) and val > 0:
-                    native_ctx = int(val)
-                if isinstance(arch.get("layers"), int):
-                    layers_val = arch.get("layers")
-                if isinstance(arch.get("kv_heads"), (int, list)):
-                    kv_heads_val = arch.get("kv_heads")
-                if isinstance(arch.get("head_dim"), int):
-                    head_dim_val = arch.get("head_dim")
-                if isinstance(arch.get("sliding_window"), int):
-                    sliding_window_val = arch.get("sliding_window")
-                if isinstance(arch.get("swa_pattern"), list):
-                    swa_pattern_val = arch.get("swa_pattern")
-                if isinstance(arch.get("head_dim_swa"), int):
-                    head_dim_swa_val = arch.get("head_dim_swa")
-
-            cfg_ctx = getattr(config, "context_window", 8192)
-            eval_ctx = min(cfg_ctx, native_ctx) if native_ctx else cfg_ctx
-
-            res = calculate_vram_breakdown(
-                model_size_bytes=size_bytes,
-                context_tokens=eval_ctx,
-                layers=layers_val,
-                kv_heads=kv_heads_val,
-                head_dim=head_dim_val,
-                sliding_window=sliding_window_val,
-                swa_pattern=swa_pattern_val,
-                head_dim_swa=head_dim_swa_val,
-            )
-            if not res.is_fit:
-                # Revert to current model to prevent OOM
-                selected = current_model
-                final_reason = f"{reason_prefix} -> Candidate model exceeds VRAM, safely retained: {current_model}"
 
     is_swapped = (selected != current_model)
 
@@ -392,3 +402,68 @@ def route_prompt(
         reason=final_reason,
         is_swapped=is_swapped,
     )
+
+
+def check_model_vram_fit(
+    model_name: str,
+    raw_models: List[Dict[str, Any]],
+    client: Any,
+    config: LocaLLMConfig,
+) -> bool:
+    """Check if the candidate model fits in GPU VRAM without spillover."""
+    candidate_meta = next((m for m in raw_models if (m.get("name") or m.get("id")) == model_name), None)
+    if not candidate_meta:
+        return True
+
+    size_bytes = candidate_meta.get("size", 0)
+    if not size_bytes:
+        match = re.search(r"(\d+(?:\.\d+)?)[bB]\b", model_name)
+        if match:
+            size_bytes = int(float(match.group(1)) * 1024**3)
+
+    arch: Dict[str, Any] = {}
+    if hasattr(client, "get_model_architecture_info"):
+        try:
+            arch = client.get_model_architecture_info(model_name) or {}
+        except Exception:
+            arch = {}
+
+    native_ctx = None
+    layers_val = None
+    kv_heads_val = None
+    head_dim_val = None
+    sliding_window_val = None
+    swa_pattern_val = None
+    head_dim_swa_val = None
+
+    if isinstance(arch, dict):
+        val = arch.get("context_length")
+        if isinstance(val, (int, float)) and val > 0:
+            native_ctx = int(val)
+        if isinstance(arch.get("layers"), int):
+            layers_val = arch.get("layers")
+        if isinstance(arch.get("kv_heads"), (int, list)):
+            kv_heads_val = arch.get("kv_heads")
+        if isinstance(arch.get("head_dim"), int):
+            head_dim_val = arch.get("head_dim")
+        if isinstance(arch.get("sliding_window"), int):
+            sliding_window_val = arch.get("sliding_window")
+        if isinstance(arch.get("swa_pattern"), list):
+            swa_pattern_val = arch.get("swa_pattern")
+        if isinstance(arch.get("head_dim_swa"), int):
+            head_dim_swa_val = arch.get("head_dim_swa")
+
+    cfg_ctx = getattr(config, "context_window", 8192)
+    eval_ctx = min(cfg_ctx, native_ctx) if native_ctx else cfg_ctx
+
+    res = calculate_vram_breakdown(
+        model_size_bytes=size_bytes,
+        context_tokens=eval_ctx,
+        layers=layers_val,
+        kv_heads=kv_heads_val,
+        head_dim=head_dim_val,
+        sliding_window=sliding_window_val,
+        swa_pattern=swa_pattern_val,
+        head_dim_swa=head_dim_swa_val,
+    )
+    return res.is_fit

@@ -92,6 +92,69 @@ class TestTools(unittest.TestCase):
         read_res = execute_tool("read_skill", {"skill_name": "non_existent_mock_skill_123"})
         self.assertIn("not found", read_res)
 
+    def test_describe_tool_action(self):
+        from locallm.core.tools import describe_tool_action
+        self.assertIn("creating folder", describe_tool_action("create_directory", {"path": "my_folder"}))
+        self.assertIn("writing file", describe_tool_action("write_file", {"path": "main.py"}))
+        self.assertIn("inspecting folder", describe_tool_action("list_directory", {"path": "src"}))
+        self.assertIn("reading", describe_tool_action("read_file", {"path": "README.md"}))
+        self.assertIn("running command", describe_tool_action("execute_command", {"command": "dir"}))
+        self.assertIn("weather", describe_tool_action("get_weather", {"location": "Jakarta"}))
+
+    def test_format_live_tool_report(self):
+        from locallm.core.tools import format_live_tool_report
+        # Test success cases
+        mkdir_rep = format_live_tool_report("create_directory", {"path": "test_dir"}, "Successfully created directory: test_dir")
+        self.assertIn("Created directory", mkdir_rep)
+        self.assertIn("test_dir", mkdir_rep)
+
+        write_rep = format_live_tool_report("write_file", {"path": "app.py", "content": "print('hello')"}, "Successfully wrote file: app.py")
+        self.assertIn("Written file", write_rep)
+        self.assertIn("app.py", write_rep)
+        self.assertIn("chars", write_rep)
+
+        cmd_rep = format_live_tool_report("execute_command", {"command": "git status"}, "On branch main")
+        self.assertIn("Executed", cmd_rep)
+        self.assertIn("git status", cmd_rep)
+
+        # Test failure/permission denied cases
+        err_rep = format_live_tool_report("write_file", {"path": "protected.txt"}, "Error: write_file permission denied by user policy")
+        self.assertIn("failed", err_rep)
+        self.assertIn("✖", err_rep)
+
+    def test_extract_fallback_tool_calls(self):
+        from locallm.core.tools import extract_fallback_tool_calls
+
+        # 1. Newline-delimited JSON objects (typical Qwen2.5-Coder output)
+        raw_json_stream = (
+            '{"name": "create_directory", "arguments": {"path": "C:/Users/Downloads/New folder"}}\n'
+            '{"name": "write_file", "arguments": {"path": "C:/Users/Downloads/New folder/main.py", "content": "print(1)"}}'
+        )
+        calls = extract_fallback_tool_calls(raw_json_stream)
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[0]["function"]["name"], "create_directory")
+        self.assertEqual(calls[0]["function"]["arguments"]["path"], "C:/Users/Downloads/New folder")
+        self.assertEqual(calls[1]["function"]["name"], "write_file")
+        self.assertEqual(calls[1]["function"]["arguments"]["content"], "print(1)")
+
+        # 2. Markdown code block
+        markdown_json = (
+            "Here are the tools to call:\n"
+            "```json\n"
+            '{"name": "execute_command", "arguments": {"command": "dir"}}\n'
+            "```"
+        )
+        calls2 = extract_fallback_tool_calls(markdown_json)
+        self.assertEqual(len(calls2), 1)
+        self.assertEqual(calls2[0]["function"]["name"], "execute_command")
+        self.assertEqual(calls2[0]["function"]["arguments"]["command"], "dir")
+
+        # 3. Conversational text without tool calls
+        chat_text = "Tentu! Berikut cara membuat foldernya: buka CMD lalu ketik mkdir."
+        self.assertEqual(extract_fallback_tool_calls(chat_text), [])
+
 
 if __name__ == "__main__":
     unittest.main()
+
+

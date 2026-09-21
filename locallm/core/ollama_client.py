@@ -226,7 +226,14 @@ class OllamaClient:
                     "total_duration": data.get("total_duration", 0),
                     "prompt_eval_duration": data.get("prompt_eval_duration", 0),
                 })
-            return data.get("message", {})
+            msg = data.get("message", {})
+            if tools and not msg.get("tool_calls") and msg.get("content"):
+                from locallm.core.tools import extract_fallback_tool_calls
+                tool_names = {t.get("function", {}).get("name") for t in tools if isinstance(t, dict)}
+                recovered = extract_fallback_tool_calls(msg.get("content", ""), tool_names)
+                if recovered:
+                    msg["tool_calls"] = recovered
+            return msg
 
     def chat_stream(
         self,

@@ -17,8 +17,9 @@ A developer-first CLI and interactive Terminal User Interface (TUI) platform bui
   - Universal slash commands and natural keyword parity across all channels: `/stats` (or `stats`, `context`, `telemetry`), `/model` (or `model`), `/clear`/`/reset` (or `reset`, `clear`, `start fresh`), and `/help` (or `help`).
 - **Intelligent Auto Model Router & Dynamic Intent Dispatch**:
   - Automatically evaluates incoming user prompts in real time and classifies intent across 5 core dimensions: `CODING`, `REASONING`, `VISION`, `TOOLS`, and `FAST_CHAT`.
+  - **Parameter Capacity Priority**: Evaluates candidate models by parameter capacity descending (`14b` > `7b` > `3b` > `1.5b`), directing software development tasks to specialized coder models.
   - **Sticky Routing (Anti-Thrashing Protection)**: Avoids costly GPU model swaps if the currently loaded model is already capable of handling the intent, protecting disk I/O and latency.
-  - **Hardware & VRAM Safety Guard**: Automatically cross-references model weight footprints, context window KV cache requirements (accounting for GQA and Sliding Window Attention), and CUDA runtime buffers against idle GPU VRAM. Spillover models are safely filtered out in favor of the best-fitting in-VRAM model.
+  - **Hardware & VRAM Safety Guard**: Automatically cross-references model weight footprints, context window KV cache requirements (accounting for GQA and Sliding Window Attention), and CUDA runtime buffers against idle GPU VRAM. If a larger model exceeds VRAM, the router seamlessly falls back to the next fitting candidate without downgrading to a generalist.
   - **Channel-Clean Telemetry**: Displays dynamic routing badges in interactive CLI sessions (`⚡ Auto Router: <intent> -> <model> (<reason>)`), while logging cleanly to the server terminal during Telegram and WhatsApp bot runs without cluttering user messages.
 - **Model Manager & Precision Architecture-Aware VRAM Sizing**:
   - Automatic GPU detection (NVIDIA VRAM via `pynvml` / `nvidia-smi`) and system RAM inspection.
@@ -28,14 +29,17 @@ A developer-first CLI and interactive Terminal User Interface (TUI) platform bui
   - Multi-platform support: Seamlessly register, inspect, and switch between Ollama and OpenAI-compatible custom backends.
 - **Service Lifecycle Manager (`locaLLM start / stop`)**:
   - Full manual control to start and stop background Ollama server processes or monitor custom platforms without silent auto-spawning.
-- **Interactive Assistant (`locaLLM chat`)**:
+- **Interactive Assistant & Autonomous Coding Agent (`locaLLM chat` / `locaLLM agent`)**:
   - Streaming Markdown responses in real time with syntax-highlighted code blocks.
-  - **Silent Native Tool Automation**: The model autonomously executes local tools—checking time (`get_current_time`), working directory inspection (`get_current_directory`), smart folder listing (`list_directory` supporting aliases like `downloads`, `desktop`, `documents`), file inspection (`read_file`), web and GitHub analysis (`fetch_web`), shell command execution (`execute_command`), and weather checks (`get_weather`)—silently behind a rotating thinking spinner without cluttering the chat history.
-  - **Double Fallback Mechanism**: If token streaming returns 0 tokens, the system automatically executes a non-streaming fallback turn so the model never silently exits.
+  - **Autonomous Multi-Step ReAct Loop**: Continuous action execution where the LLM plans, executes tools, inspects observations, and self-terminates (up to 25 steps) with completion synthesis.
+  - **Granular Permission Policy (`always_allow`, `ask`, `deny`)**: Mutating actions (`write_file`, `create_directory`, `execute_command`) prompt for user confirmation (`Allow Once`, `Always Allow`, `Deny`) or run fully autonomous.
+  - **Persistent Live Real-Time Reports**: Immediate console feedback (`✔ Created directory`, `✔ Written file (X chars)`, `✔ Executed command`) right as each tool finishes.
+  - **Resilient Fallback Tool Call Extraction**: Automatically recovers and executes tool calls even when local engines emit them as raw or markdown JSON in the content stream.
+  - **Multiline Input Ergonomics**: `Enter` to send, `Ctrl+J` or `Ctrl+Down` for newlines without triggering Windows CMD fullscreen toggling.
 - **Integrations & Bot Runners**:
   - **Telegram (`locaLLM telegram`)**: Run your local model as a 24/7 Telegram bot featuring multi-user memory, allowed user ID whitelist, native Telegram tools (photo sending, document delivery, animated dice), and automatic markdown-to-HTML formatting.
   - **WhatsApp (`locaLLM whatsapp`)**: Run your local model as a WhatsApp bot featuring terminal QR code pairing, multi-turn memory, allowed phone number whitelisting, automatic 15-digit LID-to-phone number resolution, group chat support with quoted replies, and silent tool execution.
-  - **Autonomous Agent (`locaLLM agent`)**: A ReAct autonomous agent capable of executing multi-step shell commands, reading files, writing files, and inspecting URLs, with optional command auto-approval toggle.
+  - **Autonomous Agent (`locaLLM agent`)**: Multi-step CLI automation runner with native tool calling and auto-approval policies.
 - **Conversational CLI Guide & Persona Farewell**:
   - `locaLLM --help` delivers an interactive, styled assistant guide with banner, categorized command groups, and real-world usage examples.
   - Gracefully unloads model weights (`keep_alive: 0`) and outputs a clean farewell confirmation upon exit.
@@ -96,7 +100,7 @@ Prompts are analyzed in real time across 5 core intent dimensions:
 ### 2. Sticky Routing (Anti-Swap Hardware Protection)
 Swapping large models in and out of GPU VRAM incurs substantial disk I/O, memory reallocation, and initial generation latency.
 - To prevent unnecessary model thrashing, `locaLLM` implements **Sticky Routing**: if the currently loaded model is already equipped to handle the detected intent (e.g. it has tools support for a tool prompt, or high reasoning capability), the router keeps the active model.
-- A model swap is only triggered when another candidate possesses a significantly higher suitability score ($\Delta \text{score} > 15$).
+- A model swap is only triggered when another candidate possesses a significantly higher suitability score (score difference > 15 points).
 
 ### 3. VRAM Safety Guard & SWA Context Window Scaling
 Before any model is selected by the router, `locaLLM` evaluates its total memory footprint against actual idle GPU VRAM:
@@ -124,49 +128,97 @@ Before any model is selected by the router, `locaLLM` evaluates its total memory
 
 Unlike naive calculators that estimate fixed memory buffers, `locaLLM` computes exact inference memory requirements using Grouped-Query Attention (GQA) channel geometry and hybrid Sliding Window Attention (SWA) awareness.
 
-### 1. KV Cache Footprint Formula
-$$\text{Bytes\_per\_Token} = 2 \times \text{Channels} \times \text{Precision\_Bytes}$$
-$$\text{Channels} = \text{Layers} \times \text{KV\_Heads} \times \text{Head\_Dim}$$
-$$\text{KV\_Cache\_GB} = \frac{\sum_{l=1}^{\text{Layers}} (\text{KV\_Heads} \times \text{Head\_Dim} \times 2 \times \text{Precision\_Bytes} \times \min(\text{Tokens}, \text{Window}_l))}{1024^3}$$
+```text
+┌────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                   VRAM SIZING & KV CACHE ARCHITECTURE                                  │
+├────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│  Channels        = Layers × KV_Heads × Head_Dim                                                        │
+│  Bytes/Token     = 2 × Channels × Precision_Bytes  (Precision: FP16=2B, FP8/Q8=1B)                     │
+│  KV Cache (GB)   = (Context_Tokens × Bytes_per_Token) / (1024³)                                        │
+│  Usable VRAM     = Total_GPU_VRAM - OS_Display_Usage                                                   │
+│  Total VRAM      = Model_Weights_GB + KV_Cache_GB + CUDA_Overhead (~0.6 GB)                            │
+│  Max Context     = (Usable_VRAM - Model_Weights - CUDA_Overhead) × 1024³ / Bytes_per_Token             │
+└────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+```
 
-- **Standard Precision**: 2 bytes per element (FP16/BF16 default) or 1 byte (FP8/Q8 quantized KV cache).
-- **GQA Channel Geometry**: Utilizes the model's physical key-value head count (`num_key_value_heads`), properly calculating the reduced KV cache size of modern architectures like Llama 3, Qwen 2.5, and Gemma.
+### 1. KV Cache Footprint Formula
+
+Modern architectures (Llama 3, Qwen 2.5, Gemma, Mistral) utilize Grouped-Query Attention (GQA) where multiple query heads share a single key-value head pair. Memory per token is calculated from physical KV channel geometry:
+
+```text
+Channels        = Layers × KV_Heads × Head_Dim
+Bytes_per_Token = 2 × Channels × Precision_Bytes
+```
+
+For models with standard global attention across all layers:
+```text
+KV_Cache_GB = (Context_Tokens × Bytes_per_Token) / (1024³)
+```
+
+For hybrid Sliding Window Attention (SWA) architectures (e.g. Gemma 4, Mistral):
+```text
+                  Layers
+KV_Cache_GB = [    ∑    (KV_Heads × Head_Dim × 2 × Precision_Bytes × min(Tokens, Window_l)) ] / 1024³
+                 l = 1
+```
+
+- **Precision Options**: `2 bytes` (FP16 / BF16 default) or `1 byte` (FP8 / Q8 quantized KV cache).
+- **GQA Channel Scaling**: Evaluates physical KV heads (`num_key_value_heads`) rather than query heads, preventing 4×–8× over-estimation of KV cache.
 - **Sliding Window Attention (SWA)**:
-  - Models with alternating local/global attention (e.g. Gemma 4, Mistral) only allocate full context tokens to global layers.
-  - Local layers are bounded by $\text{Window}_l = 1{,}024$ tokens.
-  - *Example*: At 65,536 context, standard FP16 KV cache would require ~40+ GB. With Gemma 4 SWA awareness (40 local layers, 8 global layers), the KV cache is accurately calculated at only **1.31 GB**, reflecting actual real-world GPU allocation.
+  - Models with alternating local/global attention only allocate full context tokens to global layers.
+  - Local layers are bounded by `Window_l = 1,024` tokens.
+  - *Real-World Impact*: At 65,536 context, standard FP16 KV cache would require ~40+ GB. With Gemma 4 SWA awareness (40 local layers, 8 global layers), the KV cache is accurately calculated at only **1.31 GB**, reflecting actual real-world GPU allocation.
 
 ### 2. Usable GPU VRAM
-$$\text{Usable\_VRAM} = \text{Total\_VRAM} - \text{OS\_Display\_Usage}$$
-Idle free memory is measured dynamically from the GPU driver via `pynvml` or `nvidia-smi`.
 
-### 3. Total Required VRAM & CUDA Overhead
-$$\text{Total\_VRAM} = \text{Model\_Weights\_GB} + \text{KV\_Cache\_GB} + \text{CUDA\_Overhead\_GB}$$
-Where $\text{CUDA\_Overhead\_GB} \approx 0.6\text{ GB}$ covers the CUDA runtime context, scratchpad buffers, and activation memory.
+Available inference VRAM is determined dynamically by querying the GPU driver via `pynvml` or `nvidia-smi`:
 
-### 4. Compatibility Status
-- **`[bold #00ff87]100% GPU[/]`**: $\text{Total\_VRAM} \le \text{Usable\_VRAM}$ ($\text{Headroom} \ge 0$). The model runs completely on GPU with optimal generation speed.
-- **`[bold red]SPILLOVER[/]`**: $\text{Total\_VRAM} > \text{Usable\_VRAM}$. Indicates that context or weights will partially offload to CPU RAM, degrading token generation throughput.
+```text
+Usable_VRAM = Total_GPU_VRAM - OS_Display_Usage
+```
+
+### 3. Total Required VRAM & CUDA Runtime Overhead
+
+```text
+Total_VRAM = Model_Weights_GB + KV_Cache_GB + CUDA_Overhead_GB
+```
+
+Where `CUDA_Overhead_GB ≈ 0.6 GB` covers the CUDA runtime context, scratchpad buffers, and activation memory.
+
+### 4. Compatibility Classification
+
+| Status | Condition | Generation Behavior |
+| :--- | :--- | :--- |
+| 🟢 **100% GPU (FIT)** | `Total_VRAM ≤ Usable_VRAM` (Headroom ≥ 0) | The model runs completely on GPU with optimal generation throughput. |
+| 🔴 **SPILLOVER** | `Total_VRAM > Usable_VRAM` | Context or weights will partially offload to CPU RAM, degrading token generation throughput. |
 
 ### 5. Maximum Safe Context Window
-$$\text{Max\_Context} = \frac{(\text{Usable\_VRAM} - \text{Model\_Weights\_GB} - \text{CUDA\_Overhead\_GB}) \times 1024^3}{\text{Bytes\_per\_Token}}$$
-Computes the exact context token ceiling before the model spills into system RAM.
+
+Computes the exact context token ceiling before the model spills into system RAM:
+
+```text
+Max_Context_Tokens = (Usable_VRAM - Model_Weights_GB - CUDA_Overhead_GB) × 1024³ / Bytes_per_Token
+```
 
 ---
 
 ## Built-in Native Tools & Smart Filesystem
 
-All tools run silently behind a minimalist rotating square snake spinner (`▘▀▝▐▗▄▖▌`) during interactive chat, agent loops, Telegram, and WhatsApp sessions.
+All tools run silently behind a minimalist rotating square snake spinner (`▘▀▝▐▗▄▖▌`) during interactive chat, agent loops, Telegram, and WhatsApp sessions, with persistent real-time completion reports (`✔`) rendered in the terminal.
 
 | Tool Name | Purpose | Key Features & Safeguards |
 | :--- | :--- | :--- |
+| **`create_directory`** | Directory creation | Recursively creates directories anywhere on the filesystem, automatically scaffolding parent folders as needed. |
+| **`write_file`** | File generation & writing | Writes or overwrites text files anywhere on the system with automatic parent directory creation and character count metrics. |
+| **`read_file`** | File content inspection | Reads UTF-8 text files with line numbering, length safeguards, and workspace bounds checking. |
+| **`list_directory`** | Filesystem inspection | Folder-first listing (directories `[DIR]` prioritized over `[FILE]`) with total counts. Automatically expands smart aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`). |
+| **`execute_command`** | Terminal automation | Executes shell commands within the current environment, adhering strictly to configured permission policy (`always_allow`, `ask`, `deny`). |
+| **`fetch_web`** | Web research | Fetches web pages as clean text/markdown. Directly resolves and downloads raw `README.md` files for GitHub repository URLs. |
+| **`get_weather`** | Weather forecasts | Plain-text weather reporting via wttr.in with Windows console charmap encoding protection (ASCII/Latin degree normalization). |
 | **`get_current_time`** | Real-time clock | Returns formatted system local time, day, and date. |
 | **`get_current_directory`** | Working directory | Returns active workspace directory path. |
-| **`list_directory`** | Filesystem inspection | Folder-first listing (directories `[DIR]` prioritized over `[FILE]`) with total counts. Automatically expands smart aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`). |
-| **`read_file`** | File content inspection | Reads UTF-8 text files with line numbering, length safeguards, and workspace bounds checking. |
-| **`fetch_web`** | Web research | Fetches web pages as clean text/markdown. Directly resolves and downloads raw `README.md` files for GitHub repository URLs. |
-| **`execute_command`** | Terminal automation | Executes shell commands within the current environment. Includes interactive user confirmation prompt or optional auto-approve mode (`--auto-approve`). |
-| **`get_weather`** | Weather forecasts | Plain-text weather reporting via wttr.in with Windows console charmap encoding protection (ASCII/Latin degree normalization). |
+| **`list_skills`** | Skill discovery | Discovers and lists all installed agent skills across active workspace and project root (`.locallm/skills/`, `.agents/skills/`, `skills/`). |
+| **`read_skill`** | Skill execution | Reads and loads full specialized skill markdown instructions on demand. |
 
 ---
 
@@ -384,7 +436,8 @@ Example configuration:
   "whatsapp_enabled": false,
   "whatsapp_allowed_numbers": ["628123456789"],
   "whatsapp_session_dir": "",
-  "agent_auto_approve_commands": false
+  "agent_auto_approve_commands": false,
+  "agent_permission_policy": "ask"
 }
 ```
 

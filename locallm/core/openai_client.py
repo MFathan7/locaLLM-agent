@@ -171,6 +171,12 @@ class OpenAIClient:
                         },
                     })
                 result["tool_calls"] = tool_calls_list
+            elif tools and result.get("content"):
+                from locallm.core.tools import extract_fallback_tool_calls
+                tool_names = {t.get("function", {}).get("name") for t in tools if isinstance(t, dict)}
+                fallback_calls = extract_fallback_tool_calls(result.get("content", ""), tool_names)
+                if fallback_calls:
+                    result["tool_calls"] = fallback_calls
 
             if stats_out is not None and response.usage:
                 stats_out.update({
