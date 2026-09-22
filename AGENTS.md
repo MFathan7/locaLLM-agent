@@ -35,6 +35,7 @@ Main Menu:
   │     ├── [Custom Platform] -> OpenAI-compatible platform models, Back
   │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
+  ├── Plugins               -> Modular integrations: Inspect, Toggle, Scaffold, Back
   ├── Services              -> Server daemon lifecycle per platform
   │     ├── Ollama          -> Status, Start Server, Stop Server, Configure Endpoint, Back
   │     ├── [Custom Platform] -> Status, Set Active, Configure Endpoint/Key, Delete, Back
@@ -52,7 +53,7 @@ Main Menu:
 ---
 
 ## 4. Chat & Cross-Platform Parity (CLI, Telegram, WhatsApp)
-1. **Silent Tool Execution**: Tools (`list_directory`, `read_file`, `fetch_web`, `get_current_time`, `execute_command`, `get_weather`, etc.) must run silently behind loading indicators (spinner in CLI, `typing` action in bots). Never print raw JSON payloads into chat history.
+1. **Silent Tool Execution**: Tools (`search_web`, `fetch_web`, `list_directory`, `read_file`, `get_current_time`, `execute_command`, `get_weather`, etc.) must run silently behind loading indicators (spinner in CLI, `typing` action in bots). Never print raw JSON payloads into chat history.
 2. **Context Telemetry**: Render cumulative active session token usage vs model context window (`num_ctx`, default `8,192`):
    `• Context: 2,681/8,192 tokens (32.7%) • Speed: 37.8 tok/s`
    Dynamic threshold colors: **Green** (<70%), **Yellow** (70–90%), **Red** (>=90%). Never show per-response prompt/eval tokens.
@@ -99,3 +100,9 @@ Main Menu:
 6. **Autonomous Multi-Step ReAct Loop**: The LLM autonomously determines the sequence of actions and stopping conditions. Turns loop continuously while `tool_calls` are emitted (up to `MAX_TOOL_STEPS = 25`), executing tools, updating spinners silently, and feeding observations back to the model until it outputs its final summary.
 7. **Permission Policy (`always_allow`, `ask`, `deny`)**: Mutating tools (`write_file`, `create_directory`, `execute_command`) adhere to the configured policy: `always_allow` executes without prompting; `ask` interactively requests user authorization (`Allow Once`, `Always Allow (session)`, `Deny`); `deny` strictly blocks mutating operations in read-only mode.
 8. **Skills & Knowledge Architecture**: Project context (`AGENTS.md`, `CLAUDE.md`) and skills (`.locallm/skills/`, `.agents/skills/`, `skills/`, and workspace knowledge) are discovered automatically from both active workspace and project root, and queryable via native tools (`list_skills`, `read_skill`).
+9. **Modular Plugin Architecture & Extensibility**:
+   - **Zero Hardcoding**: Never hardcode custom plugin tools or database connectors into the core engine. All extensions are discovered dynamically via standard JSON manifests (`plugin.json`) and entrypoint scripts (`main.py`).
+   - **Three-Tier Discovery**: Plugins are loaded with precedence: Project-Local (`<cwd>/plugins/`) > Workspace-Isolated (`~/.locallm/workspaces/<name>/plugins/`) > Global (`~/.locallm/plugins/`).
+   - **Dynamic Function Calling Schema Injection**: Tools declared in active plugins are automatically merged into the LLM's function calling schema (`get_all_assistant_tools`).
+   - **Mutating Safety & Policy**: Any plugin tool declaring `"mutating": true` in its manifest automatically adheres to the interactive Permission Policy (`ask`, `always_allow`, `deny`).
+   - **Configurable Web Search**: Web search (`search_web`) remains customizable across search engines (`auto`, `bing`, `duckduckgo`, `custom`) with custom endpoint support to protect against network blocking.

@@ -211,7 +211,7 @@ def load_workspace_context(name: str) -> str:
         except Exception:
             pass
 
-    # 2. Knowledge documents (.md, .txt)
+    # 2. Knowledge documents (.md, .txt) - Progressive disclosure (compact snippets)
     knowledge_dir = ws_path / "knowledge"
     if knowledge_dir.exists() and knowledge_dir.is_dir():
         k_entries: List[str] = []
@@ -221,14 +221,15 @@ def load_workspace_context(name: str) -> str:
                 content = file.read_text(encoding="utf-8", errors="replace").strip()
                 if content:
                     rel_name = str(file.relative_to(knowledge_dir)).replace("\\", "/")
-                    k_entries.append(f"--- Document: {rel_name} ---\n{content[:4000]}")
+                    snippet = content if len(content) <= 400 else (content[:400] + f"\n... [Use read_file('{rel_name}') for full document]")
+                    k_entries.append(f"--- Document: {rel_name} ---\n{snippet}")
             except Exception:
                 continue
         if k_entries:
             combined_k = "\n\n".join(k_entries)
-            sections.append(f"[Workspace Knowledge Base]\n{combined_k[:16000]}")
+            sections.append(f"[Workspace Knowledge Base]\n{combined_k[:3000]}")
 
-    # 3. Agent Skills (.md, .txt)
+    # 3. Agent Skills (.md, .txt) - Progressive disclosure (compact snippets)
     skills_dir = ws_path / "skills"
     if skills_dir.exists() and skills_dir.is_dir():
         s_entries: List[str] = []
@@ -238,14 +239,15 @@ def load_workspace_context(name: str) -> str:
                 content = file.read_text(encoding="utf-8", errors="replace").strip()
                 if content:
                     rel_name = str(file.relative_to(skills_dir)).replace("\\", "/")
-                    s_entries.append(f"--- Skill: {rel_name} ---\n{content[:4000]}")
+                    snippet = content if len(content) <= 400 else (content[:400] + f"\n... [Use read_file('{rel_name}') for full skill instructions]")
+                    s_entries.append(f"--- Skill: {rel_name} ---\n{snippet}")
             except Exception:
                 continue
         if s_entries:
             combined_s = "\n\n".join(s_entries)
-            sections.append(f"[Workspace Skills]\n{combined_s[:16000]}")
+            sections.append(f"[Workspace Skills]\n{combined_s[:3000]}")
 
-    # 4. Project Rules & Context from Current Working Directory (CWD)
+    # 4. Project Rules & Context from Current Working Directory (CWD) - Capped to prevent context bloat
     cwd = Path.cwd()
     project_rules_files = ["AGENTS.md", "CLAUDE.md", "agent.md", "rules.md"]
     for rf_name in project_rules_files:
@@ -254,7 +256,8 @@ def load_workspace_context(name: str) -> str:
             try:
                 rule_text = rule_file.read_text(encoding="utf-8", errors="replace").strip()
                 if rule_text:
-                    sections.append(f"[Project Architecture & Rules ({rf_name})]\n{rule_text[:12000]}")
+                    rule_snippet = rule_text if len(rule_text) <= 2000 else (rule_text[:2000] + f"\n... [Full project rules in {rf_name}]")
+                    sections.append(f"[Project Architecture & Rules ({rf_name})]\n{rule_snippet}")
                     break
             except Exception:
                 pass
@@ -270,11 +273,12 @@ def load_workspace_context(name: str) -> str:
                         content = file.read_text(encoding="utf-8", errors="replace").strip()
                         if content:
                             rel_name = str(file.relative_to(local_skill_path)).replace("\\", "/")
-                            local_s_entries.append(f"--- Local Skill: {rel_name} ---\n{content[:3000]}")
+                            snippet = content if len(content) <= 300 else (content[:300] + f"\n... [Use read_file('{rel_name}') for full instructions]")
+                            local_s_entries.append(f"--- Local Skill: {rel_name} ---\n{snippet}")
                     except Exception:
                         continue
                 if local_s_entries:
-                    sections.append(f"[Local Project Skills]\n" + "\n\n".join(local_s_entries))
+                    sections.append(f"[Local Project Skills]\n" + "\n\n".join(local_s_entries)[:2500])
                     break
 
     if not sections:

@@ -136,6 +136,27 @@ ASSISTANT_TOOLS: List[Dict[str, Any]] = [
     {
         "type": "function",
         "function": {
+            "name": "search_web",
+            "description": "Search the live internet for real-time information, documentation, news, or answers to unknown questions. Returns top search results with titles, snippets, and URLs.",
+            "parameters": {
+                "type": "object",
+                "required": ["query"],
+                "properties": {
+                    "query": {
+                        "type": "string",
+                        "description": "Search query keywords (e.g. 'latest python release', 'fastapi tutorial', 'company news')",
+                    },
+                    "max_results": {
+                        "type": "integer",
+                        "description": "Maximum number of search results to return (default is 5)",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "execute_command",
             "description": "Run a shell command safely to inspect system state",
             "parameters": {
@@ -398,6 +419,140 @@ WHATSAPP_TOOLS: List[Dict[str, Any]] = list(ASSISTANT_TOOLS) + [
 ]
 
 
+def decode_bing_url(u: str) -> str:
+    """Decode real destination URL from Bing redirect link."""
+    match = re.search(r"[?&]u=a1([a-zA-Z0-9_\-]+)", u)
+    if not match:
+        return u
+    raw = match.group(1)
+    pad = 4 - (len(raw) % 4)
+    if pad < 4:
+        raw += "=" * pad
+    try:
+        import base64
+        decoded = base64.urlsafe_b64decode(raw).decode("utf-8", errors="replace")
+        return decoded if decoded.startswith(("http://", "https://")) else u
+    except Exception:
+        return u
+
+
+def perform_web_search(
+    query: str,
+    max_results: int = 5,
+    provider: Optional[str] = None,
+    custom_api_url: Optional[str] = None,
+) -> str:
+    """Perform real-time web search and return formatted markdown results with titles, links, and snippets.
+
+    Configurable via search_provider ('auto', 'bing', 'duckduckgo', 'custom') and search_api_url.
+    """
+    clean_query = query.strip()
+    if not clean_query:
+        return "Error: Search query cannot be empty."
+
+    try:
+        from locallm.config import load_config
+        cfg = load_config()
+        chosen_provider = (provider or getattr(cfg, "search_provider", "auto")).strip().lower()
+        custom_url = (custom_api_url or getattr(cfg, "search_api_url", "")).strip()
+    except Exception:
+        chosen_provider = (provider or "auto").strip().lower()
+        custom_url = (custom_api_url or "").strip()
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+
+    # 1. Custom endpoint if configured (e.g. SearXNG JSON endpoint)
+    if custom_url or chosen_provider == "custom":
+        if not custom_url:
+            return "Error: Custom search provider chosen but no search_api_url is configured."
+        target_url = custom_url.replace("{query}", clean_query)
+        try:
+            with httpx.Client(timeout=10.0, follow_redirects=True, headers=headers) as client:
+                res = client.get(target_url)
+                if res.status_code == 200:
+                    try:
+                        data = res.json()
+                        results_list = data.get("results", []) if isinstance(data, dict) else []
+                        items = []
+                        for item in results_list[:max_results]:
+                            t = item.get("title", "")
+                            u = item.get("url", "")
+                            s = item.get("content", "") or item.get("snippet", "")
+                            items.append(f"- **[{t}]({u})**\n  {s}")
+                        if items:
+                            return f"Web Search Results for '{clean_query}':\n\n" + "\n\n".join(items)
+                    except Exception:
+                        return f"Custom Search Response:\n{res.text[:3500]}"
+        except Exception as exc:
+            if chosen_provider == "custom":
+                return f"Error contacting custom search endpoint: {exc}"
+
+    # 2. DuckDuckGo (if chosen explicitly)
+    if chosen_provider == "duckduckgo":
+        try:
+            with httpx.Client(timeout=6.0, follow_redirects=True, headers=headers) as client:
+                resp = client.post("https://html.duckduckgo.com/html/", data={"q": clean_query})
+                if resp.status_code == 200 and "result__snippet" in resp.text:
+                    blocks = re.findall(r'<div class="result__body"[^>]*>([\s\S]*?)</div>', resp.text)
+                    items = []
+                    for b in blocks[:max_results]:
+                        link_m = re.search(r'<a[^>]+class="result__url"[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>', b)
+                        title_m = re.search(r'<a[^>]+class="result__snippet"[^>]*>([\s\S]*?)</a>', b)
+                        if link_m:
+                            url = link_m.group(1).strip()
+                            title = re.sub(r"<[^>]+>", "", link_m.group(2)).strip()
+                            snip = re.sub(r"<[^>]+>", "", title_m.group(1)).strip() if title_m else ""
+                            items.append(f"- **[{title}]({url})**\n  {snip}")
+                    if items:
+                        return f"Web Search Results for '{clean_query}' (DuckDuckGo):\n\n" + "\n\n".join(items)
+        except Exception:
+            pass
+
+    # 3. Bing Search (Fast, robust, globally accessible without ISP blocking)
+    try:
+        url = f"https://www.bing.com/search?q={clean_query}&setlang=en"
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
+            res = client.get(url)
+            if res.status_code == 200:
+                blocks = re.findall(r'<li class="b_algo"[^>]*>([\s\S]*?)</li>', res.text)
+                items = []
+                import html
+                for b in blocks:
+                    h2_m = re.search(r'<h2[^>]*>\s*<a[^>]+href="([^"]+)"[^>]*>([\s\S]*?)</a>\s*</h2>', b)
+                    if not h2_m:
+                        continue
+                    raw_url = html.unescape(h2_m.group(1))
+                    real_url = decode_bing_url(raw_url)
+                    title = re.sub(r"<[^>]+>", "", h2_m.group(2)).strip()
+                    p_m = re.search(r'<p[^>]*>([\s\S]*?)</p>', b)
+                    snippet = re.sub(r"<[^>]+>", "", p_m.group(1)).strip() if p_m else ""
+                    if title and real_url:
+                        items.append(f"- **[{title}]({real_url})**\n  {snippet}")
+                    if len(items) >= max_results:
+                        break
+
+                if items:
+                    return f"Web Search Results for '{clean_query}':\n\n" + "\n\n".join(items)
+    except Exception:
+        pass
+
+    return f"No search results found or web search failed for query: '{clean_query}'."
+
+
+def get_all_assistant_tools(workspace_name: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Return all assistant tools including dynamically loaded tools from enabled plugins."""
+    try:
+        from locallm.core.plugin_manager import get_active_plugin_tools
+        plugin_tools = get_active_plugin_tools(workspace_name)
+        return list(ASSISTANT_TOOLS) + plugin_tools
+    except Exception:
+        return list(ASSISTANT_TOOLS)
+
+
 def execute_tool(
     name: str,
     arguments: Dict[str, Any],
@@ -408,6 +563,11 @@ def execute_tool(
 ) -> str:
     """Execute a requested tool with permission policy and return a string observation."""
     mutating_tools = {"write_file", "create_directory", "execute_command"}
+    try:
+        from locallm.core.plugin_manager import get_plugin_mutating_tools
+        mutating_tools = mutating_tools.union(get_plugin_mutating_tools(workspace_name))
+    except Exception:
+        pass
 
     if name in mutating_tools:
         effective_policy = permission_policy.lower()
@@ -541,6 +701,14 @@ def execute_tool(
         except Exception as exc:
             return f"Error fetching URL '{url}': {exc}"
 
+    elif name == "search_web":
+        query_text = arguments.get("query", "")
+        try:
+            max_r = int(arguments.get("max_results", 5))
+        except (ValueError, TypeError):
+            max_r = 5
+        return perform_web_search(query_text, max_results=max_r)
+
     elif name == "execute_command":
         cmd = arguments.get("command", "").strip()
         if not cmd:
@@ -610,6 +778,15 @@ def execute_tool(
             return f"Error: Skill '{skill_name}' not found."
         return f"=== Skill Content for '{skill_name}' ===\n" + content[:6000]
 
+    # Dynamically dispatch to installed and enabled plugins
+    try:
+        from locallm.core.plugin_manager import execute_plugin_tool
+        handled, obs = execute_plugin_tool(name, arguments, workspace_name=workspace_name)
+        if handled:
+            return obs
+    except Exception as exc:
+        return f"Error executing plugin tool '{name}': {exc}"
+
     return f"Unknown tool: '{name}'"
 
 
@@ -620,6 +797,11 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
         path = args.get("path", "")
         name_str = Path(path).name if path else ""
         return f"locaLLM is creating folder '{name_str or path}'..." if (name_str or path) else "locaLLM is creating folder..."
+
+    elif name == "search_web":
+        query_text = args.get("query", "").strip()
+        short_q = (query_text[:35] + "...") if len(query_text) > 35 else query_text
+        return f"locaLLM is searching the web for '{short_q}'..." if short_q else "locaLLM is searching the web..."
 
     elif name == "write_file":
         path = args.get("path", "")
@@ -669,6 +851,9 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
 
 def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], observation: str) -> str:
     """Format a persistent real-time completion report line for display in terminal/logs."""
+    from locallm.ui.theme import get_theme_palette
+    palette = get_theme_palette()
+
     args = arguments or {}
     obs_lower = observation.lower()
     is_error = obs_lower.startswith("error") or "permission denied" in obs_lower or "failed" in obs_lower
@@ -679,50 +864,56 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
 
     if name == "create_directory":
         path = args.get("path", "")
-        return f"  [bold #00ff87]✔[/] [#00ff87]Created directory:[/] [bold cyan]{path}[/]"
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Created directory:[/] [bold {palette.primary}]{path}[/]"
 
     elif name == "write_file":
         path = args.get("path", "")
         content = args.get("content", "")
-        return f"  [bold #00ff87]✔[/] [#00ff87]Written file:[/] [bold cyan]{path}[/] [dim]({len(content)} chars)[/]"
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Written file:[/] [bold {palette.primary}]{path}[/] [dim]({len(content)} chars)[/]"
 
     elif name == "list_directory":
         path = args.get("path", ".")
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Inspected directory:[/] [bold cyan]{path}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Inspected directory:[/] [bold {palette.primary}]{path}[/]"
 
     elif name == "read_file":
         path = args.get("path", "")
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Read file:[/] [bold cyan]{path}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Read file:[/] [bold {palette.primary}]{path}[/]"
 
     elif name == "execute_command":
         cmd = args.get("command", "").strip()
         short_cmd = (cmd[:40] + "...") if len(cmd) > 40 else cmd
-        return f"  [bold #00ff87]✔[/] [#00ff87]Executed:[/] [bold cyan]{short_cmd}[/]"
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Executed:[/] [bold {palette.primary}]{short_cmd}[/]"
 
     elif name == "fetch_web":
         url = args.get("url", "").strip()
         clean_url = re.sub(r"^https?://(www\.)?", "", url)
         short_url = (clean_url[:40] + "...") if len(clean_url) > 40 else clean_url
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Fetched web:[/] [dim cyan]{short_url}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Fetched web:[/] [dim {palette.primary}]{short_url}[/]"
+
+    elif name == "search_web":
+        query_text = args.get("query", "").strip()
+        short_q = (query_text[:40] + "...") if len(query_text) > 40 else query_text
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Searched web:[/] [bold {palette.primary}]{short_q}[/]"
 
     elif name == "get_weather":
         loc = args.get("location", "")
-        return f"  [bold #00ff87]✔[/] [#00ff87]Weather ({loc}):[/] [dim white]{observation}[/]"
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Weather ({loc}):[/] [dim white]{observation}[/]"
 
     elif name == "get_current_time":
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Checked time:[/] [dim white]{observation}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Checked time:[/] [dim white]{observation}[/]"
 
     elif name == "get_current_directory":
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Working directory:[/] [dim white]{observation}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Working directory:[/] [dim white]{observation}[/]"
 
     elif name == "list_skills":
-        return "  [bold #00d7ff]✔[/] [#00d7ff]Discovered skills[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Discovered skills[/]"
 
     elif name == "read_skill":
         sname = args.get("skill_name", "")
-        return f"  [bold #00d7ff]✔[/] [#00d7ff]Loaded skill:[/] [dim cyan]{sname}[/]"
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Loaded skill:[/] [dim {palette.primary}]{sname}[/]"
 
-    return f"  [bold #00ff87]✔[/] [#00ff87]Executed:[/] [bold cyan]{name}[/]"
+    return f"  [bold {palette.success}]✔[/] [{palette.success}]Executed:[/] [bold {palette.primary}]{name}[/]"
+
 
 
 def extract_fallback_tool_calls(

@@ -7,6 +7,7 @@ from locallm.core.openai_client import get_inference_client
 from locallm.modules.agent import run_agent_menu
 from locallm.modules.assistant import run_assistant
 from locallm.modules.models_manager import run_models_manager
+from locallm.modules.plugin_menu import run_plugin_menu
 from locallm.modules.service_manager import run_service_manager
 from locallm.modules.settings import run_settings
 from locallm.modules.telegram_bot import run_telegram_menu
@@ -14,16 +15,18 @@ from locallm.modules.whatsapp_bot import run_whatsapp_menu
 from locallm.modules.workspace_manager import run_workspace_menu
 from locallm.ui.banner import render_banner
 from locallm.ui.chat_view import render_application_farewell
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, apply_active_theme, console
 from typing import Any, Optional
 
 
 def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Launch top-level interactive console menu loop."""
     while True:
+        apply_active_theme(getattr(config, "ui_theme", "cyber_neon"))
         console.clear()
         client = get_inference_client(config)
         render_banner(config, client)
+
 
         service_ready = False
         if client and hasattr(client, "is_connected"):
@@ -48,6 +51,7 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
                 "Workspaces",
                 "Integrations",
                 "Model Manager",
+                "Plugins",
                 "Services",
                 "Settings",
                 "Exit",
@@ -76,6 +80,8 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
             _run_integrations_menu(config, client)
         elif choice == "Model Manager":
             run_models_manager(config, client)
+        elif choice == "Plugins":
+            run_plugin_menu(config)
         elif choice == "Services":
             run_service_manager(config)
         elif choice == "Settings":
@@ -84,10 +90,14 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
 
 def _run_integrations_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Submenu for integrations, channels, and autonomous runners."""
+    from locallm.ui.theme import get_theme_palette
+
     while True:
         console.clear()
         client = get_inference_client(config)
         render_banner(config, client)
+        palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+        console.print(f"[bold {palette.accent}]⟦{palette.icon} INTEGRATIONS & CHANNELS⟧[/]\n")
 
         choice = questionary.select(
             "Integrations & Channels:",
@@ -99,6 +109,7 @@ def _run_integrations_menu(config: LocaLLMConfig, client: Optional[Any] = None) 
             ],
             style=QUESTIONARY_STYLE,
         ).ask()
+
 
         if choice is None or choice == "Back":
             break

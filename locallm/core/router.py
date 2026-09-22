@@ -62,11 +62,15 @@ TOOL_PATTERNS = [
     # Universal file & directory operations
     r"\b(create|write|read|save|list|generate|make|build|dump|output|export|mkdir|touch)\b.*?\b(file|files|folder|dir|directory|project|script|code)\b",
     r"\b(buat|buatkan|bikin|tulis|baca|simpan)\b.*?\b(file|filenya|folder|direktori|berkas|skrip|script|code|project)\b",
-    r"\b(write_file|create_directory|read_file|list_directory)\b",
-    # Terminal, system commands, and web/API fetching
+    r"\b(write_file|create_directory|read_file|list_directory|search_web)\b",
+    # Terminal, system commands, web/API fetching, and database
     r"\b(run|execute|jalankan)\s+(?:command|cmd|terminal|powershell|bash|shell|script)\b",
-    r"\b(curl|wget|fetch|download|unduh|ping|http[s]?://)\b",
-    r"\b(weather|temperature|forecast|suhu|cuaca)\b",
+    r"\b(curl|wget|fetch|download|unduh|ping|search|googling|cari\s+web|search_web|http[s]?://)\b",
+    r"\b(berita|news|terkini|terbaru|hari ini|today|latest|current events|headline|isu terkini)\b",
+    r"\b(kabar\s+berita|update\s+berita|info\s+terkini|kabar\s+terbaru)\b",
+    r"\b(presiden|menteri|pemerintahan|politik|pilkada|pemilu)\b.*?\b(terkini|terbaru|saat ini|sekarang|kali ini)\b",
+    r"\b(weather|temperature|forecast|suhu|cuaca|sqlite_query|sqlite_schema)\b",
+    r"\b(query|cek|inspeksi|isi|select|update|delete|insert)\b.*?\b(database|tabel|sqlite|db)\b",
     r"\b(tool call|function calling|schema json|json schema|trigger_\w+|execute tool)\b",
 ]
 
@@ -76,6 +80,40 @@ FAST_PATTERNS = [
     r"\b(what is|who is|artinya|terjemahkan|translate|bullet points?|summarize|ringkas|rangkum|singkatkan)\b",
     r"\b(in simple terms|secara sederhana|analogi|explain simply)\b",
 ]
+
+
+def is_match_negated(text: str, match_start: int) -> bool:
+    """Check if a matched action phrase is preceded by an immediate negation within the same clause.
+
+    Prevents false positives on prompts like:
+    - 'jangan bikin file ya' -> negated
+    - 'nggak usah coding ya' -> negated
+    - 'without creating any files' -> negated
+    - 'don't run scripts' -> negated
+
+    Correctly handles double-negative / positive idioms:
+    - 'jangan lupa bikin file' -> NOT negated (positive intent)
+    - 'not without creating' -> NOT negated (positive intent)
+    """
+    prefix = text[max(0, match_start - 40):match_start]
+    clause_delimiters = [",", ".", ";", "!", "?", "\n", ":"]
+    last_boundary = -1
+    for delim in clause_delimiters:
+        idx = prefix.rfind(delim)
+        if idx > last_boundary:
+            last_boundary = idx
+    if last_boundary != -1:
+        prefix = prefix[last_boundary + 1:]
+
+    prefix_clean = prefix.strip().lower()
+    if not prefix_clean:
+        return False
+
+    if re.search(r"\b(jangan\s+lupa|don'?t\s+forget|never\s+forget|tidak\s+lupa)\b", prefix_clean, re.IGNORECASE):
+        return False
+
+    NEGATION_WORDS = r"\b(jangan|nggak\s+usah|gak\s+usah|tidak\s+usah|tidak\s+perlu|nggak\s+perlu|gak\s+perlu|tanpa|bukan|dilarang|don'?t|do\s+not|never|without|stop|avoid|no\s+need\s+to)\b"
+    return bool(re.search(NEGATION_WORDS, prefix_clean, re.IGNORECASE))
 
 
 def classify_prompt(
@@ -120,16 +158,26 @@ def classify_prompt(
             if is_action_followup:
                 return TaskType.TOOLS, TaskTier.DEEP_REASONING, "Technical follow-up action to previous code/architecture"
 
-    # 1. Tool intent check (filesystem paths, file creation, command, web, weather)
+    # 1. Tool intent check with negation guard (filesystem paths, file creation, command, web, weather)
     for pat in TOOL_PATTERNS:
-        if re.search(pat, clean, re.IGNORECASE):
-            return TaskType.TOOLS, TaskTier.DEEP_REASONING, "System tool / schema extraction intent"
+        for match in re.finditer(pat, clean, re.IGNORECASE):
+            # Structural patterns (absolute paths like C:\ or POSIX paths) cannot be negated
+            is_structural = (
+                bool(re.match(r"[a-zA-Z]:[/\\]", match.group(0)))
+                or match.group(0).startswith(("/", "./", "../", "~"))
+            )
+            if is_structural or not is_match_negated(clean, match.start()):
+                return TaskType.TOOLS, TaskTier.DEEP_REASONING, "System tool / schema extraction intent"
 
-    # 2. Coding check
+    # 2. Coding check with negation guard
     coding_score = 0
     for pat in CODING_PATTERNS:
-        if re.search(pat, clean, re.IGNORECASE):
-            coding_score += 2
+        for match in re.finditer(pat, clean, re.IGNORECASE):
+            # Markdown code fences and inline ticks are structural and un-negatable
+            is_structural = match.group(0).startswith(("```", "`"))
+            if is_structural or not is_match_negated(clean, match.start()):
+                coding_score += 2
+                break
 
     if coding_score >= 2:
         # If code has complex debugging signals, elevate to Deep Reasoning
@@ -198,11 +246,21 @@ def route_prompt(
                     size = int(float(match.group(1)) * 1024**3)
             model_size_map[name] = size
 
-    # Determine baseline fallback model
+    # Determine baseline fallback model: prioritize generalist / tool-capable models over pure coder models
+    general_models = [
+        m for m in model_names
+        if not any(k in m.lower() for k in ("coder", "code", "dev", "starcoder"))
+    ]
+    preferred_fallback = (
+        general_models[0]
+        if general_models
+        else (model_names[0] if model_names else "gemma4:12b")
+    )
+
     fallback_model = (
         config.ollama_model
         if config.ollama_model and config.ollama_model.lower() != "auto"
-        else (model_names[0] if model_names else "gemma4:12b")
+        else preferred_fallback
     )
 
     if not model_names:
@@ -380,8 +438,19 @@ def route_prompt(
             except Exception:
                 current_features = []
         is_current_reasoning = "Reasoning" in current_features or any(k in current_model.lower() for k in ("r1", "qwq", "thinking"))
+        is_current_coder = current_model in coder_models
 
-        if is_current_reasoning and fast_models and current_model not in fast_models:
+        # If current model is a pure reasoning model or a pure coder model, swap to a fast generalist model
+        non_coder_fast = [m for m in fast_models if m not in coder_models]
+        if (is_current_reasoning or is_current_coder) and non_coder_fast:
+            fit_cand = _pick_first_fitting(non_coder_fast)
+            if fit_cand and fit_cand != current_model:
+                selected = fit_cand
+                final_reason = f"{reason_prefix} -> Dispatched to Fast Generalist model: {selected}"
+            else:
+                selected = current_model
+                final_reason = f"{reason_prefix} -> Direct fast execution on active model: {selected}"
+        elif is_current_reasoning and fast_models and current_model not in fast_models:
             fit_cand = _pick_first_fitting(fast_models)
             if fit_cand:
                 selected = fit_cand

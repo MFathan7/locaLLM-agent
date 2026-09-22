@@ -12,7 +12,7 @@ from locallm.config import LocaLLMConfig, save_config
 from locallm.core.ollama_client import OllamaClient
 from locallm.core.tools import resolve_smart_path
 from locallm.core.workspace import load_workspace_context
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 SYSTEM_AGENT_PROMPT = """You are an autonomous AI agent with local tools to complete user tasks.
 To use a tool, respond ONLY in this JSON format:
@@ -28,28 +28,28 @@ When the task is complete, or if no tool is needed, respond with:
 ```json
 {
   "thought": "I have completed the task or have final information",
-  "final_answer": "Detailed answer or summary of actions taken"
+  "final_answer": "Summary of what was accomplished"
 }
 ```
 
 Available tools:
-1. `run_shell`: Execute a safe command in the local shell.
-   Args: {"command": "powershell or bash command string"}
-2. `read_file`: Read contents of a local file.
-   Args: {"path": "relative or absolute file path"}
-3. `write_file`: Write or overwrite text file.
-   Args: {"path": "file path", "content": "content string"}
-4. `fetch_url`: Fetch web text content from a URL.
-   Args: {"url": "https://..."}
+- list_directory: {"path": "."}
+- read_file: {"path": "filename"}
+- write_file: {"path": "filename", "content": "text content"}
+- create_directory: {"path": "dirname"}
+- execute_command: {"command": "shell command"}
+- fetch_web: {"url": "https://example.com"}
 
-Always provide valid JSON within triple backticks.
+Always explain your thought before taking action.
+When done, output final_answer with the result.
 """
 
 
-class AgentEngine:
+class ReActAgent:
     """ReAct execution loop using local Ollama model."""
 
     def __init__(self, config: LocaLLMConfig, client: OllamaClient, model_name: Optional[str] = None):
+
         self.config = config
         self.client = client
         self.model_name = model_name or config.default_model
@@ -57,7 +57,13 @@ class AgentEngine:
 
     def run_task(self, task_instruction: str) -> None:
         """Execute a task through multi-step reasoning."""
-        console.print(Panel(task_instruction, title="[bold cyan]Agent Task[/]", border_style="cyan"))
+        palette = get_theme_palette(getattr(self.config, "ui_theme", "cyber_neon"))
+        console.print(Panel(
+            task_instruction,
+            title=f"[bold {palette.primary}]⟦{palette.icon} Autonomous Agent Task⟧[/]",
+            box=palette.box_style,
+            border_style=palette.border_style,
+        ))
 
         ws_context = load_workspace_context(getattr(self.config, "active_workspace", "default"))
         system_content = SYSTEM_AGENT_PROMPT
@@ -68,6 +74,7 @@ class AgentEngine:
             {"role": "system", "content": system_content},
             {"role": "user", "content": f"Task: {task_instruction}"},
         ]
+        consecutive_failures: Dict[str, int] = {}
 
         for step in range(1, self.max_steps + 1):
             from locallm.ui.spinner import thinking_spinner
@@ -85,7 +92,7 @@ class AgentEngine:
 
             action_data = self._extract_json(response)
             if not action_data:
-                console.print(Panel(response, title="[dim]Model Note[/]", border_style="dim"))
+                console.print(Panel(response, title="[dim]Model Note[/]", box=palette.box_style, border_style="dim"))
                 history.append({"role": "assistant", "content": response})
                 history.append({
                     "role": "user",
@@ -100,22 +107,38 @@ class AgentEngine:
             if "final_answer" in action_data:
                 console.print(Panel(
                     action_data["final_answer"],
-                    title="[bold green]Task Completed[/]",
-                    border_style="green",
+                    title=f"[bold {palette.success}]⟦{palette.icon} Task Completed⟧[/]",
+                    box=palette.box_style,
+                    border_style=palette.border_style,
                 ))
                 return
 
             tool_name = action_data.get("tool")
             args = action_data.get("args", {})
 
-            console.print(f"[bold cyan]Action:[/] `{tool_name}` with args: [dim]{json.dumps(args)}[/]")
+            console.print(f"[bold {palette.accent}]⟦{palette.icon} STEP {step}/{self.max_steps}⟧[/] [bold {palette.primary}]{tool_name}[/] [dim]{json.dumps(args)}[/]")
 
             # Execute tool
             observation = self._execute_tool(tool_name, args)
-            console.print(f"[dim green]Observation:[/] {observation[:180]}..." if len(observation) > 180 else f"[dim green]Observation:[/] {observation}")
+            obs_preview = observation[:180] + "..." if len(observation) > 180 else observation
+            console.print(f"[{palette.success}]✔ Observation:[/] {obs_preview}")
+
+            # Circuit breaker check: track identical consecutive failures
+            call_sig = f"{tool_name}:{json.dumps(args, sort_keys=True)}"
+            is_err = observation.startswith("Error:") or observation.startswith("Failed") or "Exception:" in observation
+            if is_err:
+                consecutive_failures[call_sig] = consecutive_failures.get(call_sig, 0) + 1
+            else:
+                consecutive_failures[call_sig] = 0
+
+            if consecutive_failures[call_sig] >= 2:
+                console.print(f"[warning]Circuit breaker tripped: Tool '{tool_name}' failed repeatedly. Instructing agent to revise approach.[/]")
+                obs_to_send = f"{observation}\n[System Notice: Action halted by circuit breaker after 2 consecutive identical failures. Revise your strategy or conclude with a final answer.]"
+            else:
+                obs_to_send = observation
 
             history.append({"role": "assistant", "content": response})
-            history.append({"role": "user", "content": f"Observation: {observation}"})
+            history.append({"role": "user", "content": f"Observation: {obs_to_send}"})
 
         console.print("[warning]Max step limit reached before final answer.[/]")
 
@@ -191,7 +214,11 @@ class AgentEngine:
             return f"Error fetching URL: {exc}"
 
 
+AgentEngine = ReActAgent
+
+
 def configure_permission_policy(config: LocaLLMConfig) -> None:
+
     """Prompt user to configure agent permission policy for mutating actions."""
     current = getattr(config, "agent_permission_policy", "ask").lower()
     choice = questionary.select(

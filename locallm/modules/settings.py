@@ -2,19 +2,29 @@
 
 import questionary
 from locallm.config import LocaLLMConfig, save_config, switch_active_backend
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import (
+    QUESTIONARY_STYLE,
+    apply_active_theme,
+    console,
+    get_theme_palette,
+    list_available_themes,
+)
 
 
 def run_settings(config: LocaLLMConfig) -> None:
     """Interactive settings configuration menu."""
     while True:
         ctx_val = getattr(config, "context_window", 8192)
+        search_prov = getattr(config, "search_provider", "auto")
+        theme_pal = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
         choice = questionary.select(
             "Settings & Configuration:",
             choices=[
                 f"Active Backend (Current: {config.active_backend.upper()})",
+                f"UI Theme (Current: {theme_pal.name})",
                 f"Sampling Temperature (Current: {config.temperature})",
                 f"Context Window Limit (Current: {ctx_val:,} tokens)",
+                f"Web Search Provider (Current: {search_prov.upper()})",
                 f"System Prompt (Current: {config.system_prompt[:30]}...)",
                 "Reset to Defaults",
                 "Back",
@@ -27,14 +37,56 @@ def run_settings(config: LocaLLMConfig) -> None:
 
         if choice.startswith("Active Backend"):
             _switch_active_backend(config)
+        elif choice.startswith("UI Theme"):
+            _switch_ui_theme(config)
         elif choice.startswith("Sampling Temperature"):
             _edit_temperature(config)
         elif choice.startswith("Context Window Limit"):
             _edit_context_window(config)
+        elif choice.startswith("Web Search Provider"):
+            _configure_search_provider(config)
         elif choice.startswith("System Prompt"):
             _edit_system_prompt(config)
         elif choice == "Reset to Defaults":
             _reset_defaults(config)
+
+
+
+def _configure_search_provider(config: LocaLLMConfig) -> None:
+    """Configure web search provider and custom endpoint URL."""
+    provider_choice = questionary.select(
+        "Choose Web Search Provider:",
+        choices=[
+            "Auto (DuckDuckGo with Bing Fallback)",
+            "Bing (Fast, Global, High Availability)",
+            "DuckDuckGo (Direct HTML / API)",
+            "Custom (Self-Hosted SearXNG or Proxy URL)",
+            "Cancel",
+        ],
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if not provider_choice or provider_choice == "Cancel":
+        return
+
+    if provider_choice.startswith("Auto"):
+        config.search_provider = "auto"
+    elif provider_choice.startswith("Bing"):
+        config.search_provider = "bing"
+    elif provider_choice.startswith("DuckDuckGo"):
+        config.search_provider = "duckduckgo"
+    elif provider_choice.startswith("Custom"):
+        config.search_provider = "custom"
+        api_url = questionary.text(
+            "Enter custom search endpoint URL (use {query} placeholder, e.g. https://searx.example.com/search?q={query}&format=json):",
+            default=getattr(config, "search_api_url", ""),
+            style=QUESTIONARY_STYLE,
+        ).ask()
+        if api_url is not None:
+            config.search_api_url = api_url.strip()
+
+    save_config(config)
+    console.print(f"[success]Web search provider configured: {config.search_provider.upper()}[/]\n")
 
 
 def _switch_active_backend(config: LocaLLMConfig) -> None:
@@ -131,5 +183,36 @@ def _reset_defaults(config: LocaLLMConfig) -> None:
         config.telegram_token = default_cfg.telegram_token
         config.agent_auto_approve_commands = default_cfg.agent_auto_approve_commands
         config.agent_permission_policy = default_cfg.agent_permission_policy
+        config.ui_theme = default_cfg.ui_theme
         save_config(config)
+        apply_active_theme(config.ui_theme)
         console.print("[success]Settings reset to default.[/]\n")
+
+
+def _switch_ui_theme(config: LocaLLMConfig) -> None:
+    """Interactively select and preview a UI theme."""
+    themes = list_available_themes()
+    current_key = getattr(config, "ui_theme", "cyber_neon")
+    choices = [
+        f"{name} ({desc})" + (" [Active]" if key == current_key else "")
+        for key, name, desc in themes
+    ]
+    choices.append("Cancel")
+
+    chosen = questionary.select(
+        "Choose UI Theme:",
+        choices=choices,
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if not chosen or chosen == "Cancel":
+        return
+
+    for key, name, _ in themes:
+        if chosen.startswith(name):
+            config.ui_theme = key
+            save_config(config)
+            apply_active_theme(key)
+            console.print(f"[success]UI Theme switched to {name}![/]\n")
+            break
+

@@ -200,6 +200,28 @@ def build_parser() -> argparse.ArgumentParser:
     ws_install.add_argument("--skill", "-s", type=str, action="append", default=None, help="Specific skill name(s) to install (can be specified multiple times)")
     ws_install.add_argument("--workspace", "-w", type=str, default=None, help="Target workspace (defaults to active workspace)")
 
+    # Plugin manager
+    plug_parser = subparsers.add_parser(
+        "plugin",
+        help="Manage customizable modular plugins and tools",
+        description="Inspect, list, enable, disable, or scaffold customizable modular plugins and tools.",
+    )
+    plug_sub = plug_parser.add_subparsers(dest="plug_action", help="Plugin actions")
+    plug_sub.add_parser("list", help="List all installed plugins and their tools")
+    plug_enable = plug_sub.add_parser("enable", help="Enable a plugin")
+    plug_enable.add_argument("name", type=str, help="Plugin name to enable")
+    plug_disable = plug_sub.add_parser("disable", help="Disable a plugin")
+    plug_disable.add_argument("name", type=str, help="Plugin name to disable")
+    plug_create = plug_sub.add_parser("create", help="Create a new starter plugin scaffold")
+    plug_create.add_argument("name", type=str, help="Plugin name")
+    plug_create.add_argument("--desc", "-d", type=str, default="", help="Optional description")
+    plug_del = plug_sub.add_parser("delete", help="Permanently delete an installed plugin")
+    plug_del.add_argument("name", type=str, help="Plugin name to delete")
+    plug_del.add_argument("--yes", "-y", action="store_true", help="Confirm deletion without prompting")
+    plug_rm = plug_sub.add_parser("remove", help="Permanently delete an installed plugin (alias for delete)")
+    plug_rm.add_argument("name", type=str, help="Plugin name to remove")
+    plug_rm.add_argument("--yes", "-y", action="store_true", help="Confirm deletion without prompting")
+
     return parser
 
 
@@ -207,7 +229,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     """Main CLI execution router."""
     KNOWN_SUBCOMMANDS = {
         "chat", "telegram", "whatsapp", "agent", "run", "models", "config",
-        "status", "service", "start", "stop", "workspace", "platform",
+        "status", "service", "start", "stop", "workspace", "platform", "plugin",
     }
 
     if argv is None:
@@ -292,6 +314,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         _handle_workspace_cli(args, config)
     elif cmd == "platform":
         _handle_platform_cli(args, config)
+    elif cmd == "plugin":
+        _handle_plugin_cli(args, config)
     elif cmd == "status":
         render_banner(config, client)
     elif cmd == "start":
@@ -302,6 +326,89 @@ def main(argv: Optional[List[str]] = None) -> None:
         _handle_service_cli(args.action, args.target, config)
     else:
         parser.print_help()
+
+
+def _handle_plugin_cli(args, config) -> None:
+    """Execute plugin management commands from CLI."""
+    from rich.table import Table
+    from locallm.core.plugin_manager import (
+        create_plugin_scaffold,
+        delete_plugin,
+        disable_plugin,
+        enable_plugin,
+        list_plugins,
+    )
+
+    action = getattr(args, "plug_action", None) or "list"
+    active_ws = getattr(config, "active_workspace", "default")
+
+    if action == "list":
+        plugins = list_plugins(active_ws)
+        table = Table(title="Installed locaLLM Plugins", border_style="cyan", header_style="bold cyan")
+        table.add_column("Status", style="bold", width=10)
+        table.add_column("Plugin Name", style="bold white")
+        table.add_column("Version", justify="center")
+        table.add_column("Tools", justify="center")
+        table.add_column("Source", justify="center")
+        table.add_column("Description")
+
+        for p in plugins:
+            if p.error:
+                st = "[bold red]ERROR[/]"
+            elif p.enabled:
+                st = "[bold green]ENABLED[/]"
+            else:
+                st = "[dim]DISABLED[/]"
+            table.add_row(
+                st,
+                p.name,
+                p.version,
+                f"{len(p.tools)} tool(s)",
+                f"[{p.source}]",
+                p.description or "[dim]No description[/]",
+            )
+        console.print(table)
+        return
+
+    if action == "enable":
+        ok, msg = enable_plugin(args.name, active_ws)
+        if ok:
+            console.print(f"[success]{msg}[/]")
+        else:
+            console.print(f"[danger]{msg}[/]")
+
+    elif action == "disable":
+        ok, msg = disable_plugin(args.name, active_ws)
+        if ok:
+            console.print(f"[success]{msg}[/]")
+        else:
+            console.print(f"[danger]{msg}[/]")
+
+    elif action == "create":
+        ok, msg, path = create_plugin_scaffold(args.name, description=args.desc)
+        if ok and path:
+            console.print(f"[success]{msg}[/]")
+            console.print(f"[#aaaaaa]Created entrypoint at: [bold cyan]{path / 'main.py'}[/]")
+        else:
+            console.print(f"[danger]{msg}[/]")
+
+    elif action in ("delete", "remove"):
+        if not getattr(args, "yes", False):
+            import questionary
+            from locallm.ui.theme import QUESTIONARY_STYLE
+            confirm = questionary.confirm(
+                f"Are you sure you want to permanently delete plugin '{args.name}'?",
+                default=False,
+                style=QUESTIONARY_STYLE,
+            ).ask()
+            if not confirm:
+                console.print("[dim]Plugin deletion cancelled.[/]")
+                return
+        ok, msg = delete_plugin(args.name, active_ws)
+        if ok:
+            console.print(f"[success]{msg}[/]")
+        else:
+            console.print(f"[danger]{msg}[/]")
 
 
 def _handle_workspace_cli(args, config) -> None:

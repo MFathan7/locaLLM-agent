@@ -12,7 +12,13 @@ from locallm.config import LocaLLMConfig, save_config
 from locallm.core.hardware import get_gpu_info
 from locallm.core.memory import ConversationMemory
 from locallm.core.ollama_client import OllamaClient
-from locallm.core.tools import ASSISTANT_TOOLS, describe_tool_action, execute_tool, format_live_tool_report
+from locallm.core.tools import (
+    ASSISTANT_TOOLS,
+    describe_tool_action,
+    execute_tool,
+    format_live_tool_report,
+    get_all_assistant_tools,
+)
 from locallm.core.workspace import (
     clear_all_workspace_sessions,
     delete_workspace_session,
@@ -25,11 +31,12 @@ from locallm.ui.chat_view import (
     print_assistant_response,
     print_help_commands,
     print_system_info,
+    render_chat_welcome_card,
     render_response_stats,
     stream_assistant_response,
 )
 from locallm.ui.spinner import thinking_spinner
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 
 def _create_chat_key_bindings() -> KeyBindings:
@@ -81,15 +88,32 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
         "'create_directory' to create directories anywhere on the filesystem, "
         "'write_file' to write or create code, configuration, or documentation files anywhere on the filesystem, "
         "'list_directory' and 'read_file' for inspecting files and folders, 'get_current_time', 'get_current_directory', "
-        "'execute_command', 'get_weather' for real-time weather and temperature, and 'fetch_web' for web pages/GitHub URLs.\n"
-        "CRITICAL AUTONOMOUS EXECUTION DIRECTIVE:\n"
+        "'execute_command', 'get_weather' for real-time weather and temperature, "
+        "'search_web' to search the live web for real-time information, documentation, news, or answers to unknown questions, "
+        "and 'fetch_web' for reading specific web pages/GitHub URLs.\n"
+        "CRITICAL AUTONOMOUS EXECUTION & REAL-TIME KNOWLEDGE DIRECTIVE:\n"
+        "1. File and System Actions:\n"
         "When the user asks to create, write, modify, generate, or execute any files, directories, scripts, or system tasks:\n"
         "- DO NOT provide manual terminal, shell, or command-prompt instructions for the user to run themselves.\n"
         "- DO NOT ask or expect the user to manually create directories or save files.\n"
         "- You MUST directly invoke the appropriate tools ('create_directory', 'write_file', 'execute_command') "
         "via native function calling to perform the requested actions immediately on the local system.\n"
-        "Never say you cannot access files, cannot create files, or are just an AI.\n"
-        "When tool results are returned, synthesize the answer directly without boilerplate greetings."
+        "2. Real-Time Facts, News & Live Web Search:\n"
+        "When asked about real-time events, current news, recent political/governmental/economic developments, weather, or facts beyond your static training data:\n"
+        "- DO NOT tell the user to read news websites, check apps, or search manually.\n"
+        "- DO NOT refuse by saying your knowledge is outdated or limited.\n"
+        "- You MUST immediately invoke 'search_web' with concise, relevant query terms (e.g., 'berita terkini Indonesia pemerintahan politik') "
+        "to discover real-time facts and synthesize the answers directly for the user.\n"
+        "3. Tool Observation Synthesis & Natural Answers:\n"
+        "- NEVER explain or cite the internal tool function names or schemas (e.g. 'get_current_time', 'search_web', 'read_file') to the user.\n"
+        "- NEVER tell the user 'you can use the function...' or provide code examples showing how to invoke functions.\n"
+        "- Use the returned observation values and the Environment context (e.g. current hour/date for morning/afternoon/evening greetings) directly to answer the user's inquiry naturally and conversationally.\n"
+        "4. Tone, Grounding & Authority:\n"
+        "- NEVER say you cannot access files, cannot search the web, cannot sense time, or are just an AI.\n"
+        "- NEVER give philosophical or canned AI refusals like 'ask people around you', 'check your phone or clock', or 'I cannot sense time directly'.\n"
+        "- You are grounded in the real world with exact local system time provided in the Environment context.\n"
+        "- When asked about current time, date, or whether it is morning/afternoon/night, answer directly and definitively based on the local hour (e.g., 22:00-04:00 is night/malam, 05:00-11:00 is morning/pagi, 12:00-15:00 is afternoon/siang, 15:00-18:00 is evening/sore).\n"
+        "- When tool results are returned, synthesize the answer directly without boilerplate greetings or meta-commentary."
     )
 
     # Inject isolated active workspace knowledge and instructions
@@ -98,23 +122,36 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
     if ws_context:
         enhanced_prompt += f"\n\n{ws_context}"
 
+    try:
+        from locallm.core.plugin_manager import list_plugins
+        active_plugins = [p for p in list_plugins(active_ws) if p.enabled and not p.error]
+        if active_plugins:
+            plugin_lines = ["Active Custom Plugins & Capabilities:"]
+            for p in active_plugins:
+                tool_names = [t.get("function", {}).get("name") for t in p.tools]
+                plugin_lines.append(f"- Plugin '{p.name}': provides tools {tool_names}. {p.description}")
+            enhanced_prompt += "\n\n" + "\n".join(plugin_lines)
+    except Exception:
+        pass
+
     memory = ConversationMemory(system_prompt=enhanced_prompt)
     session_state = {"id": f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}"}
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
 
-    console.print("[#bbbbbb]Commands: /help, /sessions, /new, /delete, /stats, /model, /clear, /back, /exit[/]")
-    console.print("[#777777]Tips: [bold cyan]Enter[/] to send, [bold cyan]Ctrl+J[/] for a newline[/]\n")
+    render_chat_welcome_card(config, model_name=config.default_model, features=features)
 
     chat_kb = _create_chat_key_bindings()
 
     while True:
         try:
             user_input = questionary.text(
-                "You:",
+                f"{palette.user_prefix}:",
                 multiline=True,
                 instruction="",
                 key_bindings=chat_kb,
                 style=QUESTIONARY_STYLE,
             ).ask()
+
 
             if user_input is None:
                 break
@@ -184,12 +221,14 @@ def _process_assistant_turn(
     target_model = model_name or config.default_model
     active_ws = getattr(config, "active_workspace", "default")
     permission_policy = getattr(config, "agent_permission_policy", "ask")
+    current_tools = get_all_assistant_tools(active_ws)
 
     MAX_TOOL_STEPS = 25
 
     if has_tools:
         step = 0
         executed_any_tool = False
+        consecutive_failures: Dict[str, int] = {}
 
         while step < MAX_TOOL_STEPS:
             step += 1
@@ -204,7 +243,7 @@ def _process_assistant_turn(
                     turn_msg = client.chat_turn(
                         model=target_model,
                         messages=memory.get_messages(),
-                        tools=ASSISTANT_TOOLS,
+                        tools=current_tools,
                         temperature=config.temperature,
                         num_ctx=context_limit,
                         stats_out=stats,
@@ -218,15 +257,41 @@ def _process_assistant_turn(
             tool_calls = turn_msg.get("tool_calls")
             if not tool_calls and turn_msg.get("content"):
                 from locallm.core.tools import extract_fallback_tool_calls
-                tool_names = {t.get("function", {}).get("name") for t in ASSISTANT_TOOLS}
+                tool_names = {t.get("function", {}).get("name") for t in current_tools}
                 recovered = extract_fallback_tool_calls(turn_msg.get("content", ""), tool_names)
                 if recovered:
                     tool_calls = recovered
                     turn_msg["tool_calls"] = recovered
+                elif any(f'"{name}"' in turn_msg.get("content", "") for name in tool_names) and step <= 2:
+                    # In-place self-healing format repair without model swap overhead
+                    with thinking_spinner("locaLLM is self-correcting tool call syntax..."):
+                        try:
+                            repair_turn = client.chat_turn(
+                                model=target_model,
+                                messages=memory.get_messages() + [
+                                    {"role": "assistant", "content": turn_msg.get("content", "")},
+                                    {"role": "user", "content": "Your previous response attempted to call a tool but the JSON was malformed. Output strictly valid JSON matching the function schema."},
+                                ],
+                                tools=current_tools,
+                                temperature=config.temperature,
+                                num_ctx=context_limit,
+                                stats_out=stats,
+                            )
+                            if repair_turn and repair_turn.get("tool_calls"):
+                                tool_calls = repair_turn.get("tool_calls")
+                                turn_msg = repair_turn
+                            elif repair_turn and repair_turn.get("content"):
+                                rep_rec = extract_fallback_tool_calls(repair_turn.get("content", ""), tool_names)
+                                if rep_rec:
+                                    tool_calls = rep_rec
+                                    turn_msg["tool_calls"] = rep_rec
+                        except Exception:
+                            pass
 
             if tool_calls:
                 executed_any_tool = True
                 memory.history.append(turn_msg)
+                should_trip_circuit = False
 
                 for idx, tc in enumerate(tool_calls):
                     func_name = tc.get("function", {}).get("name", "")
@@ -251,11 +316,32 @@ def _process_assistant_turn(
 
                     console.print(format_live_tool_report(func_name, func_args, obs))
 
+                    # Circuit breaker check: track identical consecutive failures
+                    call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
+                    is_err = obs.startswith("Error:") or obs.startswith("Failed") or "Exception:" in obs or "Traceback" in obs
+                    if is_err:
+                        consecutive_failures[call_sig] = consecutive_failures.get(call_sig, 0) + 1
+                    else:
+                        consecutive_failures[call_sig] = 0
+
+                    if consecutive_failures[call_sig] >= 2:
+                        console.print(
+                            f"[warning]Circuit breaker tripped: Tool '{func_name}' failed repeatedly with identical parameters. "
+                            f"Halting action loop to prevent token exhaustion.[/]"
+                        )
+                        obs_entry = f"{obs}\n[System Notice: Action halted by circuit breaker after 2 consecutive identical failures. Please explain the blocker to the user rather than repeating this exact call.]"
+                        should_trip_circuit = True
+                    else:
+                        obs_entry = obs
+
                     memory.history.append({
                         "role": "tool",
                         "tool_call_id": tc_id,
-                        "content": obs,
+                        "content": obs_entry,
                     })
+
+                if should_trip_circuit:
+                    break
 
                 # Loop back: let LLM examine tool observations and plan next step or conclude
                 continue
@@ -263,7 +349,7 @@ def _process_assistant_turn(
             # No tool calls: model returned final answer
             content = turn_msg.get("content", "")
             if content and content.strip():
-                print_assistant_response(content, stats=stats, context_limit=context_limit)
+                print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
                 memory.add_assistant_message(content)
                 return
             else:
@@ -285,7 +371,7 @@ def _process_assistant_turn(
                     )
                     content = summary_turn.get("content", "")
                     if content and content.strip():
-                        print_assistant_response(content, stats=stats, context_limit=context_limit)
+                        print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
                         memory.add_assistant_message(content)
                         return
                 except Exception:
@@ -300,7 +386,7 @@ def _process_assistant_turn(
         num_ctx=context_limit,
         stats_out=stream_stats,
     )
-    response = stream_assistant_response(tokens, stats=stream_stats, context_limit=context_limit)
+    response = stream_assistant_response(tokens, stats=stream_stats, context_limit=context_limit, model_name=target_model)
     if not response or not response.strip():
         with thinking_spinner("locaLLM is thinking..."):
             fallback_turn = client.chat_turn(
@@ -312,7 +398,7 @@ def _process_assistant_turn(
             )
         content = fallback_turn.get("content", "")
         if content and content.strip():
-            print_assistant_response(content, stats=stream_stats, context_limit=context_limit)
+            print_assistant_response(content, stats=stream_stats, context_limit=context_limit, model_name=target_model)
             memory.add_assistant_message(content)
             return
         else:

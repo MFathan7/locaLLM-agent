@@ -95,6 +95,18 @@ class LocaLLMConfig(BaseModel):
         default="default",
         description="Currently active workspace identifier",
     )
+    search_provider: str = Field(
+        default="auto",
+        description="Search provider for web search: 'auto', 'bing', 'duckduckgo', or 'custom'",
+    )
+    search_api_url: str = Field(
+        default="",
+        description="Optional custom search endpoint URL (e.g. self-hosted SearXNG or proxy)",
+    )
+    ui_theme: str = Field(
+        default="cyber_neon",
+        description="Active console UI theme: 'cyber_neon', 'tokyo_night', 'monokai', 'matrix', or 'nordic_frost'",
+    )
 
 
 

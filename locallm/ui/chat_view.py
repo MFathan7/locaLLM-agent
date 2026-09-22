@@ -1,66 +1,170 @@
-"""Chat streaming and conversation renderer."""
-
-from typing import Generator, Optional
+from typing import Any, Generator, List, Optional
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
-from locallm.ui.theme import console
+from rich.table import Table
+from locallm.ui.theme import console, get_theme_palette
+
+
+def render_chat_welcome_card(
+    config: Any,
+    model_name: str,
+    features: Optional[List[str]] = None,
+) -> None:
+    """Display an interactive assistant session card with themed ASCII styling."""
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+    features_str = ", ".join(features) if features else "Text Generation"
+    active_ws = getattr(config, "active_workspace", "default")
+    ctx_limit = getattr(config, "context_window", 8192)
+
+    grid = Table.grid(expand=True, padding=(0, 1))
+    grid.add_column(justify="left")
+    grid.add_column(justify="right")
+    grid.add_row(
+        f"[{palette.primary}]◆ Model:[/] [white]{model_name}[/]",
+        f"[{palette.accent}]★ Capabilities:[/] [{palette.success}]{features_str}[/]",
+    )
+    grid.add_row(
+        f"[{palette.primary}]▸ Workspace:[/] [white]{active_ws}[/]",
+        f"[{palette.accent}]▰ Context Limit:[/] [white]{ctx_limit:,} tokens[/]",
+    )
+
+    full = Table.grid(expand=True)
+    full.add_column(justify="left")
+    full.add_row(grid)
+    full.add_row(f"[{palette.dim}]Shortcuts:[/] [white]Enter[/] [dim](send)[/] [dim]•[/] [white]Ctrl+J[/] [dim](newline)[/]")
+    full.add_row(f"[{palette.dim}]Commands:[/] [{palette.primary}]/help, /stats, /model, /clear, /sessions, /back, /exit[/]")
+
+    panel = Panel(
+        full,
+        title=f"[bold {palette.primary}]⟦{palette.icon} {palette.name} Interactive Assistant⟧[/]",
+        box=palette.box_style,
+        border_style=palette.border_style,
+        padding=(0, 2),
+    )
+    console.print(panel)
+    console.print()
+
 
 
 def print_user_prompt(text: str) -> None:
-    """Display user question panel."""
+    """Display user question line with themed ASCII glyph."""
+    palette = get_theme_palette()
     console.print()
-    console.print(f"[bold cyan]You >[/] [white]{text}[/]")
+    console.print(f"[bold {palette.primary}]{palette.user_prefix}[/] [dim]›[/] [white]{text}[/]")
+
+
+def get_bracket_top(model_name: Optional[str] = None) -> str:
+    """Generate the top bracket header with active theme icon and model name."""
+    palette = get_theme_palette()
+    if not model_name:
+        try:
+            from locallm.config import load_config
+            cfg = load_config()
+            model_name = getattr(cfg, "model", "locaLLM")
+        except Exception:
+            model_name = "locaLLM"
+
+    raw_width = console.width if console.width else 80
+    term_width = max(50, min(raw_width - 2, 78))
+
+    header_content = f"{palette.icon} locaLLM · {model_name}"
+    plain_bracket = f"⟦{header_content}⟧"
+    dashes_count = max(4, term_width - len(plain_bracket) - 4)
+
+    return (
+        f"[bold {palette.primary}]┌─[/] "
+        f"[bold {palette.accent}]⟦[/][bold white]{palette.icon} locaLLM[/] [dim]·[/] [bold {palette.primary}]{model_name}[/][bold {palette.accent}]⟧[/] "
+        f"[bold {palette.primary}]" + ("─" * dashes_count) + "┐[/]"
+    )
+
+
+def get_bracket_bottom(
+    stats: Optional[dict] = None,
+    context_limit: int = 8192,
+) -> str:
+    """Generate the bottom bracket footer with telemetry and speed stats."""
+    palette = get_theme_palette()
+    raw_width = console.width if console.width else 80
+    term_width = max(50, min(raw_width - 2, 78))
+
+    if stats:
+        prompt_tok = stats.get("prompt_eval_count", 0)
+        eval_tok = stats.get("eval_count", 0)
+        total_tok = prompt_tok + eval_tok
+        eval_dur_ns = stats.get("eval_duration", 0)
+        tps = (eval_tok / (eval_dur_ns / 1e9)) if eval_dur_ns > 0 else 0.0
+        latency_s = eval_dur_ns / 1e9 if eval_dur_ns > 0 else 0.0
+
+        if total_tok > 0:
+            limit = max(context_limit, total_tok)
+            pct = (total_tok / limit * 100) if limit > 0 else 0.0
+            pct_color = palette.success if pct < 70 else (palette.warning if pct < 90 else palette.danger)
+
+            formatted_bracket = (
+                f"[bold {palette.accent}]⟦[/]"
+                f"[{palette.dim}]• Context:[/] [{palette.primary}]{total_tok:,}[/][{palette.dim}]/[/][white]{limit:,}[/] "
+                f"([{pct_color}]{pct:.1f}%[{palette.dim}]) [dim]•[/] "
+                f"[{palette.dim}]Speed:[/] [{palette.primary}]{tps:.1f}[/] [{palette.dim}]tok/s[/]"
+            )
+            plain_stats = f"• Context: {total_tok:,}/{limit:,} ({pct:.1f}%) • Speed: {tps:.1f} tok/s"
+
+            if latency_s > 0:
+                formatted_bracket += f" [dim]•[/] [{palette.dim}]Latency:[/] [{palette.primary}]{latency_s:.1f}s[/]"
+                plain_stats += f" • Latency: {latency_s:.1f}s"
+
+            formatted_bracket += f"[bold {palette.accent}]⟧[/]"
+            plain_len = len(f"⟦{plain_stats}⟧")
+            dashes_count = max(4, term_width - plain_len - 4)
+
+            return (
+                f"[bold {palette.primary}]└─[/] "
+                f"{formatted_bracket} "
+                f"[bold {palette.primary}]" + ("─" * dashes_count) + "┘[/]"
+            )
+
+    dashes_count = max(4, term_width - 2)
+    return f"[bold {palette.primary}]└" + ("─" * dashes_count) + "┘[/]"
 
 
 def render_response_stats(
     stats: Optional[dict],
     context_limit: int = 8192,
 ) -> None:
-    """Print a clean, non-purple context usage and speed footer below AI responses."""
+    """Print the closing bottom bracket with telemetry and speed stats."""
     if not stats:
+        palette = get_theme_palette()
+        raw_width = console.width if console.width else 80
+        term_width = max(50, min(raw_width - 2, 78))
+        dashes_count = max(4, term_width - 2)
+        console.print(f"[bold {palette.primary}]└" + ("─" * dashes_count) + "┘[/]\n")
         return
-    prompt_tok = stats.get("prompt_eval_count", 0)
-    eval_tok = stats.get("eval_count", 0)
-    total_tok = prompt_tok + eval_tok
-    eval_dur_ns = stats.get("eval_duration", 0)
-    tps = (eval_tok / (eval_dur_ns / 1e9)) if eval_dur_ns > 0 else 0.0
-
-    if total_tok > 0:
-        limit = max(context_limit, total_tok)
-        pct = (total_tok / limit * 100) if limit > 0 else 0.0
-        pct_color = "#00ff87" if pct < 70 else ("#ffff00" if pct < 90 else "#ff5555")
-        console.print(
-            f"[#aaaaaa]  • Context:[/] [#00d7ff]{total_tok:,}[/][#aaaaaa]/[/][#ffffff]{limit:,}[/] [#aaaaaa]tokens "
-            f"([{pct_color}]{pct:.1f}%[#aaaaaa]) • Speed:[/] [#00d7ff]{tps:.1f}[/] [#aaaaaa]tok/s[/]\n"
-        )
+    console.print(get_bracket_bottom(stats, context_limit=context_limit))
+    console.print()
 
 
 def print_assistant_response(
     text: str,
     stats: Optional[dict] = None,
     context_limit: int = 8192,
+    model_name: Optional[str] = None,
 ) -> None:
-    """Render a complete assistant response cleanly parsed as Markdown."""
-    console.print("[bold green]locaLLM >[/] ")
+    """Render a complete assistant response cleanly parsed as Markdown inside an open Bracket Frame."""
+    console.print()
+    console.print(get_bracket_top(model_name=model_name))
+    console.print()
     console.print(Markdown(text.strip()))
     console.print()
-    if stats:
-        render_response_stats(stats, context_limit=context_limit)
+    render_response_stats(stats, context_limit=context_limit)
 
 
 def stream_assistant_response(
     token_generator: Generator[str, None, None],
     stats: Optional[dict] = None,
     context_limit: int = 8192,
+    model_name: Optional[str] = None,
 ) -> str:
-    """Stream assistant markdown response in real-time with thinking spinner.
-
-    Automatically parses bold, italics, lists, and code blocks live on terminal.
-
-    Returns:
-        str: Accumulated complete response text.
-    """
+    """Stream assistant markdown response in real-time inside an open Bracket Frame."""
     from locallm.ui.spinner import thinking_spinner
 
     first_chunk: Optional[str] = None
@@ -74,7 +178,9 @@ def stream_assistant_response(
         return ""
 
     accumulated_text = first_chunk
-    console.print("[bold green]locaLLM >[/] ")
+    console.print()
+    console.print(get_bracket_top(model_name=model_name))
+    console.print()
 
     try:
         with Live(Markdown(accumulated_text), console=console, refresh_per_second=12) as live:
@@ -82,22 +188,22 @@ def stream_assistant_response(
                 accumulated_text += chunk
                 live.update(Markdown(accumulated_text))
     except Exception:
-        # Resilient fallback if terminal interrupt occurs
         console.print(Markdown(accumulated_text))
 
     console.print()
-    if stats:
-        render_response_stats(stats, context_limit=context_limit)
+    render_response_stats(stats, context_limit=context_limit)
     return accumulated_text
 
 
 def print_system_info(message: str) -> None:
-    """Print system or command feedback."""
-    console.print(f"[#aaaaaa][*] {message}[/]")
+    """Print system or command feedback with themed glyph."""
+    palette = get_theme_palette()
+    console.print(f"[bold {palette.accent}]{palette.icon}[/] [{palette.dim}]{message}[/]")
 
 
 def print_help_commands() -> None:
     """Display slash command reference table."""
+    palette = get_theme_palette()
     commands = [
         ("/help", "Show this slash command cheat-sheet"),
         ("/model", "Switch active model on the fly"),
@@ -110,9 +216,15 @@ def print_help_commands() -> None:
         ("/back", "Return to main interactive menu"),
         ("/exit", "Terminate locaLLM session"),
     ]
-    lines = [f"[bold cyan]{cmd:<12}[/] [#888888]-[/] [#cccccc]{desc}[/]" for cmd, desc in commands]
+    lines = [f"[bold {palette.primary}]{cmd:<12}[/] [{palette.dim}]-[/] [white]{desc}[/]" for cmd, desc in commands]
     content = "\n".join(lines)
-    console.print(Panel(content, title="[bold cyan]Available Slash Commands[/]", border_style="cyan"))
+    console.print(Panel(
+        content,
+        title=f"[bold {palette.primary}]⟦{palette.icon} Available Slash Commands⟧[/]",
+        box=palette.box_style,
+        border_style=palette.border_style,
+    ))
+
 
 
 def print_conversational_cli_help() -> None:
@@ -153,6 +265,7 @@ def print_conversational_cli_help() -> None:
     table.add_row("locallm run \"<prompt>\"", "Execute a single prompt turn and stream results to terminal")
     table.add_row("locallm models", "Inspect installed models, sizes, GPU VRAM fit check, and pull models")
     table.add_row("locallm platform", "Manage custom OpenAI-compatible platforms (list, add, remove, use)")
+    table.add_row("locallm plugin", "Manage modular customizable plugins, database connectors, and tools")
     table.add_row("locallm service", "Manage background server daemon lifecycle (start, stop, status)")
     table.add_row("locallm start [target]", "Start Ollama background daemon (default: ollama)")
     table.add_row("locallm stop [target]", "Stop local service processes and release GPU VRAM")

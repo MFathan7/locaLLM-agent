@@ -1,0 +1,75 @@
+{
+  "name": "calendar",
+  "version": "1.0.0",
+  "description": "Manage and schedule personal calendar events, appointments, and agendas locally",
+  "author": "locaLLM",
+  "enabled": true,
+  "entrypoint": "main.py",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "get_calendar_events",
+        "description": "Retrieve scheduled calendar events, appointments, or agendas. Optionally filter by specific date (YYYY-MM-DD) or view all upcoming events.",
+        "parameters": {
+          "type": "object",
+          "properties": {
+            "date": {
+              "type": "string",
+              "description": "Optional target date in YYYY-MM-DD format. If omitted, returns all scheduled events."
+            }
+          }
+        }
+      },
+      "mutating": false
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "add_calendar_event",
+        "description": "Add or schedule a new event, meeting, or appointment to the personal calendar.",
+        "parameters": {
+          "type": "object",
+          "required": ["title", "date"],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Title or summary of the event (e.g. 'Team Sync', 'Dentist Appointment')"
+            },
+            "date": {
+              "type": "string",
+              "description": "Event date in YYYY-MM-DD format"
+            },
+            "time": {
+              "type": "string",
+              "description": "Optional start time (e.g. '14:00', '09:30 AM')"
+            },
+            "description": {
+              "type": "string",
+              "description": "Optional details or agenda for the event"
+            }
+          }
+        }
+      },
+      "mutating": true
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "delete_calendar_event",
+        "description": "Remove or cancel a calendar event by its title.",
+        "parameters": {
+          "type": "object",
+          "required": ["title"],
+          "properties": {
+            "title": {
+              "type": "string",
+              "description": "Exact or partial title of the event to delete"
+            }
+          }
+        }
+      },
+      "mutating": true
+    }
+  ]
+}

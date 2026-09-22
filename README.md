@@ -6,7 +6,12 @@ A developer-first CLI and interactive Terminal User Interface (TUI) platform bui
 
 ## Key Features
 
-- **Clean Terminal User Interface (TUI)**: Keyboard-driven menu navigation (`Up`/`Down`/`Enter`) with a dedicated `Back` option in every submenu and pure text labels designed to maintain strict monospace alignment on Windows terminals without emoji distortion.
+- **Clean Terminal User Interface (TUI) & Micro Block ASCII Art**: Keyboard-driven menu navigation (`Up`/`Down`/`Enter`) with a dedicated `Back` option in every submenu and pure text labels designed to maintain strict monospace alignment on Windows terminals without emoji distortion. Features a centered micro block ASCII wordmark (`█░░ █▀█ █▀▀ ...`) and dynamic GPU VRAM visual progress bar meter.
+- **Dynamic Theme Engine (5 Developer Aesthetics)**: Choose between **Cyber Neon** (`⚡`), **Tokyo Night** (`◈`), **Monokai** (`★`), **Matrix** (`λ`), and **Nordic Frost** (`❄`). Themes dynamically customize box borders, glyph icons, prompt prefixes, live tool badges, and telemetry accents across the application.
+- **Bracket Frame & Copy-Paste Safe Architecture**: Open-body Markdown response framing (`┌─ ⟦⚡ locaLLM · model⟧ ──┐` top header and `└─ ⟦telemetry⟧ ──┘` footer) eliminating side-border vertical pipes (`│`). Copying code blocks from Windows Terminal, VS Code, or CMD never captures border clutter into your clipboard, guaranteeing zero syntax errors.
+- **Interactive Assistant Welcome Cockpit**: Displays an immediate session card upon launching `locaLLM chat` with active model, hardware capabilities, isolated workspace, context limit, and shortcut reference (`Enter` send, `Ctrl+J` newline).
+- **Modular Plugin Architecture (Extensible Function Calling)**: Dynamically discovers third-party tools and plugins across project-local (`<cwd>/plugins/`), workspace-isolated, and global directories without hardcoding. Declarative manifests (`plugin.json`) automatically register tools into LLM function-calling schemas with mutating safety permission policies.
+- **Configurable Multi-Engine Web Search**: Web research tool (`fetch_web` & `search_web`) with customizable search engines (`auto`, `bing`, `duckduckgo`, `custom`) to bypass regional network blocks.
 - **Cross-Platform Parity & Context Telemetry**:
   - Standardized context usage & speed telemetry across Interactive Assistant, Telegram Bot, and WhatsApp Bot:
     ```text
@@ -71,12 +76,13 @@ Main Menu:
   │     ├── [Custom Platform] -> Platform models, Set Active, Delete, Back
   │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
+  ├── Plugins               -> Modular integrations: Inspect, Toggle, Scaffold, Back
   ├── Services              -> Server daemon lifecycle per platform
   │     ├── Ollama          -> Status, Start Server, Stop Server, Configure Endpoint, Back
   │     ├── [Custom Platform] -> Status, Set Active, Configure Endpoint/Key, Delete, Back
   │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global inference parameters only (Backend, Temp, Context Window, Prompt, Reset)
+  ├── Settings              -> Global inference parameters only (Backend, Temp, Context, Theme, Reset)
   └── Exit                  -> Unload VRAM and terminate application
 ```
 
@@ -219,6 +225,62 @@ All tools run silently behind a minimalist rotating square snake spinner (`▘�
 | **`get_current_directory`** | Working directory | Returns active workspace directory path. |
 | **`list_skills`** | Skill discovery | Discovers and lists all installed agent skills across active workspace and project root (`.locallm/skills/`, `.agents/skills/`, `skills/`). |
 | **`read_skill`** | Skill execution | Reads and loads full specialized skill markdown instructions on demand. |
+
+---
+
+## Developer Cockpit & Theme Engine
+
+`locaLLM` transforms standard monochromatic terminal outputs into an immersive, high-contrast developer cockpit inspired by cyberpunk TUIs (Hermes Agent, Kiro).
+
+### 1. Header Banner & Micro Block ASCII Wordmark
+The dashboard header displays a centered 29-character block ASCII logo alongside live hardware telemetry and visual VRAM meters:
+
+```text
+       █░░ █▀█ █▀▀ ▄▀█ █░░ █░░ █▀▄▀█
+       █▄▄ █▄█ █▄▄ █▀█ █▄▄ █▄▄ █░▀░█
+              ✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦
+╔═══════════════════════════════════════════════════════════════════════════╗
+║ ● Service:   ollama (online)           ⚡ Endpoint:  127.0.0.1:11434       ║
+║ ◆ Model:     gemma4:12b                ★ Features:  Tools, Vision         ║
+║ ■ GPU:       NVIDIA GeForce RTX 4070   ▰ VRAM:      [███░░░░░░░] 3.2/12GB ║
+║ ▸ Workspace: default                   ⚡ Theme:     ⟦⚡ CYBER⟧ (2 Plugins) ║
+╚═══════════════════════════════════════════════════════════════════════════╝
+```
+
+### 2. Available Themes
+Switch themes on the fly via `Settings` -> `UI Theme` or in `~/.locallm/config.json`:
+
+| Theme Key | Box Border | Glyph | User Prompt | AI Response Prefix | Accent Palette |
+| :--- | :--- | :---: | :--- | :--- | :--- |
+| **`cyber_neon`** | `box.DOUBLE` (`╔══╗`) | `⚡` | `▲ You:` | `⚡ locaLLM ❯` | Electric Cyan & Neon Magenta |
+| **`tokyo_night`** | `box.ROUNDED` (`╭──╮`) | `◈` | `◆ You:` | `◈ locaLLM ›` | Night Purple & Deep Sky Blue |
+| **`monokai`** | `box.HEAVY` (`┏━━┓`) | `★` | `■ You:` | `★ locaLLM »` | Retro Yellow & Fresh Mint |
+| **`matrix`** | `box.SQUARE` (`┌──┐`) | `λ` | `>>> You:` | `λ locaLLM $` | Hacker Phosphor Green |
+| **`nordic_frost`**| `box.ROUNDED` (`╭──╮`) | `❄` | `• You:` | `❄ locaLLM ›` | Polar Cyan & Platinum Silver |
+
+### 3. Bracket Frame & Copy-Paste Safe Architecture
+Traditional terminal cards use side-border vertical lines (`│` or `║`) on every line. However, when selecting and copying multi-line code snippets with a mouse, terminal emulators capture those vertical pipes, causing syntax errors when pasted into an editor.
+
+`locaLLM` solves this with **Bracket Frame Architecture**:
+- **Top Bar**: Displays the model badge and theme glyph: `┌─ ⟦⚡ locaLLM · gemma4:12b⟧ ──────┐`
+- **Open-Body**: Code blocks and Markdown render cleanly without side-border vertical bars, ensuring **100% clean copy-paste**.
+- **Bottom Bar**: Closes symmetrically with real-time session telemetry: `└─ ⟦• Context: 2,681/8,192 (32.7%) • Speed: 42.8 tok/s • Latency: 1.1s⟧ ────┘`
+
+```text
+┌─ ⟦⚡ locaLLM · gemma4:12b⟧ ────────────────────────────────────────────────┐
+
+Here is the Python implementation for your task:
+
+def calculate_discount(price: float, discount_percent: float) -> float:
+    """Calculate discounted price with validation."""
+    if not (0 <= discount_percent <= 100):
+        raise ValueError("Discount must be between 0 and 100")
+    return round(price * (1 - discount_percent / 100), 2)
+
+print(calculate_discount(150000.0, 15.0))  # Output: 127500.0
+
+└─ ⟦• Context: 2,681/8,192 (32.7%) • Speed: 42.8 tok/s • Latency: 1.1s⟧ ────┘
+```
 
 ---
 
@@ -408,6 +470,52 @@ All workspaces are stored at `~/.locallm/workspaces/<workspace_name>/`:
 
 ---
 
+## Modular Plugin Architecture
+
+`locaLLM` provides a zero-hardcoding plugin architecture allowing developers to extend local LLMs with custom tools, databases, and APIs without modifying core code.
+
+### 1. Three-Tier Discovery Hierarchy
+Plugins are discovered dynamically with strict precedence:
+1. **Project-Local**: `<current_working_directory>/plugins/<plugin_name>/` (scoped to current project)
+2. **Workspace-Isolated**: `~/.locallm/workspaces/<name>/plugins/<plugin_name>/` (scoped to active workspace)
+3. **Global**: `~/.locallm/plugins/<plugin_name>/` (available across all sessions)
+
+### 2. Declarative Plugin Manifest (`plugin.json`)
+Each plugin defines its metadata, parameters, and mutating permissions via a standard JSON manifest:
+```json
+{
+  "name": "sqlite_db",
+  "version": "1.0.0",
+  "description": "Local SQLite database query and inspection tool",
+  "entrypoint": "main.py",
+  "tools": [
+    {
+      "name": "query_database",
+      "description": "Execute a read-only SQL SELECT query against a local SQLite database",
+      "function": "query_database",
+      "mutating": false,
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "db_path": { "type": "string", "description": "Path to SQLite database file" },
+          "query": { "type": "string", "description": "SQL SELECT query to execute" }
+        },
+        "required": ["db_path", "query"]
+      }
+    }
+  ]
+}
+```
+
+### 3. Dynamic Tool Injection & Safety Policy
+- **Automatic Schema Injection**: Declared tools are automatically merged into the LLM's function calling schema (`tools=[]`) during interactive chat and agent runs.
+- **Mutating Permission Policy**: Any tool declaring `"mutating": true` automatically triggers the user confirmation prompt (`always_allow`, `ask`, `deny`) before executing on the host system.
+- **Bundled Reference Plugins**:
+  - `plugins/sqlite_db/`: Safe SQLite querying and schema inspection.
+  - `plugins/calendar/`: Local calendar schedule management (`list_events`, `add_event`).
+
+---
+
 ## Configuration
 
 Configuration settings are stored automatically at:
@@ -431,6 +539,9 @@ Example configuration:
   "context_window": 8192,
   "system_prompt": "You are locaLLM, a helpful, fast, and intelligent local AI assistant.",
   "active_workspace": "default",
+  "ui_theme": "cyber_neon",
+  "web_search_engine": "auto",
+  "plugins_enabled": true,
   "telegram_token": "YOUR_TELEGRAM_BOT_TOKEN",
   "telegram_allowed_users": [],
   "whatsapp_enabled": false,
@@ -441,4 +552,4 @@ Example configuration:
 }
 ```
 
-All settings can be configured interactively through the `Settings`, `Workspaces`, `Integrations`, and `Services` menus in the TUI, or via the `locaLLM config` CLI command.
+All settings can be configured interactively through the `Settings`, `Workspaces`, `Integrations`, `Plugins`, and `Services` menus in the TUI, or via the `locaLLM config` CLI command.

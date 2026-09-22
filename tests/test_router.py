@@ -10,6 +10,7 @@ from locallm.core.router import (
     TaskTier,
     TaskType,
     classify_prompt,
+    is_match_negated,
     route_prompt,
 )
 
@@ -299,6 +300,41 @@ class TestModelRouter(unittest.TestCase):
             self.assertEqual(route.selected_model, "qwen2.5-coder:7b")
             self.assertEqual(route.task_type, TaskType.TOOLS)
             self.assertIn("Specialist Coding Agent", route.reason)
+
+    def test_is_match_negated_detection(self):
+        """Test clause-proximity negation detection with double-negative resilience."""
+        # Simple negation
+        s1 = "Tolong jelaskan konsep SQL, jangan bikin file ya"
+        self.assertTrue(is_match_negated(s1, s1.find("bikin file")))
+
+        # Double negative idiom: jangan lupa (positive intent)
+        s2 = "jangan lupa buatkan file config.json ya"
+        self.assertFalse(is_match_negated(s2, s2.find("buatkan file")))
+
+        # Multi-clause with comma boundary
+        s3 = "aku nggak mau cara lama, tolong buatkan script baru"
+        self.assertFalse(is_match_negated(s3, s3.find("buatkan script")))
+
+        # English negation
+        s4 = "explain docker containers, don't run any commands"
+        self.assertTrue(is_match_negated(s4, s4.find("run")))
+
+    def test_classify_prompt_negation_guard(self):
+        """Prompt with negated tool or coding intent should not be categorized as TOOLS or CODING."""
+        # 1. Negated tool action
+        p1 = "Tolong jelaskan konsep SQL database, jangan bikin file dan jangan jalankan script ya"
+        task1, tier1, _ = classify_prompt(p1)
+        self.assertNotEqual(task1, TaskType.TOOLS)
+
+        # 2. Negated coding action
+        p2 = "bikinin rangkuman artikel aja, nggak usah coding ya"
+        task2, tier2, _ = classify_prompt(p2)
+        self.assertNotEqual(task2, TaskType.CODING)
+
+        # 3. Double negative positive tool intent
+        p3 = "jangan lupa buatkan file config.json ya"
+        task3, tier3, _ = classify_prompt(p3)
+        self.assertEqual(task3, TaskType.TOOLS)
 
 
 if __name__ == "__main__":
