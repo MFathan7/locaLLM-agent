@@ -95,6 +95,59 @@ class TestAssistantMultiStepAgent(unittest.TestCase):
         skills = get_all_available_skills("default")
         self.assertIsInstance(skills, list)
 
+    def test_ignorance_refusal_interceptor_triggers_search_web(self):
+        config = LocaLLMConfig()
+        memory = ConversationMemory(system_prompt="Test assistant")
+        user_query = "Cari informasi terkait goldengate delinea"
+        memory.add_user_message(user_query)
+
+        # Mock client simulating:
+        # Step 1: Ignorant refusal response (text only)
+        # Step 2: Nudge intercepted -> Model invokes search_web
+        # Step 3: Model final synthesis
+        client = MagicMock()
+        step_turns = [
+            {
+                "role": "assistant",
+                "content": "I do not have information about goldengate delinea in my pre-trained data.",
+                "tool_calls": [],
+            },
+            {
+                "role": "assistant",
+                "content": "",
+                "tool_calls": [
+                    {
+                        "id": "call_search_1",
+                        "function": {
+                            "name": "search_web",
+                            "arguments": {"query": "goldengate delinea"},
+                        },
+                    }
+                ],
+            },
+            {
+                "role": "assistant",
+                "content": "Delinea GoldenGate is a privileged access management integration for databases.",
+                "tool_calls": [],
+            },
+        ]
+        client.chat_turn.side_effect = step_turns
+
+        # Mock execute_tool to avoid live HTTP call during unit test
+        with unittest.mock.patch("locallm.modules.assistant.execute_tool", return_value="[Search Results: Delinea integration with GoldenGate]"):
+            _process_assistant_turn(
+                config=config,
+                client=client,
+                memory=memory,
+                has_tools=True,
+                model_name="mock-model",
+            )
+
+        msgs = memory.get_messages()
+        self.assertTrue(any("Delinea GoldenGate is a privileged access management" in m.get("content", "") for m in msgs))
+        # Ensure client was called 3 times (refusal -> nudge -> final synthesis)
+        self.assertEqual(client.chat_turn.call_count, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

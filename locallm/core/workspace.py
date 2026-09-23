@@ -13,6 +13,34 @@ import zipfile
 import httpx
 
 
+DEFAULT_WORKSPACE_AGENTS_MD = """# locaLLM Agent Persona & Directives
+
+You are locaLLM, an autonomous, highly capable, and disciplined local AI assistant.
+
+## Core Identity & Tone
+- Approach every task with precision, clarity, and technical pragmatism.
+- Provide direct, succinct, and high-signal responses.
+- Ground all responses in concrete facts; avoid conversational fluff and unnecessary apologies.
+- Never output canned AI disclaimers such as "As an AI..." or "I am only a language model".
+
+## Autonomous Execution Authority
+- You have direct execution authority on the host system via native function-calling tools.
+- When asked to create, edit, inspect, or execute files, directories, scripts, or system tasks:
+  - NEVER instruct the user to create files or run terminal commands manually when tools can perform the action.
+  - Directly invoke the appropriate tools (`create_directory`, `write_file`, `execute_command`, `read_file`, `list_directory`).
+
+## Proactive Knowledge Discovery & Web Research
+- Whenever the user inquires about a specific entity, software, vendor, product, protocol, acronym, or concept (e.g. niche enterprise tools, newly released libraries, obscure technical terms) that you do not have 100% complete and verified knowledge of, or when asked about real-time events, current news, recent developments, or weather:
+  - NEVER state that you don't know, have no information, or lack real-time access.
+  - NEVER hallucinate or speculate without verification.
+  - You MUST PROACTIVELY invoke `search_web` on your first turn to research verified information before answering.
+
+## Tool Observation Synthesis
+- Never cite internal function names (e.g. `get_current_time`, `search_web`) or raw schema parameters to the user.
+- Seamlessly synthesize tool observations and local environment context into natural, authoritative answers.
+"""
+
+
 def get_workspaces_dir() -> Path:
     """Return base directory for all workspaces (~/.locallm/workspaces)."""
     base = Path.home() / ".locallm" / "workspaces"
@@ -24,6 +52,15 @@ def get_workspace_path(name: str) -> Path:
     """Return path to a specific workspace directory."""
     clean_name = name.strip()
     return get_workspaces_dir() / clean_name
+
+
+def get_workspace_agents_path(name: str) -> Path:
+    """Return path to the AGENTS.md or SOUL.md file for a workspace."""
+    ws_path = get_workspace_path(name)
+    soul_file = ws_path / "SOUL.md"
+    if soul_file.is_file():
+        return soul_file
+    return ws_path / "AGENTS.md"
 
 
 def ensure_default_workspace() -> Path:
@@ -51,6 +88,12 @@ def ensure_default_workspace() -> Path:
             "whenever the `default` workspace is active.\n"
         )
         (default_dir / "knowledge" / "README.md").write_text(readme_content, encoding="utf-8")
+
+    # Ensure default workspace AGENTS.md is scaffolded
+    agents_file = default_dir / "AGENTS.md"
+    soul_file = default_dir / "SOUL.md"
+    if not agents_file.exists() and not soul_file.exists():
+        agents_file.write_text(DEFAULT_WORKSPACE_AGENTS_MD, encoding="utf-8")
 
     return default_dir
 
@@ -158,6 +201,15 @@ def create_workspace(
         with open(ws_path / "workspace.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
 
+        # Automatically scaffold workspace AGENTS.md
+        agents_file = ws_path / "AGENTS.md"
+        if not agents_file.exists():
+            if custom_instructions.strip():
+                initial_agents = f"{DEFAULT_WORKSPACE_AGENTS_MD}\n\n## Custom Workspace Directives\n{custom_instructions.strip()}\n"
+            else:
+                initial_agents = DEFAULT_WORKSPACE_AGENTS_MD
+            agents_file.write_text(initial_agents, encoding="utf-8")
+
         return True, f"Workspace '{clean_name}' created successfully."
     except Exception as exc:
         return False, f"Failed to create workspace: {exc}"
@@ -184,10 +236,10 @@ def delete_workspace(name: str, active_workspace: str) -> Tuple[bool, str]:
 
 
 def load_workspace_context(name: str) -> str:
-    """Load knowledge, skills, and custom instructions for the specified workspace ONLY.
+    """Load knowledge, skills, persona directives, and custom instructions for the workspace.
 
-    Strict Isolation: Only files belonging directly to this workspace are read.
-    No cross-workspace bleeding or clashing from 'default' or other workspaces occurs.
+    Resolves AGENTS.md persona hierarchy with strict precedence:
+    Active Workspace > Project CWD > Global (~/.locallm) > Default Template
     """
     clean_name = name.strip() if name else "default"
     ws_path = get_workspace_path(clean_name)
@@ -199,19 +251,54 @@ def load_workspace_context(name: str) -> str:
 
     sections: List[str] = []
 
-    # 1. Custom instructions from workspace.json
+    # 1. Resolve Persona & Cognitive Directives (AGENTS.md / SOUL.md)
+    persona_text = ""
+    persona_source = ""
+
+    for cand_name in ["AGENTS.md", "SOUL.md", "agent.md"]:
+        ws_cand = ws_path / cand_name
+        if ws_cand.is_file():
+            try:
+                persona_text = ws_cand.read_text(encoding="utf-8", errors="replace").strip()
+                if persona_text:
+                    persona_source = f"Workspace: {clean_name}"
+                    break
+            except Exception:
+                pass
+
+    if not persona_text:
+        global_dir = Path.home() / ".locallm"
+        for cand_name in ["AGENTS.md", "SOUL.md"]:
+            glob_cand = global_dir / cand_name
+            if glob_cand.is_file():
+                try:
+                    persona_text = glob_cand.read_text(encoding="utf-8", errors="replace").strip()
+                    if persona_text:
+                        persona_source = "Global (~/.locallm)"
+                        break
+                except Exception:
+                    pass
+
+    if not persona_text:
+        persona_text = DEFAULT_WORKSPACE_AGENTS_MD
+        persona_source = "Default Directives"
+
+    if persona_text:
+        sections.append(f"[Persona & Cognitive Directives ({persona_source})]\n{persona_text}")
+
+    # 2. Custom instructions from workspace.json (if distinct from AGENTS.md)
     meta_file = ws_path / "workspace.json"
     if meta_file.exists():
         try:
             with open(meta_file, "r", encoding="utf-8") as f:
                 meta = json.load(f)
                 custom_inst = meta.get("custom_instructions", "").strip()
-                if custom_inst:
+                if custom_inst and custom_inst not in persona_text:
                     sections.append(f"[Workspace Instructions]\n{custom_inst}")
         except Exception:
             pass
 
-    # 2. Knowledge documents (.md, .txt) - Progressive disclosure (compact snippets)
+    # 3. Knowledge documents (.md, .txt) - Progressive disclosure (compact snippets)
     knowledge_dir = ws_path / "knowledge"
     if knowledge_dir.exists() and knowledge_dir.is_dir():
         k_entries: List[str] = []
@@ -229,7 +316,7 @@ def load_workspace_context(name: str) -> str:
             combined_k = "\n\n".join(k_entries)
             sections.append(f"[Workspace Knowledge Base]\n{combined_k[:3000]}")
 
-    # 3. Agent Skills (.md, .txt) - Progressive disclosure (compact snippets)
+    # 4. Agent Skills (.md, .txt) - Progressive disclosure (compact snippets)
     skills_dir = ws_path / "skills"
     if skills_dir.exists() and skills_dir.is_dir():
         s_entries: List[str] = []
@@ -247,20 +334,20 @@ def load_workspace_context(name: str) -> str:
             combined_s = "\n\n".join(s_entries)
             sections.append(f"[Workspace Skills]\n{combined_s[:3000]}")
 
-    # 4. Project Rules & Context from Current Working Directory (CWD) - Capped to prevent context bloat
+    # 5. Project Rules & Context from Current Working Directory (CWD)
     cwd = Path.cwd()
     project_rules_files = ["AGENTS.md", "CLAUDE.md", "agent.md", "rules.md"]
     for rf_name in project_rules_files:
-        rule_file = cwd / rf_name
-        if rule_file.is_file():
-            try:
-                rule_text = rule_file.read_text(encoding="utf-8", errors="replace").strip()
-                if rule_text:
-                    rule_snippet = rule_text if len(rule_text) <= 2000 else (rule_text[:2000] + f"\n... [Full project rules in {rf_name}]")
-                    sections.append(f"[Project Architecture & Rules ({rf_name})]\n{rule_snippet}")
-                    break
-            except Exception:
-                pass
+            rule_file = cwd / rf_name
+            if rule_file.is_file():
+                try:
+                    rule_text = rule_file.read_text(encoding="utf-8", errors="replace").strip()
+                    if rule_text:
+                        rule_snippet = rule_text if len(rule_text) <= 2000 else (rule_text[:2000] + f"\n... [Full project rules in {rf_name}]")
+                        sections.append(f"[Project Architecture & Rules ({rf_name})]\n{rule_snippet}")
+                        break
+                except Exception:
+                    pass
 
     # 5. Local Project Skills from CWD (.locallm/skills, .agents/skills, skills/)
     for local_skill_path in [cwd / ".locallm" / "skills", cwd / ".agents" / "skills", cwd / "skills"]:

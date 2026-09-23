@@ -66,6 +66,8 @@ TOOL_PATTERNS = [
     # Terminal, system commands, web/API fetching, and database
     r"\b(run|execute|jalankan)\s+(?:command|cmd|terminal|powershell|bash|shell|script)\b",
     r"\b(curl|wget|fetch|download|unduh|ping|search|googling|cari\s+web|search_web|http[s]?://)\b",
+    r"\b(cari\s+tahu|cari\s+info|cari\s+informasi|research|lookup|investigate|find\s+info)\b",
+    r"\b(cari|search)\s+(tentang|mengenai|terkait|soal)\b",
     r"\b(berita|news|terkini|terbaru|hari ini|today|latest|current events|headline|isu terkini)\b",
     r"\b(kabar\s+berita|update\s+berita|info\s+terkini|kabar\s+terbaru)\b",
     r"\b(presiden|menteri|pemerintahan|politik|pilkada|pemilu)\b.*?\b(terkini|terbaru|saat ini|sekarang|kali ini)\b",

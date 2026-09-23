@@ -9,7 +9,7 @@ from locallm.config import LocaLLMConfig, get_custom_platform, save_config
 from locallm.core.hardware import calculate_vram_breakdown, check_vram_compatibility, get_gpu_info
 from locallm.core.ollama_client import OllamaClient
 from locallm.core.openai_client import OpenAIClient
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 
 def run_models_manager(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
@@ -54,6 +54,7 @@ def _manage_ollama_models(config: LocaLLMConfig, client: Optional[Any] = None) -
             is_ollama_active=is_ollama_active,
             client=ollama_client,
             context_tokens=config.context_window,
+            ui_theme=config.ui_theme,
         )
 
         action = questionary.select(
@@ -85,13 +86,16 @@ def _display_ollama_table(
     is_ollama_active: bool = True,
     client: Optional[OllamaClient] = None,
     context_tokens: int = 8192,
+    ui_theme: str = "cyber_neon",
 ) -> None:
     """Render Rich table of models with precision VRAM compatibility status."""
     gpu = get_gpu_info()
+    palette = get_theme_palette(ui_theme)
     table = Table(
         title="Installed Local Models (Ollama)",
-        border_style="cyan",
-        header_style="bold cyan",
+        border_style=palette.border_style,
+        header_style=f"bold {palette.primary}",
+        box=palette.box_style,
     )
     table.add_column("Status", style="bold", width=8)
     table.add_column("Model Name", style="bold white")
@@ -192,10 +196,12 @@ def _manage_custom_platform_models(config: LocaLLMConfig, platform_name: str) ->
         models = openai_client.list_models()
         is_platform_active = (config.active_backend.strip().lower() == platform.name.strip().lower())
 
+        palette = get_theme_palette(config.ui_theme)
         table = Table(
             title=f"Available Models ({platform.name})",
-            border_style="cyan",
-            header_style="bold cyan",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
         )
         table.add_column("Status", style="bold", width=8)
         table.add_column("Model ID", style="bold white")
@@ -219,7 +225,7 @@ def _manage_custom_platform_models(config: LocaLLMConfig, platform_name: str) ->
 
         console.print()
         console.print(table)
-        console.print(f"[#aaaaaa]Endpoint: [cyan]{platform.api_base}[/][/]\n")
+        console.print(f"[#aaaaaa]Endpoint: [{palette.dim}]{platform.api_base}[/][/]\n")
 
         action = questionary.select(
             f"{platform.name} Model Actions:",
@@ -262,6 +268,7 @@ def _select_active_model(
     ).ask()
 
     if chosen and chosen != "Cancel":
+        palette = get_theme_palette(config.ui_theme)
         if chosen == "Auto (Smart Router)":
             config.default_model = "auto"
             if platform_name.lower() == "ollama":
@@ -273,7 +280,7 @@ def _select_active_model(
                     platform.default_model = "auto"
                 config.active_backend = platform_name
             save_config(config)
-            console.print("[success]Default active model set to:[/] [bold cyan]Auto (Smart Router)[/]\n")
+            console.print(f"[success]Default active model set to:[/] [bold {palette.primary}]Auto (Smart Router)[/]\n")
             return
 
         config.default_model = chosen
@@ -286,9 +293,9 @@ def _select_active_model(
                 platform.default_model = chosen
             config.active_backend = platform_name
         save_config(config)
-        console.print(f"[success]Default active model set to:[/] [bold cyan]{chosen}[/]")
+        console.print(f"[success]Default active model set to:[/] [bold {palette.primary}]{chosen}[/]")
         if platform_name.lower() != "ollama":
-            console.print(f"[success]Active backend switched to:[/] [bold cyan]{platform_name}[/]\n")
+            console.print(f"[success]Active backend switched to:[/] [bold {palette.primary}]{platform_name}[/]\n")
 
 
 def _pull_model_wizard(client: OllamaClient) -> None:

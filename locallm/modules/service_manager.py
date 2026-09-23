@@ -19,19 +19,19 @@ from locallm.core.service_manager import (
     start_ollama_service,
     stop_ollama_service,
 )
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 
 def run_service_manager(config: LocaLLMConfig) -> None:
-    """Platform selection menu for service management."""
+    """Submenu for controlling backend daemons and custom platforms."""
     while True:
         choices = ["Ollama"]
         for p in config.custom_platforms:
-            choices.append(p.name)
+            choices.append(f"Platform: {p.name}")
         choices.extend(["Add Custom Platform", "Back"])
 
         choice = questionary.select(
-            "Service Platforms:",
+            "Service & Platform Manager:",
             choices=choices,
             style=QUESTIONARY_STYLE,
         ).ask()
@@ -40,33 +40,35 @@ def run_service_manager(config: LocaLLMConfig) -> None:
             break
 
         if choice == "Ollama":
-            _manage_ollama_platform(config)
+            _manage_ollama_service(config)
         elif choice == "Add Custom Platform":
             _add_custom_platform_wizard(config)
-        else:
-            _manage_custom_platform(config, choice)
+        elif choice.startswith("Platform: "):
+            pname = choice.replace("Platform: ", "").strip()
+            _manage_custom_platform(config, pname)
 
 
-def _manage_ollama_platform(config: LocaLLMConfig) -> None:
-    """Ollama service control and endpoint configuration."""
+def _manage_ollama_service(config: LocaLLMConfig) -> None:
+    """Inspect and control the local Ollama background server process."""
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
     while True:
-        running = is_ollama_running(config.ollama_host)
         installed = is_ollama_installed()
-        if running:
-            status_text = "[bold green]RUNNING[/]"
-        elif not installed:
-            status_text = "[bold red]STOPPED (Not Installed in PATH)[/]"
+        running = is_ollama_running(config.ollama_host)
+        if not installed:
+            status_text = "[bold red]NOT INSTALLED[/]"
+        elif running:
+            status_text = f"[bold {palette.success}]RUNNING[/]"
         else:
             status_text = "[bold red]STOPPED[/]"
         is_active = (config.active_backend.strip().lower() == "ollama")
-        active_text = "[bold green]ACTIVE BACKEND[/]" if is_active else "[dim]INACTIVE[/]"
+        active_text = f"[bold {palette.success}]ACTIVE BACKEND[/]" if is_active else "[dim]INACTIVE[/]"
 
         panel_content = (
             f"Service Status : {status_text}\n"
             f"Backend State  : {active_text}\n"
-            f"API Endpoint   : [cyan]{config.ollama_host}[/]"
+            f"API Endpoint   : [{palette.primary}]{config.ollama_host}[/]"
         )
-        console.print(Panel(panel_content, title="Ollama Platform", border_style="cyan"))
+        console.print(Panel(panel_content, title="Ollama Platform", border_style=palette.border_style, box=palette.box_style))
 
         action = questionary.select(
             "Ollama Service Action:",
@@ -101,6 +103,7 @@ def _manage_ollama_platform(config: LocaLLMConfig) -> None:
 
 def _manage_custom_platform(config: LocaLLMConfig, platform_name: str) -> None:
     """Manage a user-configured OpenAI-compatible custom platform."""
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
     while True:
         platform = get_custom_platform(config, platform_name)
         if not platform:
@@ -108,19 +111,19 @@ def _manage_custom_platform(config: LocaLLMConfig, platform_name: str) -> None:
             break
 
         reachable = is_custom_platform_reachable(platform.api_base, platform.api_key)
-        status_text = "[bold green]ONLINE[/]" if reachable else "[bold red]OFFLINE[/]"
+        status_text = f"[bold {palette.success}]ONLINE[/]" if reachable else "[bold red]OFFLINE[/]"
         is_active = (config.active_backend.strip().lower() == platform.name.strip().lower())
-        active_text = "[bold green]ACTIVE BACKEND[/]" if is_active else "[dim]INACTIVE[/]"
+        active_text = f"[bold {palette.success}]ACTIVE BACKEND[/]" if is_active else "[dim]INACTIVE[/]"
         key_masked = "Configured" if platform.api_key else "None (Unauthenticated)"
 
         panel_content = (
-            f"Platform Name  : [bold cyan]{platform.name}[/]\n"
+            f"Platform Name  : [bold {palette.primary}]{platform.name}[/]\n"
             f"Service Status : {status_text}\n"
             f"Backend State  : {active_text}\n"
-            f"API Endpoint   : [cyan]{platform.api_base}[/]\n"
+            f"API Endpoint   : [{palette.primary}]{platform.api_base}[/]\n"
             f"API Key        : [#aaaaaa]{key_masked}[/]"
         )
-        console.print(Panel(panel_content, title=f"Platform: {platform.name}", border_style="cyan"))
+        console.print(Panel(panel_content, title=f"Platform: {platform.name}", border_style=palette.border_style, box=palette.box_style))
 
         action = questionary.select(
             f"{platform.name} Service Action:",

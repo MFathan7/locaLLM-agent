@@ -227,41 +227,48 @@ def print_help_commands() -> None:
 
 
 
-def print_conversational_cli_help() -> None:
+def print_conversational_cli_help(theme: Optional[str] = None) -> None:
     """Display rich, conversational CLI guide from the locaLLM assistant."""
     from rich.table import Table
+    if theme is None:
+        try:
+            from locallm.config import load_config
+            theme = load_config().ui_theme
+        except Exception:
+            theme = "cyber_neon"
+    palette = get_theme_palette(theme)
 
     intro_text = (
         "[bold white]Hello! I'm locaLLM, your autonomous local AI platform.[/]\n"
         "[#aaaaaa]I am designed to run large language models locally at peak speed,\n"
         "featuring isolated project sandboxes, local tool automation (files, shell, web), and 24/7 bot runners.\n"
-        "Launch [/][bold cyan]locaLLM[/][#aaaaaa] without arguments to open the interactive TUI dashboard, or use the commands below:[/]\n"
+        f"Launch [/][bold {palette.primary}]locaLLM[/][#aaaaaa] without arguments to open the interactive TUI dashboard, or use the commands below:[/]\n"
     )
 
     table = Table(
         box=None,
         padding=(0, 2),
         show_header=True,
-        header_style="bold cyan",
+        header_style=f"bold {palette.primary}",
     )
-    table.add_column("Command", style="bold cyan", width=22)
+    table.add_column("Command", style=f"bold {palette.primary}", width=22)
     table.add_column("Description", style="white")
 
     # Group 1: Interactive & Workspaces
-    table.add_row("[bold #00ff87]--- Interactive & Workspaces ---[/]", "")
+    table.add_row(f"[bold {palette.success}]--- Interactive & Workspaces ---[/]", "")
     table.add_row("locallm chat", "Start interactive conversation session with silent tool execution")
     table.add_row("locallm agent", "Run autonomous ReAct agent loop for multi-step tasks (files, shell, web)")
     table.add_row("locallm workspace", "Manage isolated zero-bleed workspaces, knowledge docs, and skills")
 
     # Group 2: Integrations & Channels
     table.add_row("", "")
-    table.add_row("[bold #00ff87]--- Integrations & Bot Runners ---[/]", "")
+    table.add_row(f"[bold {palette.success}]--- Integrations & Bot Runners ---[/]", "")
     table.add_row("locallm telegram", "Run 24/7 Telegram bot with user ID whitelist and multi-user memory")
     table.add_row("locallm whatsapp", "Run WhatsApp bot with terminal QR pairing and phone whitelist")
 
     # Group 3: Control & Ops
     table.add_row("", "")
-    table.add_row("[bold #00ff87]--- Control & Utilities ---[/]", "")
+    table.add_row(f"[bold {palette.success}]--- Control & Utilities ---[/]", "")
     table.add_row("locallm run \"<prompt>\"", "Execute a single prompt turn and stream results to terminal")
     table.add_row("locallm models", "Inspect installed models, sizes, GPU VRAM fit check, and pull models")
     table.add_row("locallm platform", "Manage custom OpenAI-compatible platforms (list, add, remove, use)")
@@ -273,20 +280,20 @@ def print_conversational_cli_help() -> None:
     table.add_row("locallm config", "Configure global inference settings (backend, temperature, context)")
 
     examples_text = (
-        "\n[bold cyan]Quickstart Examples:[/]\n"
-        "  [#00d7ff]locaLLM[/]                                       [#888888]# Open Interactive TUI Dashboard[/]\n"
-        "  [#00d7ff]locaLLM chat --model gemma4:12b[/]               [#888888]# Interactive chat with specific model[/]\n"
-        "  [#00d7ff]locaLLM run \"Summarize README.md\"[/]             [#888888]# Single-shot prompt execution[/]\n"
-        "  [#00d7ff]locaLLM workspace use project-ai[/]              [#888888]# Switch active workspace[/]\n"
-        "  [#00d7ff]locaLLM <command> --help[/]                       [#888888]# Detailed help for specific subcommand[/]"
+        f"\n[bold {palette.primary}]Quickstart Examples:[/]\n"
+        f"  [{palette.accent}]locaLLM[/]                                       [#888888]# Open Interactive TUI Dashboard[/]\n"
+        f"  [{palette.accent}]locaLLM chat --model gemma4:12b[/]               [#888888]# Interactive chat with specific model[/]\n"
+        f"  [{palette.accent}]locaLLM run \"Summarize README.md\"[/]             [#888888]# Single-shot prompt execution[/]\n"
+        f"  [{palette.accent}]locaLLM workspace use project-ai[/]              [#888888]# Switch active workspace[/]\n"
+        f"  [{palette.accent}]locaLLM <command> --help[/]                       [#888888]# Detailed help for specific subcommand[/]"
     )
 
-    full_content = f"{intro_text}\n"
     console.print(Panel(
         table,
-        title="[bold cyan]✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ   ɢ ᴜ ɪ ᴅ ᴇ  ✦[/]",
+        title=f"[bold {palette.primary}]✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ   ɢ ᴜ ɪ ᴅ ᴇ  ✦[/]",
         subtitle="[#aaaaaa]Developer-First Autonomous Local AI Platform[/]",
-        border_style="cyan",
+        border_style=palette.border_style,
+        box=palette.box_style,
         padding=(1, 2),
     ))
     console.print(examples_text)
@@ -309,10 +316,16 @@ FAREWELL_QUOTES = [
 ]
 
 
-
-def render_application_farewell(unloaded_count: int = 0) -> None:
+def render_application_farewell(unloaded_count: int = 0, theme: Optional[str] = None) -> None:
     """Display short, dynamic conversational persona farewell when exiting locaLLM."""
+    if theme is None:
+        try:
+            from locallm.config import load_config
+            theme = load_config().ui_theme
+        except Exception:
+            theme = "cyber_neon"
+    palette = get_theme_palette(theme)
     title, subtitle = random.choice(FAREWELL_QUOTES)
-    console.print(f"\n[bold cyan]{title}[/] [dim white]{subtitle}[/]\n")
+    console.print(f"\n[bold {palette.primary}]{title}[/] [dim white]{subtitle}[/]\n")
 
 

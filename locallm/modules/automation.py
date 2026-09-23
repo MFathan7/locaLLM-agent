@@ -21,42 +21,13 @@ def execute_prompt(prompt: str, config: LocaLLMConfig, client: OllamaClient) -> 
 
     now_str = datetime.now().strftime("%A, %Y-%m-%d %H:%M:%S")
     cwd_str = str(Path.cwd().resolve())
+    active_ws = getattr(config, "active_workspace", "default")
+    ws_context = load_workspace_context(active_ws)
+
     context_system = (
         f"{config.system_prompt}\n"
-        f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}.\n"
-        "Capabilities & Direct Tool Access:\n"
-        "You have full authority and built-in function calling tools to interact directly with the local system: "
-        "'create_directory' to create directories anywhere on the filesystem, "
-        "'write_file' to write or create code, configuration, or documentation files anywhere on the filesystem, "
-        "'list_directory' and 'read_file' for inspecting files and folders, 'get_current_time', 'get_current_directory', "
-        "'execute_command', 'get_weather' for real-time weather and temperature, "
-        "'search_web' to search the live web for real-time information, documentation, news, or answers to unknown questions, "
-        "and 'fetch_web' for reading specific web pages/GitHub URLs.\n"
-        "CRITICAL AUTONOMOUS EXECUTION & REAL-TIME KNOWLEDGE DIRECTIVE:\n"
-        "1. File and System Actions:\n"
-        "When the user asks to create, write, modify, generate, or execute any files, directories, scripts, or system tasks:\n"
-        "- DO NOT provide manual terminal, shell, or command-prompt instructions for the user to run themselves.\n"
-        "- DO NOT ask or expect the user to manually create directories or save files.\n"
-        "- You MUST directly invoke the appropriate tools ('create_directory', 'write_file', 'execute_command') "
-        "via native function calling to perform the requested actions immediately on the local system.\n"
-        "2. Real-Time Facts, News & Live Web Search:\n"
-        "When asked about real-time events, current news, recent developments, weather, or facts beyond your static training data:\n"
-        "- DO NOT tell the user to read news websites, check apps, or search manually.\n"
-        "- DO NOT refuse by saying your knowledge is outdated or limited.\n"
-        "- You MUST immediately invoke 'search_web' with concise query terms to discover real-time facts and synthesize the answers directly for the user.\n"
-        "3. Tool Observation Synthesis & Natural Answers:\n"
-        "- NEVER explain or cite the internal tool function names or schemas (e.g. 'get_current_time', 'search_web', 'read_file') to the user.\n"
-        "- NEVER tell the user 'you can use the function...' or provide code examples showing how to invoke functions.\n"
-        "- Use the returned observation values and the Environment context (e.g. current hour/date for morning/afternoon/evening greetings) directly to answer the user's inquiry naturally and conversationally.\n"
-        "4. Tone, Grounding & Authority:\n"
-        "- NEVER say you cannot access files, cannot search the web, cannot sense time, or are just an AI.\n"
-        "- NEVER give philosophical or canned AI refusals like 'ask people around you', 'check your phone or clock', or 'I cannot sense time directly'.\n"
-        "- You are grounded in the real world with exact local system time provided in the Environment context.\n"
-        "- When asked about current time, date, or whether it is morning/afternoon/night, answer directly and definitively based on the local hour (e.g., 22:00-04:00 is night/malam, 05:00-11:00 is morning/pagi, 12:00-15:00 is afternoon/siang, 15:00-18:00 is evening/sore).\n"
-        "- When tool results are returned, synthesize the answer directly without boilerplate greetings or meta-commentary."
+        f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}."
     )
-
-    ws_context = load_workspace_context(getattr(config, "active_workspace", "default"))
     if ws_context:
         context_system += f"\n\n{ws_context}"
 

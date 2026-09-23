@@ -1,6 +1,7 @@
 """Interactive TUI menu for managing locaLLM plugins."""
 
 from pathlib import Path
+from typing import Optional
 import questionary
 from rich.panel import Panel
 from rich.table import Table
@@ -15,21 +16,27 @@ from locallm.core.plugin_manager import (
     get_plugin,
     list_plugins,
 )
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 
 def run_plugin_menu(config: LocaLLMConfig) -> None:
     """Main interactive menu loop for managing plugins."""
     active_ws = getattr(config, "active_workspace", "default")
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
 
     while True:
         plugins = list_plugins(active_ws)
         enabled_count = len([p for p in plugins if p.enabled and not p.error])
         total_count = len(plugins)
 
-        table = Table(title="Installed Plugins", border_style="cyan", header_style="bold cyan")
+        table = Table(
+            title="Installed Plugins",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
         table.add_column("Status", style="bold", width=10)
-        table.add_column("Plugin Name", style="bold white")
+        table.add_column("Plugin Name", style=f"bold {palette.primary}")
         table.add_column("Version", justify="center")
         table.add_column("Tools", justify="center")
         table.add_column("Source", justify="center")
@@ -39,7 +46,7 @@ def run_plugin_menu(config: LocaLLMConfig) -> None:
             if p.error:
                 st = "[bold red]ERROR[/]"
             elif p.enabled:
-                st = "[bold #00ff87]ENABLED[/]"
+                st = f"[bold {palette.success}]ENABLED[/]"
             else:
                 st = "[#aaaaaa]DISABLED[/]"
 
@@ -54,7 +61,7 @@ def run_plugin_menu(config: LocaLLMConfig) -> None:
             )
 
         console.print(table)
-        console.print(f"[#aaaaaa]Total: [bold white]{total_count}[/] plugin(s) installed, [bold #00ff87]{enabled_count}[/] active.[/]\n")
+        console.print(f"[#aaaaaa]Total: [bold white]{total_count}[/] plugin(s) installed, [bold {palette.success}]{enabled_count}[/] active.[/]\n")
 
         choices = [
             "Inspect Plugin Details",
@@ -74,7 +81,7 @@ def run_plugin_menu(config: LocaLLMConfig) -> None:
             break
 
         if choice == "Inspect Plugin Details":
-            _inspect_plugin_details(plugins)
+            _inspect_plugin_details(plugins, config)
         elif choice == "Toggle Enable/Disable":
             _toggle_plugin(plugins, active_ws)
         elif choice == "Create New Plugin Scaffold":
@@ -83,11 +90,14 @@ def run_plugin_menu(config: LocaLLMConfig) -> None:
             _delete_plugin_dialog(plugins, active_ws)
 
 
-def _inspect_plugin_details(plugins) -> None:
+def _inspect_plugin_details(plugins, config: Optional[LocaLLMConfig] = None) -> None:
     """Display detailed info and tool list for a selected plugin."""
     if not plugins:
         console.print("[warning]No plugins installed to inspect.[/]\n")
         return
+
+    theme_key = getattr(config, "ui_theme", "cyber_neon") if config else "cyber_neon"
+    palette = get_theme_palette(theme_key)
 
     plugin_names = [p.name for p in plugins]
     chosen_name = questionary.select(
@@ -103,24 +113,29 @@ def _inspect_plugin_details(plugins) -> None:
     if not target:
         return
 
-    status_str = "[bold #00ff87]ENABLED[/]" if target.enabled else "[#aaaaaa]DISABLED[/]"
+    status_str = f"[bold {palette.success}]ENABLED[/]" if target.enabled else "[#aaaaaa]DISABLED[/]"
     info_lines = [
-        f"Name        : [bold white]{target.name}[/]",
+        f"Name        : [bold {palette.primary}]{target.name}[/]",
         f"Version     : {target.version}",
         f"Author      : {target.author}",
         f"Status      : {status_str}",
         f"Source      : {target.source}",
-        f"Directory   : [cyan]{target.dir_path}[/]",
+        f"Directory   : [{palette.primary}]{target.dir_path}[/]",
         f"Description : {target.description or 'None'}",
     ]
     if target.error:
         info_lines.append(f"Error       : [bold red]{target.error}[/]")
 
-    console.print(Panel("\n".join(info_lines), title=f"Plugin: {target.name}", border_style="cyan"))
+    console.print(Panel("\n".join(info_lines), title=f"Plugin: {target.name}", border_style=palette.border_style, box=palette.box_style))
 
     if target.tools:
-        tools_table = Table(title=f"Tools in '{target.name}'", border_style="cyan", header_style="bold cyan")
-        tools_table.add_column("Tool Name", style="bold cyan")
+        tools_table = Table(
+            title=f"Tools in '{target.name}'",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
+        tools_table.add_column("Tool Name", style=f"bold {palette.primary}")
         tools_table.add_column("Mutating", justify="center")
         tools_table.add_column("Description")
 

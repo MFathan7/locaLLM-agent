@@ -25,7 +25,7 @@ from locallm.modules.whatsapp_bot import run_whatsapp_bot
 from locallm.ui.banner import render_banner
 from locallm.ui.chat_view import print_conversational_cli_help
 from locallm.ui.menu import start_main_menu
-from locallm.ui.theme import console
+from locallm.ui.theme import console, get_theme_palette
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -344,7 +344,13 @@ def _handle_plugin_cli(args, config) -> None:
 
     if action == "list":
         plugins = list_plugins(active_ws)
-        table = Table(title="Installed locaLLM Plugins", border_style="cyan", header_style="bold cyan")
+        palette = get_theme_palette(config.ui_theme)
+        table = Table(
+            title="Installed locaLLM Plugins",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
         table.add_column("Status", style="bold", width=10)
         table.add_column("Plugin Name", style="bold white")
         table.add_column("Version", justify="center")
@@ -431,7 +437,13 @@ def _handle_workspace_cli(args, config) -> None:
     if action == "list":
         workspaces = list_workspaces()
         active = getattr(config, "active_workspace", "default")
-        table = Table(title="Installed Workspaces", border_style="cyan", header_style="bold cyan")
+        palette = get_theme_palette(config.ui_theme)
+        table = Table(
+            title="Installed Workspaces",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
         table.add_column("Status", style="bold", width=8)
         table.add_column("Workspace Name", style="bold white")
         table.add_column("Knowledge", justify="center")
@@ -568,11 +580,17 @@ def _handle_platform_cli(args, config) -> None:
 
     action = getattr(args, "plat_action", None)
     if not action or action == "list":
-        table = Table(title="Inference Platforms", border_style="cyan", header_style="bold cyan")
+        palette = get_theme_palette(config.ui_theme)
+        table = Table(
+            title="Inference Platforms",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
         table.add_column("Status", style="bold", width=8)
         table.add_column("Platform", style="bold white")
         table.add_column("Type", justify="center")
-        table.add_column("Endpoint", style="cyan")
+        table.add_column("Endpoint", style=palette.primary)
         table.add_column("State", justify="center")
 
         ollama_active = "[bold green]ACTIVE[/]" if config.active_backend == "ollama" else "[dim]INACTIVE[/]"

@@ -27,7 +27,7 @@ from locallm.core.workspace import (
     save_workspace_session,
 )
 from locallm.ui.spinner import thinking_spinner
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 # In-memory per-user conversation stores for WhatsApp
 user_sessions: Dict[str, ConversationMemory] = {}
@@ -95,13 +95,14 @@ def run_whatsapp_menu(config: LocaLLMConfig, client: OllamaClient) -> None:
         whitelist_desc = f"{whitelist_count} allowed number(s)" if whitelist_count > 0 else "All numbers allowed"
         model_display = "Auto (Smart Router)" if config.default_model.lower() == "auto" else config.default_model
 
+        palette = get_theme_palette(config.ui_theme)
         panel_content = (
             f"Backend Service   : {status_text} (Ollama)\n"
-            f"Active Model      : [bold cyan]{model_display}[/]\n"
-            f"Allowed Whitelist : [#00ff87]{whitelist_desc}[/]\n"
-            f"Session Directory : [cyan]{get_whatsapp_session_dir(config)}[/]"
+            f"Active Model      : [bold {palette.primary}]{model_display}[/]\n"
+            f"Allowed Whitelist : [{palette.success}]{whitelist_desc}[/]\n"
+            f"Session Directory : [{palette.dim}]{get_whatsapp_session_dir(config)}[/]"
         )
-        console.print(Panel(panel_content, title="WhatsApp Integration", border_style="cyan"))
+        console.print(Panel(panel_content, title="WhatsApp Integration", border_style=palette.border_style, box=palette.box_style))
 
         choice = questionary.select(
             "WhatsApp Options:",
@@ -160,6 +161,7 @@ def clear_whatsapp_session(config: LocaLLMConfig) -> None:
 
 def configure_whatsapp_whitelist(config: LocaLLMConfig) -> None:
     """Manage allowed phone number whitelist."""
+    palette = get_theme_palette(config.ui_theme)
     while True:
         current = config.whatsapp_allowed_numbers
         count_str = f"{len(current)} registered" if current else "None (Open to all callers)"
@@ -183,7 +185,12 @@ def configure_whatsapp_whitelist(config: LocaLLMConfig) -> None:
             if not current:
                 console.print("[#aaaaaa]Whitelist is empty. Any incoming WhatsApp user can interact with the bot.[/]\n")
             else:
-                table = Table(title="Whitelisted WhatsApp Numbers", border_style="cyan", header_style="bold cyan")
+                table = Table(
+                    title="Whitelisted WhatsApp Numbers",
+                    border_style=palette.border_style,
+                    header_style=f"bold {palette.primary}",
+                    box=palette.box_style,
+                )
                 table.add_column("No", width=4, justify="center")
                 table.add_column("Phone Number", style="bold white")
                 for idx, num in enumerate(current, 1):

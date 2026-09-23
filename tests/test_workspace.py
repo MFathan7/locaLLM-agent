@@ -15,6 +15,7 @@ from locallm.core.workspace import (
     delete_workspace,
     ensure_default_workspace,
     extract_selected_skills,
+    get_workspace_agents_path,
     get_workspace_info,
     inspect_github_skills,
     install_skill_from_source,
@@ -373,7 +374,38 @@ class TestWorkspaceEngine(unittest.TestCase):
         finally:
             Path(tmp_path).unlink(missing_ok=True)
 
+    def test_default_workspace_agents_scaffolding(self):
+        default_dir = ensure_default_workspace()
+        agents_file = default_dir / "AGENTS.md"
+        self.assertTrue(agents_file.is_file())
+        content = agents_file.read_text(encoding="utf-8")
+        self.assertIn("Autonomous Execution Authority", content)
+        self.assertIn("search_web", content)
+
+    def test_create_workspace_scaffolds_agents_md(self):
+        ok, _ = create_workspace(
+            "dev_agent",
+            description="Software development workspace",
+            custom_instructions="Always write clean docstrings and types.",
+        )
+        self.assertTrue(ok)
+        agents_path = get_workspace_agents_path("dev_agent")
+        self.assertTrue(agents_path.is_file())
+        content = agents_path.read_text(encoding="utf-8")
+        self.assertIn("Autonomous Execution Authority", content)
+        self.assertIn("Always write clean docstrings and types.", content)
+
+    def test_load_workspace_context_with_agents_md(self):
+        create_workspace("custom_ws")
+        agents_path = get_workspace_agents_path("custom_ws")
+        agents_path.write_text("# Custom Persona\nYou are a specialized cyber analyst.", encoding="utf-8")
+
+        ctx = load_workspace_context("custom_ws")
+        self.assertIn("[Persona & Cognitive Directives (Workspace: custom_ws)]", ctx)
+        self.assertIn("specialized cyber analyst", ctx)
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

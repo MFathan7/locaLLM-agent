@@ -17,12 +17,13 @@ from locallm.core.workspace import (
     create_workspace,
     delete_workspace,
     extract_selected_skills,
+    get_workspace_agents_path,
     get_workspace_info,
     inspect_github_skills,
     list_workspaces,
     update_workspace_instructions,
 )
-from locallm.ui.theme import QUESTIONARY_STYLE, console
+from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
 
 
 def run_workspace_menu(config: LocaLLMConfig) -> None:
@@ -33,6 +34,7 @@ def run_workspace_menu(config: LocaLLMConfig) -> None:
             "Workspace Manager:",
             choices=[
                 f"Switch Active Workspace (Current: {active})",
+                "Edit Persona & Directives (AGENTS.md)",
                 "Edit Custom Instructions (workspace.json)",
                 "Add Knowledge Document (Paste / Type)",
                 "Install Skill from GitHub / URL",
@@ -50,6 +52,8 @@ def run_workspace_menu(config: LocaLLMConfig) -> None:
 
         if choice.startswith("Switch Active Workspace"):
             _switch_workspace(config)
+        elif choice == "Edit Persona & Directives (AGENTS.md)":
+            _edit_agents_wizard(config)
         elif choice == "Edit Custom Instructions (workspace.json)":
             _edit_instructions_wizard(config)
         elif choice == "Add Knowledge Document (Paste / Type)":
@@ -69,23 +73,25 @@ def run_workspace_menu(config: LocaLLMConfig) -> None:
 
 def _display_workspaces_table(config: LocaLLMConfig) -> None:
     """Render Rich table of installed workspaces."""
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
     active = getattr(config, "active_workspace", "default")
     workspaces = list_workspaces()
 
     table = Table(
         title="Installed Workspaces",
-        border_style="cyan",
-        header_style="bold cyan",
+        border_style=palette.border_style,
+        header_style=f"bold {palette.primary}",
+        box=palette.box_style,
     )
     table.add_column("Status", style="bold", width=8)
-    table.add_column("Workspace Name", style="bold white")
+    table.add_column("Workspace Name", style=f"bold {palette.primary}")
     table.add_column("Knowledge", justify="center")
     table.add_column("Skills", justify="center")
     table.add_column("Description")
 
     for ws in workspaces:
         name = ws["name"]
-        is_active = "[bold green]ACTIVE[/]" if name == active else "[dim]INACTIVE[/]"
+        is_active = f"[bold {palette.success}]ACTIVE[/]" if name == active else "[dim]INACTIVE[/]"
         desc = ws["description"] or "[dim]No description[/]"
         k_count = f"{ws['knowledge_count']} file(s)"
         s_count = f"{ws['skills_count']} file(s)"
@@ -95,7 +101,7 @@ def _display_workspaces_table(config: LocaLLMConfig) -> None:
     console.print()
     console.print(table)
     console.print(
-        f"[#aaaaaa]Workspaces root folder:[/] [bold cyan]{workspaces[0]['path'] if workspaces else '~/.locallm/workspaces'}[/]\n"
+        f"[#aaaaaa]Workspaces root folder:[/] [bold {palette.primary}]{workspaces[0]['path'] if workspaces else '~/.locallm/workspaces'}[/]\n"
     )
 
 
@@ -114,7 +120,8 @@ def _switch_workspace(config: LocaLLMConfig) -> None:
     if chosen and chosen != "Back" and chosen != active:
         config.active_workspace = chosen
         save_config(config)
-        console.print(f"[success]Active workspace switched to:[/] [bold cyan]{chosen}[/]\n")
+        palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+        console.print(f"[success]Active workspace switched to:[/] [bold {palette.primary}]{chosen}[/]\n")
 
 
 def _create_workspace_wizard(config: LocaLLMConfig) -> None:
@@ -248,15 +255,71 @@ def _edit_in_external_editor(initial_content: str = "", suffix: str = ".md") -> 
             pass
 
 
+def _edit_agents_wizard(config: LocaLLMConfig) -> None:
+    """Prompt user to view and edit active workspace AGENTS.md / persona."""
+    active = getattr(config, "active_workspace", "default")
+    agents_path = get_workspace_agents_path(active)
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+
+    current_text = ""
+    if agents_path.is_file():
+        try:
+            current_text = agents_path.read_text(encoding="utf-8", errors="replace").strip()
+        except Exception:
+            current_text = ""
+
+    console.print(f"\n[bold {palette.primary}]Persona & Directives for Active Workspace:[/] [bold {palette.success}]{active}[/]")
+    console.print(f"[dim]File path: {agents_path}[/]\n")
+    if current_text:
+        preview = current_text if len(current_text) <= 1200 else (current_text[:1200] + "\n... [Full file in editor]")
+        console.print(Panel(preview, border_style=palette.border_style, box=palette.box_style, title=f"Current {agents_path.name}"))
+    else:
+        console.print("[dim]No AGENTS.md found in this workspace yet. You can initialize one now.[/]\n")
+
+    method = questionary.select(
+        "Select editing action:",
+        choices=[
+            "Open in Notepad / External Editor",
+            "Paste or Type in Terminal",
+            "Reset to Default locaLLM Persona",
+            "Cancel",
+        ],
+        style=QUESTIONARY_STYLE,
+    ).ask()
+
+    if not method or method == "Cancel":
+        return
+
+    new_text: Optional[str] = None
+    if method == "Reset to Default locaLLM Persona":
+        from locallm.core.workspace import DEFAULT_WORKSPACE_AGENTS_MD
+        new_text = DEFAULT_WORKSPACE_AGENTS_MD
+    elif method == "Open in Notepad / External Editor":
+        new_text = _edit_in_external_editor(initial_content=current_text, filename_hint=agents_path.name)
+    elif method == "Paste or Type in Terminal":
+        console.print("[dim]Type or paste markdown below. Press Esc then Enter, or Ctrl+D to submit:[/]")
+        new_text = _prompt_multiline_text("Persona Markdown:", default=current_text)
+
+    if new_text is not None:
+        try:
+            agents_path.write_text(new_text, encoding="utf-8")
+            console.print(f"[success]Saved {len(new_text)} characters to {agents_path.name} successfully.[/]\n")
+        except Exception as exc:
+            console.print(f"[danger]Failed to save {agents_path.name}: {exc}[/]\n")
+
+    questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+
+
 def _edit_instructions_wizard(config: LocaLLMConfig) -> None:
     """Prompt user to view and edit custom workspace instructions."""
     active = getattr(config, "active_workspace", "default")
     info = get_workspace_info(active)
     current_inst = info.get("custom_instructions", "") if info else ""
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
 
-    console.print(f"\n[bold cyan]Custom Instructions for Active Workspace:[/] [bold green]{active}[/]")
+    console.print(f"\n[bold {palette.primary}]Custom Instructions for Active Workspace:[/] [bold {palette.success}]{active}[/]")
     if current_inst:
-        console.print(Panel(current_inst, border_style="cyan", title="Current Instructions"))
+        console.print(Panel(current_inst, border_style=palette.border_style, box=palette.box_style, title="Current Instructions"))
     else:
         console.print("[#aaaaaa]No custom instructions configured yet.[/]\n")
 
@@ -297,7 +360,8 @@ def _edit_instructions_wizard(config: LocaLLMConfig) -> None:
 def _add_knowledge_wizard(config: LocaLLMConfig) -> None:
     """Prompt user to add a markdown or text document to knowledge/ directory."""
     active = getattr(config, "active_workspace", "default")
-    console.print(f"\n[bold cyan]Add Knowledge Document to Workspace:[/] [bold green]{active}[/]")
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+    console.print(f"\n[bold {palette.primary}]Add Knowledge Document to Workspace:[/] [bold {palette.success}]{active}[/]")
 
     method = questionary.select(
         "Select document input method:",

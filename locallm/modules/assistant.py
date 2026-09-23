@@ -77,48 +77,16 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
     features = client.get_model_features(config.default_model)
     has_tools = "Tools" in features
 
-    # Contextual system prompt with local environment and tool capabilities
+    # Dynamic system prompt resolved from workspace AGENTS.md / persona and environment
     now_str = datetime.now().strftime("%A, %Y-%m-%d %H:%M:%S")
     cwd_str = str(Path.cwd().resolve())
-    enhanced_prompt = (
-        f"{config.system_prompt}\n"
-        f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}.\n"
-        "Capabilities & Direct Tool Access:\n"
-        "You have full authority and built-in function calling tools to interact directly with the local system: "
-        "'create_directory' to create directories anywhere on the filesystem, "
-        "'write_file' to write or create code, configuration, or documentation files anywhere on the filesystem, "
-        "'list_directory' and 'read_file' for inspecting files and folders, 'get_current_time', 'get_current_directory', "
-        "'execute_command', 'get_weather' for real-time weather and temperature, "
-        "'search_web' to search the live web for real-time information, documentation, news, or answers to unknown questions, "
-        "and 'fetch_web' for reading specific web pages/GitHub URLs.\n"
-        "CRITICAL AUTONOMOUS EXECUTION & REAL-TIME KNOWLEDGE DIRECTIVE:\n"
-        "1. File and System Actions:\n"
-        "When the user asks to create, write, modify, generate, or execute any files, directories, scripts, or system tasks:\n"
-        "- DO NOT provide manual terminal, shell, or command-prompt instructions for the user to run themselves.\n"
-        "- DO NOT ask or expect the user to manually create directories or save files.\n"
-        "- You MUST directly invoke the appropriate tools ('create_directory', 'write_file', 'execute_command') "
-        "via native function calling to perform the requested actions immediately on the local system.\n"
-        "2. Real-Time Facts, News & Live Web Search:\n"
-        "When asked about real-time events, current news, recent political/governmental/economic developments, weather, or facts beyond your static training data:\n"
-        "- DO NOT tell the user to read news websites, check apps, or search manually.\n"
-        "- DO NOT refuse by saying your knowledge is outdated or limited.\n"
-        "- You MUST immediately invoke 'search_web' with concise, relevant query terms (e.g., 'berita terkini Indonesia pemerintahan politik') "
-        "to discover real-time facts and synthesize the answers directly for the user.\n"
-        "3. Tool Observation Synthesis & Natural Answers:\n"
-        "- NEVER explain or cite the internal tool function names or schemas (e.g. 'get_current_time', 'search_web', 'read_file') to the user.\n"
-        "- NEVER tell the user 'you can use the function...' or provide code examples showing how to invoke functions.\n"
-        "- Use the returned observation values and the Environment context (e.g. current hour/date for morning/afternoon/evening greetings) directly to answer the user's inquiry naturally and conversationally.\n"
-        "4. Tone, Grounding & Authority:\n"
-        "- NEVER say you cannot access files, cannot search the web, cannot sense time, or are just an AI.\n"
-        "- NEVER give philosophical or canned AI refusals like 'ask people around you', 'check your phone or clock', or 'I cannot sense time directly'.\n"
-        "- You are grounded in the real world with exact local system time provided in the Environment context.\n"
-        "- When asked about current time, date, or whether it is morning/afternoon/night, answer directly and definitively based on the local hour (e.g., 22:00-04:00 is night/malam, 05:00-11:00 is morning/pagi, 12:00-15:00 is afternoon/siang, 15:00-18:00 is evening/sore).\n"
-        "- When tool results are returned, synthesize the answer directly without boilerplate greetings or meta-commentary."
-    )
-
-    # Inject isolated active workspace knowledge and instructions
     active_ws = getattr(config, "active_workspace", "default")
     ws_context = load_workspace_context(active_ws)
+
+    enhanced_prompt = (
+        f"{config.system_prompt}\n"
+        f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}."
+    )
     if ws_context:
         enhanced_prompt += f"\n\n{ws_context}"
 
@@ -346,8 +314,84 @@ def _process_assistant_turn(
                 # Loop back: let LLM examine tool observations and plan next step or conclude
                 continue
 
-            # No tool calls: model returned final answer
+            # No tool calls: model returned text answer or attempted refusal
             content = turn_msg.get("content", "")
+            has_search_web = any(t.get("function", {}).get("name") == "search_web" for t in current_tools)
+            if step == 1 and not executed_any_tool and has_search_web and content:
+                IGNORANCE_REFUSAL_PATTERNS = [
+                    r"\b(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data|knowledge|access|details)\b",
+                    r"\b(not\s+familiar\s+with|no\s+(direct\s+)?information\s+about|cannot\s+provide\s+information)\b",
+                    r"\b(as\s+an\s+ai|my\s+knowledge\s+cutoff|training\s+cutoff|outside\s+my\s+knowledge)\b",
+                    r"\b(tidak\s+(memiliki|punya)\s+(informasi|data|akses)|tidak\s+tahu|belum\s+(tahu|memiliki\s+data))\b",
+                    r"\b(tidak\s+dapat\s+menemukan|tidak\s+ditemukan\s+dalam\s+basis\s+data)\b",
+                    r"\b(cannot\s+browse|unable\s+to\s+browse|no\s+real[- ]time\s+access)\b",
+                ]
+                import re
+                if any(re.search(pat, content, re.IGNORECASE) for pat in IGNORANCE_REFUSAL_PATTERNS):
+                    with thinking_spinner("locaLLM is automatically researching via search_web..."):
+                        try:
+                            nudged_turn = client.chat_turn(
+                                model=target_model,
+                                messages=memory.get_messages() + [
+                                    {"role": "assistant", "content": content},
+                                    {
+                                        "role": "user",
+                                        "content": (
+                                            "You indicated that you lack verified information or data on this topic. "
+                                            "You have the 'search_web' tool available. Invoke 'search_web' now with a concise search query to retrieve the answer."
+                                        ),
+                                    },
+                                ],
+                                tools=current_tools,
+                                temperature=config.temperature,
+                                num_ctx=context_limit,
+                                stats_out=stats,
+                            )
+                            recovered_tc = None
+                            if nudged_turn and nudged_turn.get("tool_calls"):
+                                recovered_tc = nudged_turn.get("tool_calls")
+                                turn_msg = nudged_turn
+                            elif nudged_turn and nudged_turn.get("content"):
+                                tool_names = {t.get("function", {}).get("name") for t in current_tools}
+                                from locallm.core.tools import extract_fallback_tool_calls
+                                rec = extract_fallback_tool_calls(nudged_turn.get("content", ""), tool_names)
+                                if rec:
+                                    recovered_tc = rec
+                                    turn_msg = nudged_turn
+                                    turn_msg["tool_calls"] = rec
+                            if recovered_tc:
+                                tool_calls = recovered_tc
+                                executed_any_tool = True
+                                memory.history.append(turn_msg)
+                                for idx, tc in enumerate(tool_calls):
+                                    func_name = tc.get("function", {}).get("name", "")
+                                    func_args = tc.get("function", {}).get("arguments", {})
+                                    tc_id = tc.get("id") or f"call_{step}_{idx}"
+                                    if isinstance(func_args, str):
+                                        try:
+                                            func_args = json.loads(func_args)
+                                        except Exception:
+                                            func_args = {}
+                                    action_label = describe_tool_action(func_name, func_args)
+                                    with thinking_spinner(action_label):
+                                        obs = execute_tool(
+                                            func_name,
+                                            func_args,
+                                            permission_policy=permission_policy,
+                                            interactive=True,
+                                            session_state=session_state,
+                                            workspace_name=active_ws,
+                                        )
+                                    console.print(format_live_tool_report(func_name, func_args, obs))
+                                    memory.history.append({
+                                        "role": "tool",
+                                        "tool_call_id": tc_id,
+                                        "content": obs,
+                                    })
+                                continue
+                        except Exception:
+                            pass
+
             if content and content.strip():
                 print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
                 memory.add_assistant_message(content)
@@ -550,8 +594,13 @@ def _manage_sessions(
         print_system_info(f"No saved sessions found in workspace '{active_ws}'.")
         return
 
-    table = Table(title=f"Saved Sessions in Workspace: [bold cyan]{active_ws}[/]", border_style="cyan")
-    table.add_column("Session ID", style="bold cyan")
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+    table = Table(
+        title=f"Saved Sessions in Workspace: [bold {palette.primary}]{active_ws}[/]",
+        border_style=palette.border_style,
+        box=palette.box_style,
+    )
+    table.add_column("Session ID", style=f"bold {palette.primary}")
     table.add_column("Type", style="yellow")
     table.add_column("Turns", justify="right")
     table.add_column("Updated At", style="#aaaaaa")
@@ -644,13 +693,14 @@ def _show_session_stats(
         details = info.get("details", {})
         features = client.get_model_features(config.default_model) if hasattr(client, "get_model_features") else []
     ctx_limit = getattr(config, "context_window", 8192)
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
 
-    table = Table(border_style="cyan", header_style="bold cyan")
+    table = Table(border_style=palette.border_style, header_style=f"bold {palette.primary}", box=palette.box_style)
     table.add_column("Metric", style="bold white")
     table.add_column("Value")
 
-    table.add_row("Active Model", f"[bold cyan]{config.default_model}[/]")
-    table.add_row("Capabilities", f"[bold green]{', '.join(features)}[/]")
+    table.add_row("Active Model", f"[bold {palette.primary}]{config.default_model}[/]")
+    table.add_row("Capabilities", f"[bold {palette.success}]{', '.join(features)}[/]")
     table.add_row("Context Window", f"{ctx_limit:,} tokens")
     table.add_row("Parameter Size", str(details.get("parameter_size", "N/A")))
     table.add_row("Quantization", str(details.get("quantization_level", "N/A")))
@@ -673,7 +723,7 @@ def _show_session_stats(
     table.add_row("Sampling Temperature", str(config.temperature))
 
     console.print()
-    console.print(Panel(table, title="[bold cyan]Session Telemetry & Model Stats[/]", border_style="cyan"))
+    console.print(Panel(table, title=f"[bold {palette.primary}]Session Telemetry & Model Stats[/]", border_style=palette.border_style, box=palette.box_style))
     console.print()
 
 
@@ -710,7 +760,8 @@ def _switch_model(config: LocaLLMConfig, client: Any) -> None:
                 if platform:
                     platform.default_model = chosen
         save_config(config)
-        console.print(f"[success]Active model switched to:[/] [bold cyan]{config.default_model}[/]")
+        palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+        console.print(f"[success]Active model switched to:[/] [bold {palette.primary}]{config.default_model}[/]")
 
 
 def _change_system_prompt(config: LocaLLMConfig, memory: ConversationMemory) -> None:
