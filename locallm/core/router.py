@@ -385,10 +385,20 @@ def route_prompt(
         coder_tool_models.sort(key=lambda m: -model_size_map.get(m, 0))
 
         clean_lower = prompt.lower()
+        # Check if prompt is a read-only filesystem or location inspection query
+        is_inspection_only = bool(
+            re.search(r"\b(cari|find|where|dimana|path|full path|locate|exists?|check|inspeksi|info)\b", clean_lower)
+            and not re.search(r"\b(write|create|bikin|buat|edit|refactor|fix|debug|coding|function|class|def|import)\b", clean_lower)
+        )
+
         is_coding_context = (
-            "code" in reason_prefix.lower()
-            or "architecture" in reason_prefix.lower()
-            or any(k in clean_lower for k in ("code", "script", "project", "app", "file", "program", "def ", "class "))
+            not is_inspection_only
+            and (
+                "code" in reason_prefix.lower()
+                or "architecture" in reason_prefix.lower()
+                or any(k in clean_lower for k in ("code", "coding", "script", "project", "app", "program", "def ", "class ", "function ", "refactor", "bug", "syntax"))
+                or bool(re.search(r"\b\.(py|js|ts|go|rs|cpp|java|cs|php|rb|sql)\b", clean_lower))
+            )
         )
 
         if is_coding_context and coder_tool_models:

@@ -56,7 +56,7 @@ env.bak/
 venv.bak/
 
 # Node.js (WhatsApp bridge)
-node_modules/
+/node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*

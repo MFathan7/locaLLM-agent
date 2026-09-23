@@ -65,7 +65,8 @@ class ReActAgent:
             "Core Directives:\n"
             "1. Autonomous Action: Use tools directly to inspect the environment, fetch web data, read/write files, and execute commands. Never instruct the user to perform manual work when tools can perform the action.\n"
             "2. Grounding: Verify facts through tool output before concluding.\n"
-            "3. Stopping Condition: When the objective is completely satisfied, provide a clear, comprehensive final summary of the accomplished tasks and findings."
+            "3. Stopping Condition: When the objective is completely satisfied, provide a clear, comprehensive final summary of the accomplished tasks and findings.\n"
+            "4. Read-Only vs Mutating Discipline: If the user's objective only asks to find, locate, search, check, or report file paths, existence, or metadata, NEVER invoke write_file, create_directory, or modifying commands. Use resolve_path, list_directory, or read_file exclusively."
         )
         if ws_context:
             system_content += f"\n\n{ws_context}"

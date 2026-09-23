@@ -12,6 +12,7 @@ Requires-Dist: python-telegram-bot>=20.0
 Requires-Dist: pydantic>=2.0.0
 Requires-Dist: psutil>=5.9.0
 Requires-Dist: openai>=1.0.0
+Requires-Dist: textual>=8.0.0
 
 # locaLLM
 
@@ -146,6 +147,7 @@ Launch `locallm` with no arguments to enter the interactive terminal dashboard:
 
 ```text
 Main Menu:
+  ├── Reactive TUI          -> Modern full-screen reactive desktop TUI (Textual)
   ├── Assistant             -> Standalone interactive chat with live tool execution
   ├── Workspaces            -> Isolated environments: Switch, Create, Edit AGENTS.md, Delete, Back
   ├── Integrations          -> Channels & external runners
@@ -179,6 +181,7 @@ Main Menu:
 | Command | Description | Example |
 | :--- | :--- | :--- |
 | `locallm` | Open interactive TUI dashboard | `locallm` |
+| `locallm tui` | Launch modern full-screen reactive TUI with live telemetry | `locallm tui --theme matrix` |
 | `locallm chat` | Launch interactive assistant session | `locallm chat --model auto` |
 | `locallm agent` | Run autonomous ReAct agent loop | `locallm agent --task "Scaffold FastAPI app"` |
 | `locallm run "<prompt>"` | Single-shot prompt execution (piping / scripts) | `locallm run "Summarize commit history"` |

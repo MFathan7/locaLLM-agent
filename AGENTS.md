@@ -67,10 +67,25 @@ Main Menu:
 ---
 
 ## 5. Tools & Filesystem Intelligence
-1. **Smart Path Resolution (`resolve_smart_path`)**: Automatically map aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`) to real home directories.
-2. **Folder-First Listing (`list_directory`)**: Prioritize subdirectories (`[DIR]`, up to 80) above files (`[FILE]`) with summary header (`Total: X folders, Y files`).
-3. **Web & GitHub (`fetch_web`)**: Direct raw `README.md` fetch for GitHub URLs.
-4. **Tool Authority Mandate**: System prompts must establish direct local execution authority. Never return canned refusals like "I am only an AI".
+1. **Modular Tool Registry (`locallm/core/tools/`)**:
+   - **Domain Module Registration**: Every new tool must be created in the appropriate domain submodule under `locallm/core/tools/` (`filesystem.py`, `web.py`, `system.py`, `messaging.py`) and registered via `@tool(...)` or `BaseTool`. Never hardcode ad-hoc dictionary lists or manual dispatch if-statements in `execute_tool`.
+   - **Explicit JSON Schema & Metadata**: Declarations must define `name` (snake_case), clear `description`, typed JSON Schema `parameters` (`type`, `properties`, `required`), `is_mutating: bool`, and `categories` (`{"assistant", "telegram", "whatsapp"}`).
+   - **Mutating Tool Governance**: Any action modifying disk, running shell commands, or changing system state must declare `is_mutating=True` to automatically adhere to user permission policies (`always_allow`, `ask`, `deny`).
+2. **Dynamic Truncation & Pagination**:
+   - Content-returning tools with variable or unbounded output sizes (e.g. file reading, web fetching, search APIs) must declare optional `offset: int = 0` and `max_chars: int = 4000` in their parameter schemas.
+   - Payloads exceeding `max_chars` must emit cleanly sliced text with pagination indicators showing the current window and next offset (`[Showing characters X to Y of Z. Use offset=Y to read next chunk]`) to prevent context window exhaustion and prompt evaluation latency.
+3. **Smart Path Resolution & Boundary Sandboxing**:
+   - File/path tools must route paths through `resolve_smart_path(raw_path, boundary_dir)`.
+   - Automatically map aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`) to real home directories.
+   - When a `boundary_dir` is passed (e.g. in messaging bridge sessions or restricted mode), any path traversal attempting to escape the boundary must strictly raise `PermissionError` and be blocked.
+4. **UI & Execution Feedback Synchronization (`locallm/core/tools/ui.py`)**:
+   - Every new tool must be paired with corresponding entries in `locallm/core/tools/ui.py`:
+     - `describe_tool_action`: present-continuous spinner text for terminal spinners and notifications.
+     - `format_live_tool_report`: high-contrast live completion report lines displaying success/failure icons and succinct parameter summaries.
+5. **Folder-First Listing (`list_directory`)**: Prioritize subdirectories (`[DIR]`, up to 80) above files (`[FILE]`) with summary header (`Total: X folders, Y files`).
+6. **Web & GitHub (`fetch_web`)**: Direct raw `README.md` fetch for GitHub URLs and compact structured JSON extraction for GitHub repo APIs to prevent raw JSON context bloat.
+7. **Tool Authority Mandate**: System prompts must establish direct local execution authority. Never return canned refusals like "I am only an AI".
+8. **Unit Test Verification**: Every newly implemented tool must be accompanied by unit tests in `tests/` verifying schema structure, registry discovery, execution logic, pagination, and boundary/error conditions.
 
 ---
 

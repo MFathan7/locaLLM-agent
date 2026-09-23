@@ -22,6 +22,12 @@ from typing import Any, Optional
 def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Launch top-level interactive console menu loop."""
     while True:
+        if getattr(config, "ui_mode", "classic") == "modern":
+            from locallm.tui import launch_tui_app
+            launch_tui_app(config, client, initial_theme=getattr(config, "ui_theme", "cyber_neon"))
+            if getattr(config, "ui_mode", "classic") == "modern":
+                sys.exit(0)
+
         apply_active_theme(getattr(config, "ui_theme", "cyber_neon"))
         console.clear()
         client = get_inference_client(config)
@@ -73,7 +79,11 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
             sys.exit(0)
 
         if choice == "Assistant":
-            run_assistant(config, client)
+            if getattr(config, "ui_mode", "classic") == "modern":
+                from locallm.tui import launch_tui_app
+                launch_tui_app(config, client, initial_theme=getattr(config, "ui_theme", "cyber_neon"))
+            else:
+                run_assistant(config, client)
         elif choice == "Workspaces":
             run_workspace_menu(config)
         elif choice == "Integrations":

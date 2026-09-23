@@ -55,25 +55,47 @@ locallm status
 
 ### 4. Essential Commands
 ```bash
-# 1. Launch the Interactive TUI Dashboard
+# 1. Launch the Modern Reactive TUI Dashboard (Default)
 locallm
 
-# 2. Start an Interactive Chat session with Smart Auto-Routing
+# 2. Or force the Classic Scrolling CLI Menu
+locallm --classic
+
+# 3. Start an Interactive Chat session with Smart Auto-Routing
 locallm chat --model auto
 
-# 3. Run an Autonomous Agent task (files, shell, web, GitHub releases)
+# 4. Run an Autonomous Agent task (files, shell, web, GitHub releases)
 locallm agent --task "Analyze README.md and summarize project architecture"
 
-# 4. Run an Autonomous Agent task with custom max reasoning steps
+# 5. Run an Autonomous Agent task with custom max reasoning steps
 locallm agent --task "Fetch latest Ollama releases and compare versions" --max-steps 30
 
-# 5. Check GPU VRAM and model compatibility
+# 6. Check GPU VRAM and model compatibility
 locallm models
 ```
 
 ---
 
 ## ✨ Feature Overview
+
+### 🖥️ Modern Reactive Desktop TUI (Textual)
+- **Full-Screen Desktop Terminal Cockpit**: Built on Textual, delivering a high-performance reactive interface with split-pane layouts, live telemetry, and seamless keyboard navigation.
+- **7 Dedicated Interactive Tabs (`F2–F8` / `Ctrl+1–7`)**:
+  - **💬 Assistant (`F2` / `Ctrl+1`)**: Real-time streaming conversation, Markdown formatting, collapsible tool execution cards, split-pane context telemetry meter (`tokens/limit`, `tok/s`), and active workspace file explorer.
+  - **📁 Workspaces (`F3` / `Ctrl+2`)**: Full workspace manager, live breakdown of knowledge docs and custom skills, one-click workspace switching, and scaffold form.
+  - **🤖 Integrations (`F4` / `Ctrl+3`)**: Autonomous ReAct Agent runner with configurable permission policy (`ask`, `always_allow`, `deny`) and max steps, Telegram bot token & whitelist manager, and WhatsApp runner toggle.
+  - **🧠 Models (`F5` / `Ctrl+4`)**: Hardware-aware Model Manager displaying installed models, size in GB, capabilities (`Tools`, `Vision`, `Reasoning`), VRAM fit badges (`[100% GPU (FIT)]` / `[SPILLOVER]`), one-click model activation, deletion, and interactive registry puller.
+  - **🧩 Plugins (`F6` / `Ctrl+5`)**: Modular plugin manager discovering local, workspace, and global plugins, listing exposed tool schemas, with enable/disable buttons and starter plugin scaffolder.
+  - **⚡ Services (`F7` / `Ctrl+6`)**: Background daemon lifecycle manager with live connectivity checks, Start/Stop Ollama daemon buttons, and custom OpenAI-compatible platform registry (vLLM, LMStudio, LocalAI).
+  - **⚙ Settings (`F8` / `Ctrl+7`)**: Instant UI Mode switcher (`Modern TUI` ⟷ `Default CLI`), 5-theme switcher with real-time border/accent repaint, and compact 3-column inference parameter grid (`Temperature`, `Context Window`, `Agent Steps`).
+- **Keyboard Ergonomics**:
+  - `F2–F8` / `Ctrl+1–7`: Instant tab switching
+  - `Ctrl+T`: Open quick theme picker modal
+  - `Ctrl+L`: Clear chat history
+  - `Ctrl+Q`: Release GPU VRAM and quit to terminal
+  - `F1`: In-app help reference
+- **Automatic VRAM Unload on Clean Exit**: Gracefully dumps model weights from GPU memory (`client.unload_all_models`) before exiting back to terminal.
+- **Seamless UI Mode Switching**: Effortlessly toggle between Modern TUI and Default CLI in Settings, or pass `--classic` to any command.
 
 ### 🤖 Interactive Assistant & Bot Runners
 - **Interactive Assistant Cockpit**: Rich session welcome card with detected capabilities (Tools, Vision, Reasoning), active workspace, context limits, and keyboard shortcuts (`Enter` send, `Ctrl+J` newline).
@@ -88,8 +110,12 @@ locallm models
 - **Proactive Web Research**: Local models are instructed to never claim ignorance or lack of real-time data for unfamiliar entities, protocols, or products.
 - **Turn 1 Refusal Interceptor**: If a model hesitates or admits a lack of knowledge on turn 1 (e.g. for niche enterprise tools), `locaLLM` automatically intercepts and nudges the model to execute `search_web` before synthesizing the final answer.
 
-### 🛠️ Autonomous ReAct Agent & Native Tools
-- **Multi-Step Autonomous Loop**: Executes up to 25 continuous tool steps (`create_directory`, `write_file`, `read_file`, `list_directory`, `execute_command`, `search_web`, `fetch_web`).
+### 🛠️ Modular Tool Registry & Autonomous ReAct Agent
+- **Modular Tool Architecture (`locallm/core/tools/`)**: Tools are decoupled into domain packages (`filesystem.py`, `web.py`, `system.py`, `messaging.py`, `ui.py`) and dynamically registered via `@tool` decorators.
+- **Explicit JSON Schema & Permissions**: Declarations enforce JSON Schema metadata, parameter typing, and mutating permission classification (`is_mutating: bool`).
+- **Dynamic Truncation & Pagination**: Content-heavy tools (file reading, web fetching) support clean sliding chunking (`offset`, `max_chars`) to prevent context exhaustion and latency spikes.
+- **Smart Path Resolution & Boundary Sandboxing**: Resolves filesystem aliases (`~`, `downloads`, `desktop`, `%USERPROFILE%`) and enforces directory boundary isolation in restricted or messaging modes.
+- **Multi-Step Autonomous Loop**: Executes continuous tool steps (`create_directory`, `write_file`, `read_file`, `list_directory`, `execute_command`, `search_web`, `fetch_web`) up to configured step bounds.
 - **Granular Permission Policies**: Configure mutating tool policies per session:
   - `ask`: Interactively prompts user authorization (`Allow Once`, `Always Allow`, `Deny`).
   - `always_allow`: Fully hands-free autonomous execution for agent tasks.
@@ -125,9 +151,24 @@ locallm models
 
 ---
 
-## 🧭 TUI Menu Hierarchy
+## 🧭 TUI Interface & Navigation
 
-Launch `locallm` with no arguments to enter the interactive terminal dashboard:
+### 1. Modern Reactive Desktop TUI (`locallm`)
+When running `locallm` (default UI mode: `modern`), the full-screen reactive desktop cockpit opens. Navigate tabs using mouse clicks or keyboard hotkeys:
+
+```text
+Modern Reactive TUI Tabs:
+  ├── 💬 Assistant     (F2 / Ctrl+1) -> Streaming chat, tool cards, telemetry meter, workspace file tree
+  ├── 📁 Workspaces    (F3 / Ctrl+2) -> Switch workspaces, inspect knowledge/skills, scaffold new workspace
+  ├── 🤖 Integrations  (F4 / Ctrl+3) -> Autonomous ReAct agent runner, Telegram & WhatsApp channel managers
+  ├── 🧠 Models        (F5 / Ctrl+4) -> VRAM fit sizing, activate models, delete models, pull from registry
+  ├── 🧩 Plugins       (F6 / Ctrl+5) -> Modular plugin inspector, dynamic tool schemas, enable/disable toggle
+  ├── ⚡ Services      (F7 / Ctrl+6) -> Start/stop Ollama daemon, configure OpenAI-compatible platforms
+  └── ⚙ Settings      (F8 / Ctrl+7) -> Toggle Modern/Classic UI, live theme repainting, inference parameter grid
+```
+
+### 2. Classic Scrolling CLI Menu (`locallm --classic`)
+If you prefer traditional terminal scrolling, pass `--classic` or switch UI Mode in Settings:
 
 ```text
 Main Menu:
@@ -149,7 +190,7 @@ Main Menu:
   │     ├── [Custom Plat]   -> Status, Set Active, Configure Endpoint/Key, Delete, Back
   │     ├── Add Platform    -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global parameters (Backend, Temperature, Context, Theme, Reset)
+  ├── Settings              -> Global parameters (UI Mode, Backend, Temperature, Context, Theme, Reset)
   └── Exit                  -> Unload GPU VRAM and terminate cleanly
 ```
 
@@ -163,7 +204,9 @@ Main Menu:
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `locallm` | Open interactive TUI dashboard | `locallm` |
+| `locallm` | Open interactive TUI dashboard (Modern TUI default) | `locallm` |
+| `locallm --classic` | Force classic scrolling terminal menu | `locallm --classic` |
+| `locallm tui` | Launch modern full-screen reactive TUI with live telemetry | `locallm tui --theme matrix` |
 | `locallm chat` | Launch interactive assistant session | `locallm chat --model auto` |
 | `locallm agent` | Run autonomous ReAct agent loop | `locallm agent --task "Scaffold FastAPI app"` |
 | `locallm run "<prompt>"` | Single-shot prompt execution (piping / scripts) | `locallm run "Summarize commit history"` |
@@ -300,6 +343,7 @@ Configuration is stored in `~/.locallm/config.json` (`%USERPROFILE%\.locallm\con
 
 ```json
 {
+  "ui_mode": "modern",
   "active_backend": "ollama",
   "ollama_host": "http://127.0.0.1:11434",
   "custom_platforms": [

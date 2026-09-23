@@ -52,14 +52,49 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Override Ollama API endpoint URL",
     )
+    parser.add_argument(
+        "--theme",
+        type=str,
+        default=None,
+        help="Override UI theme (cyber_neon, tokyo_night, monokai, matrix, nordic_frost)",
+    )
+    parser.add_argument(
+        "--classic",
+        action="store_true",
+        help="Force traditional scrolling CLI mode even if Modern TUI is configured",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Available subcommands")
 
+    # Reactive TUI
+    tui_parser = subparsers.add_parser(
+        "tui",
+        help="Start modern full-screen reactive TUI dashboard with live telemetry and multi-theme support",
+        description="Launch modern split-screen reactive TUI powered by Textual. Features live token streaming, collapsible tool execution cards, real-time VRAM telemetry, and instant theme switching.",
+    )
+    tui_parser.add_argument(
+        "--theme",
+        type=str,
+        default=None,
+        help="Override UI theme (cyber_neon, tokyo_night, monokai, matrix, nordic_frost)",
+    )
+
     # Interactive Assistant
-    subparsers.add_parser(
+    chat_parser = subparsers.add_parser(
         "chat",
         help="Start interactive conversational assistant with built-in tools",
         description="Launch an interactive chat session with Ollama. Supports streaming Markdown, slash commands (/model, /clear, /stats, /system), and native function calling (time, directories, files, weather).",
+    )
+    chat_parser.add_argument(
+        "--theme",
+        type=str,
+        default=None,
+        help="Override UI theme (cyber_neon, tokyo_night, monokai, matrix, nordic_frost)",
+    )
+    chat_parser.add_argument(
+        "--classic",
+        action="store_true",
+        help="Force traditional scrolling CLI chat mode even if Modern TUI is configured",
     )
 
     # Telegram bot
@@ -273,6 +308,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         config.default_model = args.model
     if getattr(args, "workspace", None):
         config.active_workspace = args.workspace
+    if getattr(args, "theme", None):
+        config.ui_theme = args.theme
 
     client = get_inference_client(config)
 
@@ -288,12 +325,29 @@ def main(argv: Optional[List[str]] = None) -> None:
     atexit.register(_auto_unload_on_exit)
 
     if not args.command:
-        # No subcommand passed: open interactive TUI menu
+        force_classic = getattr(args, "classic", False)
+        if not force_classic and getattr(config, "ui_mode", "classic") == "modern":
+            from locallm.tui import launch_tui_app
+            initial_theme = getattr(args, "theme", None) or getattr(config, "ui_theme", "cyber_neon")
+            launch_tui_app(config, client, initial_theme=initial_theme)
+            return
+        # Open classic interactive menu
         start_main_menu(config, client)
         return
 
     cmd = args.command.lower()
-    if cmd == "chat":
+    if cmd == "tui":
+        from locallm.tui import launch_tui_app
+        initial_theme = getattr(args, "theme", None) or getattr(config, "ui_theme", "cyber_neon")
+        launch_tui_app(config, client, initial_theme=initial_theme)
+        return
+    elif cmd == "chat":
+        force_classic = getattr(args, "classic", False)
+        if not force_classic and getattr(config, "ui_mode", "classic") == "modern":
+            from locallm.tui import launch_tui_app
+            initial_theme = getattr(args, "theme", None) or getattr(config, "ui_theme", "cyber_neon")
+            launch_tui_app(config, client, initial_theme=initial_theme)
+            return
         render_banner(config, client)
         run_assistant(config, client)
     elif cmd == "telegram":
