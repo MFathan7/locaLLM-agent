@@ -25,14 +25,35 @@
 git clone https://github.com/MFathan7/locaLLM-python.git
 cd locaLLM-python
 
+# (Recommended) Create and activate a Python virtual environment
+python -m venv .venv
+# On Windows PowerShell:
+.venv\Scripts\Activate.ps1
+# On Linux/macOS:
+# source .venv/bin/activate
+
 # Install dependencies
 pip install -r requirements.txt
 
-# (Optional) Register 'locallm' global CLI command in editable mode
+# Register 'locallm' global CLI command in editable mode
 pip install -e .
 ```
 
-### 3. Essential Commands
+### 3. Updating locaLLM to Latest Version
+If you already installed `locaLLM` and want to update to the latest features, run:
+```bash
+# 1. Pull latest updates from GitHub
+git pull origin main
+
+# 2. Update dependencies and refresh CLI installation
+pip install -r requirements.txt
+pip install -e .
+
+# 3. Verify health & connectivity
+locallm status
+```
+
+### 4. Essential Commands
 ```bash
 # 1. Launch the Interactive TUI Dashboard
 locallm
@@ -40,10 +61,13 @@ locallm
 # 2. Start an Interactive Chat session with Smart Auto-Routing
 locallm chat --model auto
 
-# 3. Run an Autonomous Agent task (files, shell, web)
+# 3. Run an Autonomous Agent task (files, shell, web, GitHub releases)
 locallm agent --task "Analyze README.md and summarize project architecture"
 
-# 4. Check GPU VRAM and model compatibility
+# 4. Run an Autonomous Agent task with custom max reasoning steps
+locallm agent --task "Fetch latest Ollama releases and compare versions" --max-steps 30
+
+# 5. Check GPU VRAM and model compatibility
 locallm models
 ```
 

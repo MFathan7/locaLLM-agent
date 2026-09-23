@@ -672,7 +672,67 @@ def execute_tool(
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.7",
         }
 
-        # Check for GitHub repository URL to attempt direct README retrieval
+        # 1. Check for GitHub Releases / Tags URL to fetch structured releases via GitHub API
+        gh_rel_match = re.match(r"^https?://github\.com/([^/]+)/([^/#?]+)/(?:releases|tags)/?$", url)
+        if gh_rel_match:
+            owner, repo = gh_rel_match.group(1), gh_rel_match.group(2)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases?per_page=5"
+            gh_headers = dict(headers)
+            gh_headers["Accept"] = "application/vnd.github.v3+json"
+            try:
+                with httpx.Client(timeout=10.0, follow_redirects=True, headers=gh_headers) as client:
+                    api_res = client.get(api_url)
+                    if api_res.status_code == 200:
+                        releases = api_res.json()
+                        if isinstance(releases, list) and releases:
+                            lines = [f"GitHub Releases for {owner}/{repo} (Latest {len(releases)} releases):"]
+                            for idx, rel in enumerate(releases):
+                                tag = rel.get("tag_name", "unknown")
+                                rel_name = rel.get("name") or tag
+                                pub_at = rel.get("published_at", "")[:10]
+                                prerelease = " [Pre-release]" if rel.get("prerelease") else ""
+                                body = (rel.get("body") or "").strip()
+                                # Clean body snippet
+                                body_snip = re.sub(r"[\r\n]+", " ", body)[:250]
+                                if idx == 0:
+                                    lines.append(f"\n★ Latest Release: {tag} ({rel_name}){prerelease} - Published: {pub_at}")
+                                    if body_snip:
+                                        lines.append(f"  Notes: {body_snip}...")
+                                else:
+                                    lines.append(f"- {tag} ({rel_name}){prerelease} - {pub_at}")
+                            return "\n".join(lines)
+
+                    # Fallback to tags if releases list is empty
+                    tags_url = f"https://api.github.com/repos/{owner}/{repo}/tags?per_page=5"
+                    tags_res = client.get(tags_url)
+                    if tags_res.status_code == 200:
+                        tags_data = tags_res.json()
+                        if isinstance(tags_data, list) and tags_data:
+                            tag_names = [t.get("name") for t in tags_data if t.get("name")]
+                            return f"GitHub Tags for {owner}/{repo}:\nLatest tags: " + ", ".join(tag_names)
+            except Exception:
+                pass
+
+        # 2. Check for specific GitHub release tag URL
+        gh_tag_match = re.match(r"^https?://github\.com/([^/]+)/([^/#?]+)/releases/tag/([^/#?]+)/?$", url)
+        if gh_tag_match:
+            owner, repo, tag = gh_tag_match.group(1), gh_tag_match.group(2), gh_tag_match.group(3)
+            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"
+            gh_headers = dict(headers)
+            gh_headers["Accept"] = "application/vnd.github.v3+json"
+            try:
+                with httpx.Client(timeout=10.0, follow_redirects=True, headers=gh_headers) as client:
+                    api_res = client.get(api_url)
+                    if api_res.status_code == 200:
+                        rel = api_res.json()
+                        rel_name = rel.get("name") or tag
+                        pub_at = rel.get("published_at", "")[:10]
+                        body = (rel.get("body") or "").strip()[:1000]
+                        return f"GitHub Release {tag} ({rel_name}) for {owner}/{repo} (Published: {pub_at}):\n\n{body}"
+            except Exception:
+                pass
+
+        # 3. Check for GitHub repository root URL to attempt direct README retrieval
         gh_match = re.match(r"^https?://github\.com/([^/]+)/([^/#?]+)/?$", url)
         if gh_match:
             owner, repo = gh_match.group(1), gh_match.group(2)
@@ -681,23 +741,65 @@ def execute_tool(
                 with httpx.Client(timeout=8.0, follow_redirects=True, headers=headers) as client:
                     gh_res = client.get(raw_readme_url)
                     if gh_res.status_code == 200 and gh_res.text.strip():
-                        return f"GitHub Repository: {owner}/{repo}\nREADME Content:\n" + gh_res.text[:3500]
+                        return f"GitHub Repository: {owner}/{repo}\nREADME Content:\n" + gh_res.text[:4000]
             except Exception:
                 pass
 
+        # 4. Check for GitHub repository details API URL
+        gh_repo_api = re.match(r"^https?://api\.github\.com/repos/([^/]+)/([^/#?]+)/?$", url)
+        if gh_repo_api:
+            owner, repo = gh_repo_api.group(1), gh_repo_api.group(2)
+            gh_headers = dict(headers)
+            gh_headers["Accept"] = "application/vnd.github.v3+json"
+            try:
+                with httpx.Client(timeout=10.0, follow_redirects=True, headers=gh_headers) as client:
+                    api_res = client.get(url)
+                    if api_res.status_code == 200:
+                        data = api_res.json()
+                        if isinstance(data, dict):
+                            compact = {
+                                "name": data.get("full_name") or f"{owner}/{repo}",
+                                "description": data.get("description", ""),
+                                "stars": data.get("stargazers_count", 0),
+                                "forks": data.get("forks_count", 0),
+                                "open_issues": data.get("open_issues_count", 0),
+                                "license": data.get("license", {}).get("name") if isinstance(data.get("license"), dict) else data.get("license"),
+                                "language": data.get("language", ""),
+                                "created_at": data.get("created_at", ""),
+                                "updated_at": data.get("updated_at", ""),
+                            }
+                            return f"GitHub Repository Data for {owner}/{repo}:\n" + json.dumps(compact, indent=2)
+            except Exception:
+                pass
+
+        # 5. General Web / API Scraping with high-signal content extraction
         try:
             with httpx.Client(timeout=10.0, follow_redirects=True, headers=headers) as client:
                 res = client.get(url)
                 if res.status_code != 200:
                     return f"HTTP {res.status_code}: Unable to access {url}"
 
-                raw_html = res.text
-                # Clean scripts, styles, and tags
-                clean = re.sub(r"<script[\s\S]*?</script>", "", raw_html, flags=re.IGNORECASE)
-                clean = re.sub(r"<style[\s\S]*?</style>", "", clean, flags=re.IGNORECASE)
+                raw_text = res.text
+                content_type = res.headers.get("content-type", "").lower()
+                if "application/json" in content_type or (raw_text.strip().startswith(("{", "[")) and raw_text.strip().endswith(("}", "]"))):
+                    try:
+                        parsed_json = json.loads(raw_text)
+                        clean_json_str = json.dumps(parsed_json, indent=2)
+                        return clean_json_str[:4000]
+                    except Exception:
+                        pass
+
+                raw_html = raw_text
+                # Remove boilerplate blocks (scripts, styles, navigation, headers, footers)
+                clean = re.sub(r"<(script|style|nav|header|footer|aside)[^>]*>[\s\S]*?</\1>", " ", raw_html, flags=re.IGNORECASE)
+                # Keep line breaks around paragraphs and headings
+                clean = re.sub(r"</?(?:p|div|h[1-6]|li|br)[^>]*>", "\n", clean, flags=re.IGNORECASE)
+                # Strip remaining tags
                 clean = re.sub(r"<[^>]+>", " ", clean)
-                clean = re.sub(r"\s+", " ", clean).strip()
-                return clean[:3500] if clean else "(Empty or non-text content retrieved)"
+                # Normalize line breaks and spaces
+                clean = re.sub(r"[ \t]+", " ", clean)
+                clean = re.sub(r"\n\s*\n+", "\n\n", clean).strip()
+                return clean[:4500] if clean else "(Empty or non-text content retrieved)"
         except Exception as exc:
             return f"Error fetching URL '{url}': {exc}"
 

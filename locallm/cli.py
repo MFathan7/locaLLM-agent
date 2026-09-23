@@ -89,6 +89,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Execute multi-step autonomous tasks using a ReAct reasoning loop. The model can plan, read/write files, fetch web content, and execute shell commands with security confirmation.",
     )
     agent_parser.add_argument("--task", "-t", type=str, default=None, help="Agent task instruction to run non-interactively")
+    agent_parser.add_argument(
+        "--max-steps", "-s",
+        type=int,
+        default=None,
+        help="Maximum autonomous reasoning steps (default: configured in settings, or 25)",
+    )
 
     # One-shot run
     run_parser = subparsers.add_parser(
@@ -258,6 +264,9 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     config = load_config()
 
+    from locallm.core.workspace import ensure_default_workspace
+    ensure_default_workspace()
+
     if getattr(args, "host", None):
         config.ollama_host = args.host
     if getattr(args, "model", None):
@@ -299,8 +308,9 @@ def main(argv: Optional[List[str]] = None) -> None:
             run_whatsapp_bot(config, client)
     elif cmd == "agent":
         render_banner(config, client)
+        max_steps_arg = getattr(args, "max_steps", None) or getattr(config, "agent_max_steps", 25)
         if args.task:
-            engine = AgentEngine(config, client)
+            engine = AgentEngine(config, client, max_steps=max_steps_arg, interactive=False)
             engine.run_task(args.task)
         else:
             run_agent_interactive(config, client)

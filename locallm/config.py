@@ -91,6 +91,12 @@ class LocaLLMConfig(BaseModel):
         default="ask",
         description="Agent permission policy for mutating tools: 'always_allow', 'ask', 'deny'",
     )
+    agent_max_steps: int = Field(
+        default=25,
+        ge=1,
+        le=100,
+        description="Maximum autonomous agent reasoning and tool execution steps (default: 25)",
+    )
     active_workspace: str = Field(
         default="default",
         description="Currently active workspace identifier",

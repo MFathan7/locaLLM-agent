@@ -249,6 +249,15 @@ def load_workspace_context(name: str) -> str:
         ws_path = ensure_default_workspace()
         clean_name = "default"
 
+    # Ensure physical AGENTS.md file exists on disk in workspace
+    ws_agents_file = ws_path / "AGENTS.md"
+    ws_soul_file = ws_path / "SOUL.md"
+    if not ws_agents_file.exists() and not ws_soul_file.exists():
+        try:
+            ws_agents_file.write_text(DEFAULT_WORKSPACE_AGENTS_MD, encoding="utf-8")
+        except Exception:
+            pass
+
     sections: List[str] = []
 
     # 1. Resolve Persona & Cognitive Directives (AGENTS.md / SOUL.md)

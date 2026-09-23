@@ -17,6 +17,7 @@ def run_settings(config: LocaLLMConfig) -> None:
         ctx_val = getattr(config, "context_window", 8192)
         search_prov = getattr(config, "search_provider", "auto")
         theme_pal = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+        max_steps_val = getattr(config, "agent_max_steps", 25)
         choice = questionary.select(
             "Settings & Configuration:",
             choices=[
@@ -24,6 +25,7 @@ def run_settings(config: LocaLLMConfig) -> None:
                 f"UI Theme (Current: {theme_pal.name})",
                 f"Sampling Temperature (Current: {config.temperature})",
                 f"Context Window Limit (Current: {ctx_val:,} tokens)",
+                f"Agent Max Steps (Current: {max_steps_val} steps)",
                 f"Web Search Provider (Current: {search_prov.upper()})",
                 f"System Prompt (Current: {config.system_prompt[:30]}...)",
                 "Reset to Defaults",
@@ -43,6 +45,8 @@ def run_settings(config: LocaLLMConfig) -> None:
             _edit_temperature(config)
         elif choice.startswith("Context Window Limit"):
             _edit_context_window(config)
+        elif choice.startswith("Agent Max Steps"):
+            _edit_agent_max_steps(config)
         elif choice.startswith("Web Search Provider"):
             _configure_search_provider(config)
         elif choice.startswith("System Prompt"):
@@ -183,10 +187,33 @@ def _reset_defaults(config: LocaLLMConfig) -> None:
         config.telegram_token = default_cfg.telegram_token
         config.agent_auto_approve_commands = default_cfg.agent_auto_approve_commands
         config.agent_permission_policy = default_cfg.agent_permission_policy
+        config.agent_max_steps = default_cfg.agent_max_steps
         config.ui_theme = default_cfg.ui_theme
         save_config(config)
         apply_active_theme(config.ui_theme)
         console.print("[success]Settings reset to default.[/]\n")
+
+
+def _edit_agent_max_steps(config: LocaLLMConfig) -> None:
+    """Interactively configure maximum agent reasoning and execution steps."""
+    curr = getattr(config, "agent_max_steps", 25)
+    val_str = questionary.text(
+        "Enter maximum agent execution steps (1 to 100):",
+        default=str(curr),
+        style=QUESTIONARY_STYLE,
+    ).ask()
+    if val_str is None:
+        return
+    try:
+        val = int(val_str.strip())
+        if 1 <= val <= 100:
+            config.agent_max_steps = val
+            save_config(config)
+            console.print(f"[success]Agent max steps updated to: [bold cyan]{val}[/][/]\n")
+        else:
+            console.print("[warning]Value must be between 1 and 100.[/]\n")
+    except ValueError:
+        console.print("[danger]Invalid integer value.[/]\n")
 
 
 def _switch_ui_theme(config: LocaLLMConfig) -> None:

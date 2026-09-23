@@ -17,7 +17,7 @@ class OpenAIClient:
         self,
         api_base: str = "http://127.0.0.1:8000/v1",
         api_key: str = "",
-        timeout: float = 60.0,
+        timeout: float = 180.0,
     ):
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key.strip() or "not-needed"

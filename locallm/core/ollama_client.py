@@ -8,7 +8,7 @@ import httpx
 class OllamaClient:
     """Synchronous client for Ollama local API."""
 
-    def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 60.0):
+    def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 180.0):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self._cached_version: Optional[str] = None
@@ -214,7 +214,8 @@ class OllamaClient:
         if tools:
             payload["tools"] = tools
 
-        with httpx.Client(timeout=60.0) as client:
+        client_timeout = getattr(self, "timeout", 180.0) or 180.0
+        with httpx.Client(timeout=httpx.Timeout(client_timeout, connect=15.0)) as client:
             res = client.post(url, json=payload)
             res.raise_for_status()
             data = res.json()
