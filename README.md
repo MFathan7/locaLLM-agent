@@ -78,24 +78,15 @@ locallm models
 
 ## ✨ Feature Overview
 
-### 🖥️ Modern Reactive Desktop TUI (Textual)
-- **Full-Screen Desktop Terminal Cockpit**: Built on Textual, delivering a high-performance reactive interface with split-pane layouts, live telemetry, and seamless keyboard navigation.
-- **7 Dedicated Interactive Tabs (`F2–F8` / `Ctrl+1–7`)**:
-  - **💬 Assistant (`F2` / `Ctrl+1`)**: Real-time streaming conversation, Markdown formatting, collapsible tool execution cards, split-pane context telemetry meter (`tokens/limit`, `tok/s`), and active workspace file explorer.
-  - **📁 Workspaces (`F3` / `Ctrl+2`)**: Full workspace manager, live breakdown of knowledge docs and custom skills, one-click workspace switching, and scaffold form.
-  - **🤖 Integrations (`F4` / `Ctrl+3`)**: Autonomous ReAct Agent runner with configurable permission policy (`ask`, `always_allow`, `deny`) and max steps, Telegram bot token & whitelist manager, and WhatsApp runner toggle.
-  - **🧠 Models (`F5` / `Ctrl+4`)**: Hardware-aware Model Manager displaying installed models, size in GB, capabilities (`Tools`, `Vision`, `Reasoning`), VRAM fit badges (`[100% GPU (FIT)]` / `[SPILLOVER]`), one-click model activation, deletion, and interactive registry puller.
-  - **🧩 Plugins (`F6` / `Ctrl+5`)**: Modular plugin manager discovering local, workspace, and global plugins, listing exposed tool schemas, with enable/disable buttons and starter plugin scaffolder.
-  - **⚡ Services (`F7` / `Ctrl+6`)**: Background daemon lifecycle manager with live connectivity checks, Start/Stop Ollama daemon buttons, and custom OpenAI-compatible platform registry (vLLM, LMStudio, LocalAI).
-  - **⚙ Settings (`F8` / `Ctrl+7`)**: Instant UI Mode switcher (`Modern TUI` ⟷ `Default CLI`), 5-theme switcher with real-time border/accent repaint, and compact 3-column inference parameter grid (`Temperature`, `Context Window`, `Agent Steps`).
-- **Keyboard Ergonomics**:
-  - `F2–F8` / `Ctrl+1–7`: Instant tab switching
-  - `Ctrl+T`: Open quick theme picker modal
-  - `Ctrl+L`: Clear chat history
-  - `Ctrl+Q`: Release GPU VRAM and quit to terminal
-  - `F1`: In-app help reference
-- **Automatic VRAM Unload on Clean Exit**: Gracefully dumps model weights from GPU memory (`client.unload_all_models`) before exiting back to terminal.
-- **Seamless UI Mode Switching**: Effortlessly toggle between Modern TUI and Default CLI in Settings, or pass `--classic` to any command.
+### 📊 Live System Monitor & Telemetry HUD (`locallm top` / `/top`)
+- **Real-Time Hardware Cockpit**: 1-second auto-refreshing HUD tracking GPU VRAM allocation, GPU compute utilization, GPU temperature, host CPU cores, and system RAM.
+- **Active Memory Resident Tracking**: Direct visibility into models actively occupying GPU VRAM via backend telemetry (`/api/ps`), with one-key return (`q` or `Enter`).
+- **Universal Slash Command**: Access the Live Monitor on-the-fly anytime from inside chat sessions with `/top` or `/monitor`.
+
+### ⚡ Live Thinking Animation & Stream Speedometer
+- **Live Reasoning Stream**: Native real-time thought tracking for reasoning models (DeepSeek-R1, QwQ) with live timer and token count (`💭 Thought Process (3.2s)`), resolving cleanly into `✔ Thought for 3.2s` before streaming the markdown answer.
+- **Real-Time Stream Speedometer**: Dynamic live footer while emitting tokens (`▘ Emitting: 142 tokens • 42.1 tok/s • 3.4s • VRAM: 7.2/12.0 GB`), powered by high-contrast square snake spinners that smoothly settle into the final bracket footer.
+- **Monospace Alignment & Anti-Slop**: Pure text menus and Rich formatting designed specifically for Windows terminal monospace fonts with zero alignment breakage.
 
 ### 🤖 Interactive Assistant & Bot Runners
 - **Interactive Assistant Cockpit**: Rich session welcome card with detected capabilities (Tools, Vision, Reasoning), active workspace, context limits, and keyboard shortcuts (`Enter` send, `Ctrl+J` newline).
@@ -343,7 +334,6 @@ Configuration is stored in `~/.locallm/config.json` (`%USERPROFILE%\.locallm\con
 
 ```json
 {
-  "ui_mode": "modern",
   "active_backend": "ollama",
   "ollama_host": "http://127.0.0.1:11434",
   "custom_platforms": [

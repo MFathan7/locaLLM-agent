@@ -473,6 +473,12 @@ def _handle_slash_command(
         print_help_commands()
         return False
 
+    if cmd in ("/top", "/monitor"):
+        from locallm.modules.monitor import run_live_monitor
+        run_live_monitor(config, client)
+        render_chat_welcome_card(config, getattr(config, "default_model", "locaLLM"))
+        return False
+
     if cmd == "/clear":
         memory.clear()
         save_workspace_session(

@@ -17,13 +17,11 @@ def run_settings(config: LocaLLMConfig) -> None:
         ctx_val = getattr(config, "context_window", 8192)
         search_prov = getattr(config, "search_provider", "auto")
         theme_pal = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
-        ui_mode_val = "Modern TUI" if getattr(config, "ui_mode", "classic") == "modern" else "Default CLI"
         max_steps_val = getattr(config, "agent_max_steps", 25)
         choice = questionary.select(
             "Settings & Configuration:",
             choices=[
                 f"Active Backend (Current: {config.active_backend.upper()})",
-                f"UI Mode (Current: {ui_mode_val})",
                 f"UI Theme (Current: {theme_pal.name})",
                 f"Sampling Temperature (Current: {config.temperature})",
                 f"Context Window Limit (Current: {ctx_val:,} tokens)",
@@ -41,8 +39,6 @@ def run_settings(config: LocaLLMConfig) -> None:
 
         if choice.startswith("Active Backend"):
             _switch_active_backend(config)
-        elif choice.startswith("UI Mode"):
-            _switch_ui_mode(config)
         elif choice.startswith("UI Theme"):
             _switch_ui_theme(config)
         elif choice.startswith("Sampling Temperature"):
@@ -246,36 +242,4 @@ def _switch_ui_theme(config: LocaLLMConfig) -> None:
             apply_active_theme(key)
             console.print(f"[success]UI Theme switched to {name}![/]\n")
             break
-
-
-def _switch_ui_mode(config: LocaLLMConfig) -> None:
-    """Interactively select between Default CLI and Modern Reactive TUI."""
-    curr_mode = getattr(config, "ui_mode", "classic")
-    current_label = "Modern TUI" if curr_mode == "modern" else "Default CLI"
-
-    choices = [
-        "Default CLI (Traditional scrolling terminal)" + (" [Active]" if curr_mode == "classic" else ""),
-        "Modern TUI (Reactive full-screen split-pane)" + (" [Active]" if curr_mode == "modern" else ""),
-        "Cancel",
-    ]
-
-    chosen = questionary.select(
-        f"Select Interface Style (Current: {current_label}):",
-        choices=choices,
-        style=QUESTIONARY_STYLE,
-    ).ask()
-
-    if not chosen or chosen == "Cancel":
-        return
-
-    if "Modern TUI" in chosen:
-        config.ui_mode = "modern"
-        save_config(config)
-        console.print("[success]Interface style set to Modern TUI![/]\n")
-    elif "Default CLI" in chosen:
-        config.ui_mode = "classic"
-        save_config(config)
-        console.print("[success]Interface style set to Default CLI![/]\n")
-
-    questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
 

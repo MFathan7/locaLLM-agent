@@ -113,10 +113,6 @@ class LocaLLMConfig(BaseModel):
         default="cyber_neon",
         description="Active console UI theme: 'cyber_neon', 'tokyo_night', 'monokai', 'matrix', or 'nordic_frost'",
     )
-    ui_mode: str = Field(
-        default="classic",
-        description="Active interface style: 'classic' (Default CLI) or 'modern' (Reactive Full-Screen TUI)",
-    )
 
 
 

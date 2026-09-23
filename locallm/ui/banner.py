@@ -1,11 +1,13 @@
 """Unicode Header, status banner, and VRAM visual gauge renderer."""
 
+import time
 from typing import Any, Optional
+import psutil
 from rich.align import Align
 from rich.panel import Panel
 from rich.table import Table
 from locallm.config import LocaLLMConfig, get_custom_platform
-from locallm.core.hardware import get_gpu_info
+from locallm.core.hardware import get_gpu_extended_info
 from locallm.core.service_manager import is_custom_platform_reachable, is_ollama_running
 from locallm.ui.theme import console, get_theme_palette
 
@@ -33,9 +35,10 @@ def format_vram_bar(used_gb: float, total_gb: float, width: int = 10) -> str:
 def render_banner(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
     """Render the application header with system and backend status."""
     palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
-    gpu = get_gpu_info()
+    gpu = get_gpu_extended_info(force_refresh=True)
 
     active = config.active_backend.strip().lower()
+    t0 = time.time()
     if active == "ollama":
         backend_name = "Ollama"
         endpoint = config.ollama_host
@@ -57,17 +60,37 @@ def render_banner(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
             is_online = False
             version_str = ""
 
-    status_str = f"[bold green]ONLINE[/]{version_str}" if is_online else "[bold red]OFFLINE[/]"
+    ping_ms = (time.time() - t0) * 1000.0 if is_online else 0.0
+    status_str = f"[bold green]ONLINE[/] [dim]({ping_ms:.1f}ms){version_str}[/]" if is_online else "[bold red]OFFLINE[/]"
 
     if gpu:
-        used_vram_gb = max(0.0, (gpu.total_vram_mb - gpu.free_vram_mb) / 1024)
-        total_vram_gb = gpu.total_vram_mb / 1024
-        short_gpu = gpu.name.replace("GeForce ", "").replace("Corporation ", "").strip()
-        gpu_label = f"[white]{short_gpu}[/]"
-        vram_display = f"[dim]VRAM:[/] {format_vram_bar(used_vram_gb, total_vram_gb)}"
+        used_vram_gb = gpu.used_vram_mb / 1024.0
+        total_vram_gb = gpu.total_vram_mb / 1024.0
+        free_vram_gb = gpu.free_vram_mb / 1024.0
+        short_gpu = gpu.name.replace("NVIDIA ", "").replace("GeForce ", "").replace("Corporation ", "").strip()
+        gpu_label = f"[white]{short_gpu[:18]}[/] [dim]({gpu.utilization_pct}% load • {gpu.temperature_c}°C)[/]"
+        vram_display = f"[dim]VRAM:[/] {format_vram_bar(used_vram_gb, total_vram_gb)} [dim](+{free_vram_gb:.1f}G free)[/]"
     else:
-        gpu_label = "[dim]CPU Mode[/]"
-        vram_display = "[dim]VRAM:[/] [dim]N/A (No GPU)[/]"
+        gpu_label = "[dim]CPU Mode (No GPU)[/]"
+        vram_display = "[dim]VRAM:[/] [dim]N/A (CPU Mode)[/]"
+
+    # Host RAM and CPU telemetry
+    mem = psutil.virtual_memory()
+    ram_used_gb = (mem.total - mem.available) / (1024**3)
+    ram_total_gb = mem.total / (1024**3)
+    cpu_pct = psutil.cpu_percent(interval=None)
+    cpu_count = psutil.cpu_count(logical=True) or 1
+    host_display = f"[white]RAM:[/] {format_vram_bar(ram_used_gb, ram_total_gb, width=8)} [dim]•[/] [white]CPU:[/] [{palette.primary}]{cpu_pct:.1f}%[/] [dim]({cpu_count}c)[/]"
+
+    # Loaded models currently resident in VRAM
+    resident_str = "[dim]Standby (Idle)[/]"
+    if is_online and client and hasattr(client, "get_loaded_models"):
+        try:
+            loaded = client.get_loaded_models()
+            if loaded:
+                resident_str = f"[bold green]●[/] [bold cyan]{', '.join(loaded[:2])}[/]"
+        except Exception:
+            pass
 
     if config.default_model.lower() == "auto":
         model_display = f"[bold {palette.primary}]Auto (Smart Router)[/]"
@@ -111,10 +134,13 @@ def render_banner(config: LocaLLMConfig, client: Optional[Any] = None) -> None:
         f"[bold {palette.accent}]▰[/] {vram_display}",
     )
     grid.add_row(
+        f"[white]◈[/] [dim]Host:[/] {host_display}",
+        f"[bold {palette.success}]●[/] [dim]VRAM Resident:[/] {resident_str}",
+    )
+    grid.add_row(
         f"[bold {palette.primary}]▸[/] [dim]Workspace:[/] [bold {palette.primary}]{active_ws}[/]",
         f"[bold {palette.accent}]{palette.icon} {palette.name}[/]  [dim]•[/]  [bold {palette.success}]✦[/] {plugins_summary}",
     )
-
 
     logo_text = (
         f"[{palette.primary}]█░░ █▀█ █▀▀ ▄▀█ █░░ █░░ █▀▄▀█[/]\n"

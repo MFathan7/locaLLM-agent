@@ -12,7 +12,6 @@ Requires-Dist: python-telegram-bot>=20.0
 Requires-Dist: pydantic>=2.0.0
 Requires-Dist: psutil>=5.9.0
 Requires-Dist: openai>=1.0.0
-Requires-Dist: textual>=8.0.0
 
 # locaLLM
 
@@ -71,25 +70,38 @@ locallm status
 
 ### 4. Essential Commands
 ```bash
-# 1. Launch the Interactive TUI Dashboard
+# 1. Launch the Modern Reactive TUI Dashboard (Default)
 locallm
 
-# 2. Start an Interactive Chat session with Smart Auto-Routing
+# 2. Or force the Classic Scrolling CLI Menu
+locallm --classic
+
+# 3. Start an Interactive Chat session with Smart Auto-Routing
 locallm chat --model auto
 
-# 3. Run an Autonomous Agent task (files, shell, web, GitHub releases)
+# 4. Run an Autonomous Agent task (files, shell, web, GitHub releases)
 locallm agent --task "Analyze README.md and summarize project architecture"
 
-# 4. Run an Autonomous Agent task with custom max reasoning steps
+# 5. Run an Autonomous Agent task with custom max reasoning steps
 locallm agent --task "Fetch latest Ollama releases and compare versions" --max-steps 30
 
-# 5. Check GPU VRAM and model compatibility
+# 6. Check GPU VRAM and model compatibility
 locallm models
 ```
 
 ---
 
 ## ✨ Feature Overview
+
+### 📊 Live System Monitor & Telemetry HUD (`locallm top` / `/top`)
+- **Real-Time Hardware Cockpit**: 1-second auto-refreshing HUD tracking GPU VRAM allocation, GPU compute utilization, GPU temperature, host CPU cores, and system RAM.
+- **Active Memory Resident Tracking**: Direct visibility into models actively occupying GPU VRAM via backend telemetry (`/api/ps`), with one-key return (`q` or `Enter`).
+- **Universal Slash Command**: Access the Live Monitor on-the-fly anytime from inside chat sessions with `/top` or `/monitor`.
+
+### ⚡ Live Thinking Animation & Stream Speedometer
+- **Live Reasoning Stream**: Native real-time thought tracking for reasoning models (DeepSeek-R1, QwQ) with live timer and token count (`💭 Thought Process (3.2s)`), resolving cleanly into `✔ Thought for 3.2s` before streaming the markdown answer.
+- **Real-Time Stream Speedometer**: Dynamic live footer while emitting tokens (`▘ Emitting: 142 tokens • 42.1 tok/s • 3.4s • VRAM: 7.2/12.0 GB`), powered by high-contrast square snake spinners that smoothly settle into the final bracket footer.
+- **Monospace Alignment & Anti-Slop**: Pure text menus and Rich formatting designed specifically for Windows terminal monospace fonts with zero alignment breakage.
 
 ### 🤖 Interactive Assistant & Bot Runners
 - **Interactive Assistant Cockpit**: Rich session welcome card with detected capabilities (Tools, Vision, Reasoning), active workspace, context limits, and keyboard shortcuts (`Enter` send, `Ctrl+J` newline).
@@ -104,8 +116,12 @@ locallm models
 - **Proactive Web Research**: Local models are instructed to never claim ignorance or lack of real-time data for unfamiliar entities, protocols, or products.
 - **Turn 1 Refusal Interceptor**: If a model hesitates or admits a lack of knowledge on turn 1 (e.g. for niche enterprise tools), `locaLLM` automatically intercepts and nudges the model to execute `search_web` before synthesizing the final answer.
 
-### 🛠️ Autonomous ReAct Agent & Native Tools
-- **Multi-Step Autonomous Loop**: Executes up to 25 continuous tool steps (`create_directory`, `write_file`, `read_file`, `list_directory`, `execute_command`, `search_web`, `fetch_web`).
+### 🛠️ Modular Tool Registry & Autonomous ReAct Agent
+- **Modular Tool Architecture (`locallm/core/tools/`)**: Tools are decoupled into domain packages (`filesystem.py`, `web.py`, `system.py`, `messaging.py`, `ui.py`) and dynamically registered via `@tool` decorators.
+- **Explicit JSON Schema & Permissions**: Declarations enforce JSON Schema metadata, parameter typing, and mutating permission classification (`is_mutating: bool`).
+- **Dynamic Truncation & Pagination**: Content-heavy tools (file reading, web fetching) support clean sliding chunking (`offset`, `max_chars`) to prevent context exhaustion and latency spikes.
+- **Smart Path Resolution & Boundary Sandboxing**: Resolves filesystem aliases (`~`, `downloads`, `desktop`, `%USERPROFILE%`) and enforces directory boundary isolation in restricted or messaging modes.
+- **Multi-Step Autonomous Loop**: Executes continuous tool steps (`create_directory`, `write_file`, `read_file`, `list_directory`, `execute_command`, `search_web`, `fetch_web`) up to configured step bounds.
 - **Granular Permission Policies**: Configure mutating tool policies per session:
   - `ask`: Interactively prompts user authorization (`Allow Once`, `Always Allow`, `Deny`).
   - `always_allow`: Fully hands-free autonomous execution for agent tasks.
@@ -141,13 +157,27 @@ locallm models
 
 ---
 
-## 🧭 TUI Menu Hierarchy
+## 🧭 TUI Interface & Navigation
 
-Launch `locallm` with no arguments to enter the interactive terminal dashboard:
+### 1. Modern Reactive Desktop TUI (`locallm`)
+When running `locallm` (default UI mode: `modern`), the full-screen reactive desktop cockpit opens. Navigate tabs using mouse clicks or keyboard hotkeys:
+
+```text
+Modern Reactive TUI Tabs:
+  ├── 💬 Assistant     (F2 / Ctrl+1) -> Streaming chat, tool cards, telemetry meter, workspace file tree
+  ├── 📁 Workspaces    (F3 / Ctrl+2) -> Switch workspaces, inspect knowledge/skills, scaffold new workspace
+  ├── 🤖 Integrations  (F4 / Ctrl+3) -> Autonomous ReAct agent runner, Telegram & WhatsApp channel managers
+  ├── 🧠 Models        (F5 / Ctrl+4) -> VRAM fit sizing, activate models, delete models, pull from registry
+  ├── 🧩 Plugins       (F6 / Ctrl+5) -> Modular plugin inspector, dynamic tool schemas, enable/disable toggle
+  ├── ⚡ Services      (F7 / Ctrl+6) -> Start/stop Ollama daemon, configure OpenAI-compatible platforms
+  └── ⚙ Settings      (F8 / Ctrl+7) -> Toggle Modern/Classic UI, live theme repainting, inference parameter grid
+```
+
+### 2. Classic Scrolling CLI Menu (`locallm --classic`)
+If you prefer traditional terminal scrolling, pass `--classic` or switch UI Mode in Settings:
 
 ```text
 Main Menu:
-  ├── Reactive TUI          -> Modern full-screen reactive desktop TUI (Textual)
   ├── Assistant             -> Standalone interactive chat with live tool execution
   ├── Workspaces            -> Isolated environments: Switch, Create, Edit AGENTS.md, Delete, Back
   ├── Integrations          -> Channels & external runners
@@ -166,7 +196,7 @@ Main Menu:
   │     ├── [Custom Plat]   -> Status, Set Active, Configure Endpoint/Key, Delete, Back
   │     ├── Add Platform    -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global parameters (Backend, Temperature, Context, Theme, Reset)
+  ├── Settings              -> Global parameters (UI Mode, Backend, Temperature, Context, Theme, Reset)
   └── Exit                  -> Unload GPU VRAM and terminate cleanly
 ```
 
@@ -180,7 +210,8 @@ Main Menu:
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `locallm` | Open interactive TUI dashboard | `locallm` |
+| `locallm` | Open interactive TUI dashboard (Modern TUI default) | `locallm` |
+| `locallm --classic` | Force classic scrolling terminal menu | `locallm --classic` |
 | `locallm tui` | Launch modern full-screen reactive TUI with live telemetry | `locallm tui --theme matrix` |
 | `locallm chat` | Launch interactive assistant session | `locallm chat --model auto` |
 | `locallm agent` | Run autonomous ReAct agent loop | `locallm agent --task "Scaffold FastAPI app"` |

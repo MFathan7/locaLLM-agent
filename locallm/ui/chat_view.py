@@ -1,9 +1,14 @@
-from typing import Any, Generator, List, Optional
+import time
+from typing import Any, Generator, List, Optional, Tuple
+from rich.console import Group
 from rich.live import Live
 from rich.markdown import Markdown
 from rich.panel import Panel
 from rich.table import Table
+from rich.text import Text
 from locallm.ui.theme import console, get_theme_palette
+
+SPINNER_FRAMES = ["▘", "▀", "▝", "▐", "▗", "▄", "▖", "▌"]
 
 
 def render_chat_welcome_card(
@@ -65,7 +70,7 @@ def get_bracket_top(model_name: Optional[str] = None) -> str:
         except Exception:
             model_name = "locaLLM"
 
-    raw_width = console.width if console.width else 80
+    raw_width = console.width if isinstance(getattr(console, "width", None), int) else 80
     term_width = max(50, min(raw_width - 2, 78))
 
     header_content = f"{palette.icon} locaLLM · {model_name}"
@@ -85,7 +90,7 @@ def get_bracket_bottom(
 ) -> str:
     """Generate the bottom bracket footer with telemetry and speed stats."""
     palette = get_theme_palette()
-    raw_width = console.width if console.width else 80
+    raw_width = console.width if isinstance(getattr(console, "width", None), int) else 80
     term_width = max(50, min(raw_width - 2, 78))
 
     if stats:
@@ -134,13 +139,29 @@ def render_response_stats(
     """Print the closing bottom bracket with telemetry and speed stats."""
     if not stats:
         palette = get_theme_palette()
-        raw_width = console.width if console.width else 80
+        raw_width = console.width if isinstance(getattr(console, "width", None), int) else 80
         term_width = max(50, min(raw_width - 2, 78))
         dashes_count = max(4, term_width - 2)
         console.print(f"[bold {palette.primary}]└" + ("─" * dashes_count) + "┘[/]\n")
         return
     console.print(get_bracket_bottom(stats, context_limit=context_limit))
     console.print()
+
+
+def extract_thought_process(text: str) -> Tuple[Optional[str], str]:
+    """Separate reasoning thoughts enclosed in <think>...</think> from main content."""
+    if "<think>" not in text:
+        return None, text
+
+    if "</think>" in text:
+        parts = text.split("</think>", 1)
+        thought = parts[0].split("<think>", 1)[1].strip()
+        remaining = parts[1].strip()
+        return (thought if thought else None), remaining
+
+    parts = text.split("<think>", 1)
+    thought = parts[1].strip()
+    return (thought if thought else None), ""
 
 
 def print_assistant_response(
@@ -150,10 +171,28 @@ def print_assistant_response(
     model_name: Optional[str] = None,
 ) -> None:
     """Render a complete assistant response cleanly parsed as Markdown inside an open Bracket Frame."""
+    palette = get_theme_palette()
     console.print()
     console.print(get_bracket_top(model_name=model_name))
     console.print()
-    console.print(Markdown(text.strip()))
+
+    thought_content, main_content = extract_thought_process(text)
+    if thought_content:
+        thought_panel = Panel(
+            Text(thought_content, style=f"italic {palette.dim}"),
+            title=f"[{palette.accent}]💭 Thought Process[/]",
+            box=palette.box_style,
+            border_style=palette.border_style,
+            padding=(0, 1),
+        )
+        console.print(thought_panel)
+        console.print()
+
+    if main_content.strip():
+        console.print(Markdown(main_content.strip()))
+    elif not thought_content:
+        console.print(Markdown(text.strip()))
+
     console.print()
     render_response_stats(stats, context_limit=context_limit)
 
@@ -166,6 +205,9 @@ def stream_assistant_response(
 ) -> str:
     """Stream assistant markdown response in real-time inside an open Bracket Frame."""
     from locallm.ui.spinner import thinking_spinner
+    from locallm.core.hardware import get_gpu_info
+
+    palette = get_theme_palette()
 
     first_chunk: Optional[str] = None
     with thinking_spinner("locaLLM is thinking..."):
@@ -177,22 +219,131 @@ def stream_assistant_response(
     if first_chunk is None:
         return ""
 
-    accumulated_text = first_chunk
+    raw_buffer = first_chunk
+    stream_start_time = time.time()
+    total_tokens = 1
+
+    # Check VRAM allocation
+    gpu = get_gpu_info()
+    if gpu and gpu.total_vram_mb > 0:
+        vram_str = f"{gpu.used_vram_mb / 1024.0:.1f}/{gpu.total_vram_mb / 1024.0:.1f} GB"
+    else:
+        vram_str = "CPU"
+
     console.print()
     console.print(get_bracket_top(model_name=model_name))
     console.print()
 
+    thought_start_time = stream_start_time if "<think>" in raw_buffer else None
+    thought_elapsed = 0.0
+
+    def _parse_buffer(buf: str) -> Tuple[str, str, bool, bool]:
+        """Parse raw buffer into (thought_text, main_text, in_thinking, thought_finished)."""
+        if "<think>" in buf:
+            if "</think>" in buf:
+                parts = buf.split("</think>", 1)
+                t = parts[0].split("<think>", 1)[1]
+                m = parts[1]
+                return t, m, False, True
+            else:
+                t = buf.split("<think>", 1)[1]
+                return t, "", True, False
+        else:
+            return "", buf, False, False
+
+    def _render_current_state(
+        buf: str,
+        show_speedometer: bool = True,
+        show_cursor: bool = True,
+    ) -> Group:
+        nonlocal thought_start_time, thought_elapsed
+        t_text, m_text, in_think, think_done = _parse_buffer(buf)
+
+        if in_think and thought_start_time is None:
+            thought_start_time = time.time()
+
+        if in_think and thought_start_time is not None:
+            thought_elapsed = time.time() - thought_start_time
+        elif think_done and thought_start_time is not None and thought_elapsed == 0.0:
+            thought_elapsed = time.time() - thought_start_time
+
+        cursor_char = "▌"
+        items: List[Any] = []
+        if t_text.strip():
+            if in_think:
+                thought_title = f"[italic {palette.accent}]💭 Thought Process[/] [{palette.dim}]({thought_elapsed:.1f}s)[/]"
+                display_t = t_text.strip() + (f" {cursor_char}" if show_cursor else "")
+                items.append(Panel(
+                    Text(display_t, style=f"italic {palette.dim}"),
+                    title=thought_title,
+                    box=palette.box_style,
+                    border_style=palette.border_style,
+                    padding=(0, 1),
+                ))
+                items.append(Text(""))
+            elif think_done:
+                items.append(Text.from_markup(f"[{palette.accent}]✔ Thought for {thought_elapsed:.1f}s[/]\n"))
+
+        if m_text.strip():
+            display_m = m_text.strip() + (f" {cursor_char}" if show_cursor else "")
+            if display_m.count("```") % 2 == 1:
+                display_m += "\n```"
+            items.append(Markdown(display_m))
+
+        if show_speedometer:
+            now = time.time()
+            elapsed = max(0.001, now - stream_start_time)
+            tok_per_sec = total_tokens / elapsed
+            spinner_glyph = SPINNER_FRAMES[total_tokens % len(SPINNER_FRAMES)]
+            speedo = (
+                f"[{palette.dim}]{spinner_glyph} Emitting:[/] "
+                f"[bold {palette.primary}]{total_tokens}[/] [{palette.dim}]tokens[/] [dim]•[/] "
+                f"[bold {palette.success}]{tok_per_sec:.1f}[/] [{palette.dim}]tok/s[/] [dim]•[/] "
+                f"[bold white]{elapsed:.1f}s[/] [dim]• VRAM:[/] [{palette.primary}]{vram_str}[/]"
+            )
+            items.append(Text(""))
+            items.append(Text.from_markup(speedo))
+
+        if not items:
+            items.append(Text(cursor_char if show_cursor else ""))
+
+        return Group(*items)
+
     try:
-        with Live(Markdown(accumulated_text), console=console, refresh_per_second=12) as live:
+        with Live(
+            _render_current_state(raw_buffer, show_speedometer=True, show_cursor=True),
+            console=console,
+            refresh_per_second=24,
+        ) as live:
             for chunk in token_generator:
-                accumulated_text += chunk
-                live.update(Markdown(accumulated_text))
+                if len(chunk) > 6 and " " in chunk:
+                    words = chunk.split(" ")
+                    for idx, word in enumerate(words):
+                        sub = word + (" " if idx < len(words) - 1 else "")
+                        raw_buffer += sub
+                        total_tokens += 1
+                        live.update(_render_current_state(raw_buffer, show_speedometer=True, show_cursor=True))
+                        time.sleep(0.012)
+                else:
+                    raw_buffer += chunk
+                    total_tokens += 1
+                    live.update(_render_current_state(raw_buffer, show_speedometer=True, show_cursor=True))
+
+            # Final clean state without speedometer or cursor so terminal settles cleanly
+            live.update(_render_current_state(raw_buffer, show_speedometer=False, show_cursor=False))
     except Exception:
-        console.print(Markdown(accumulated_text))
+        thought_content, main_content = extract_thought_process(raw_buffer)
+        if main_content.strip():
+            console.print(Markdown(main_content.strip()))
+        else:
+            console.print(Markdown(raw_buffer))
 
     console.print()
     render_response_stats(stats, context_limit=context_limit)
-    return accumulated_text
+
+    _, clean_main, _, _ = _parse_buffer(raw_buffer)
+    return clean_main.strip() if clean_main.strip() else raw_buffer.strip()
+
 
 
 def print_system_info(message: str) -> None:
@@ -206,6 +357,7 @@ def print_help_commands() -> None:
     palette = get_theme_palette()
     commands = [
         ("/help", "Show this slash command cheat-sheet"),
+        ("/top", "Open real-time system & VRAM monitor HUD"),
         ("/model", "Switch active model on the fly"),
         ("/system", "View or modify current system instructions"),
         ("/clear", "Reset current conversation memory"),
@@ -242,7 +394,7 @@ def print_conversational_cli_help(theme: Optional[str] = None) -> None:
         "[bold white]Hello! I'm locaLLM, your autonomous local AI platform.[/]\n"
         "[#aaaaaa]I am designed to run large language models locally at peak speed,\n"
         "featuring isolated project sandboxes, local tool automation (files, shell, web), and 24/7 bot runners.\n"
-        f"Launch [/][bold {palette.primary}]locaLLM[/][#aaaaaa] without arguments to open the interactive TUI dashboard, or use the commands below:[/]\n"
+        f"Launch [/][bold {palette.primary}]locaLLM[/][#aaaaaa] without arguments to open the interactive main menu, or use the commands below:[/]\n"
     )
 
     table = Table(
@@ -270,6 +422,7 @@ def print_conversational_cli_help(theme: Optional[str] = None) -> None:
     table.add_row("", "")
     table.add_row(f"[bold {palette.success}]--- Control & Utilities ---[/]", "")
     table.add_row("locallm run \"<prompt>\"", "Execute a single prompt turn and stream results to terminal")
+    table.add_row("locallm top", "Launch live real-time VRAM & hardware telemetry monitor HUD")
     table.add_row("locallm models", "Inspect installed models, sizes, GPU VRAM fit check, and pull models")
     table.add_row("locallm platform", "Manage custom OpenAI-compatible platforms (list, add, remove, use)")
     table.add_row("locallm plugin", "Manage modular customizable plugins, database connectors, and tools")
@@ -281,8 +434,9 @@ def print_conversational_cli_help(theme: Optional[str] = None) -> None:
 
     examples_text = (
         f"\n[bold {palette.primary}]Quickstart Examples:[/]\n"
-        f"  [{palette.accent}]locaLLM[/]                                       [#888888]# Open Interactive TUI Dashboard[/]\n"
+        f"  [{palette.accent}]locaLLM[/]                                       [#888888]# Open Interactive Main Menu[/]\n"
         f"  [{palette.accent}]locaLLM chat --model gemma4:12b[/]               [#888888]# Interactive chat with specific model[/]\n"
+        f"  [{palette.accent}]locaLLM top[/]                                   [#888888]# Open Live System Monitor HUD[/]\n"
         f"  [{palette.accent}]locaLLM run \"Summarize README.md\"[/]             [#888888]# Single-shot prompt execution[/]\n"
         f"  [{palette.accent}]locaLLM workspace use project-ai[/]              [#888888]# Switch active workspace[/]\n"
         f"  [{palette.accent}]locaLLM <command> --help[/]                       [#888888]# Detailed help for specific subcommand[/]"

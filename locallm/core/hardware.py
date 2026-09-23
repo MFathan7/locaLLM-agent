@@ -8,6 +8,8 @@ import psutil
 
 _cached_gpu_info: Optional["GPUInfo"] = None
 _last_gpu_check: float = 0.0
+_cached_gpu_ext_info: Optional["GPUExtendedInfo"] = None
+_last_gpu_ext_check: float = 0.0
 
 
 class GPUInfo(NamedTuple):
@@ -17,6 +19,17 @@ class GPUInfo(NamedTuple):
     total_vram_mb: int
     free_vram_mb: int
     used_vram_mb: int
+
+
+class GPUExtendedInfo(NamedTuple):
+    """Container for detailed live GPU status including utilization and temperature."""
+
+    name: str
+    total_vram_mb: int
+    free_vram_mb: int
+    used_vram_mb: int
+    utilization_pct: int
+    temperature_c: int
 
 
 class SystemResources(NamedTuple):
@@ -76,6 +89,60 @@ def get_gpu_info(force_refresh: bool = False) -> Optional[GPUInfo]:
     except Exception:
         _cached_gpu_info = None
         _last_gpu_check = now
+        return None
+
+
+def get_gpu_extended_info(force_refresh: bool = False) -> Optional[GPUExtendedInfo]:
+    """Detect NVIDIA GPU status with utilization and temperature (1s cache)."""
+    global _cached_gpu_ext_info, _last_gpu_ext_check
+
+    now = time.time()
+    if not force_refresh and _cached_gpu_ext_info is not None and (now - _last_gpu_ext_check < 1.0):
+        return _cached_gpu_ext_info
+
+    if not shutil.which("nvidia-smi"):
+        _cached_gpu_ext_info = None
+        _last_gpu_ext_check = now
+        return None
+
+    try:
+        cmd = [
+            "nvidia-smi",
+            "--query-gpu=name,memory.total,memory.free,memory.used,utilization.gpu,temperature.gpu",
+            "--format=csv,noheader,nounits",
+        ]
+        flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        result = subprocess.run(
+            cmd,
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=2,
+            creationflags=flags,
+        )
+        output = result.stdout.strip()
+        if not output:
+            return None
+
+        line = output.splitlines()[0]
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 6:
+            return None
+
+        info = GPUExtendedInfo(
+            name=parts[0],
+            total_vram_mb=int(parts[1]),
+            free_vram_mb=int(parts[2]),
+            used_vram_mb=int(parts[3]),
+            utilization_pct=int(parts[4]) if parts[4].isdigit() else 0,
+            temperature_c=int(parts[5]) if parts[5].isdigit() else 0,
+        )
+        _cached_gpu_ext_info = info
+        _last_gpu_ext_check = now
+        return info
+    except Exception:
+        _cached_gpu_ext_info = None
+        _last_gpu_ext_check = now
         return None
 
 
