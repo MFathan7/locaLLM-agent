@@ -417,6 +417,7 @@ def print_conversational_cli_help(theme: Optional[str] = None) -> None:
     table.add_row(f"[bold {palette.success}]--- Integrations & Bot Runners ---[/]", "")
     table.add_row("locallm telegram", "Run 24/7 Telegram bot with user ID whitelist and multi-user memory")
     table.add_row("locallm whatsapp", "Run WhatsApp bot with terminal QR pairing and phone whitelist")
+    table.add_row("locallm mcp", "Manage Model Context Protocol multi-server pool & tool connections")
 
     # Group 3: Control & Ops
     table.add_row("", "")

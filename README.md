@@ -55,13 +55,13 @@ locallm status
 
 ### 4. Essential Commands
 ```bash
-# 1. Launch the Modern Reactive TUI Dashboard (Default)
+# 1. Launch the Interactive Main Menu with Live Telemetry Header
 locallm
 
-# 2. Or force the Classic Scrolling CLI Menu
-locallm --classic
+# 2. Launch the Real-Time VRAM & System Monitor HUD
+locallm top
 
-# 3. Start an Interactive Chat session with Smart Auto-Routing
+# 3. Start an Interactive Chat session with Smart Auto-Routing & Typing Effect
 locallm chat --model auto
 
 # 4. Run an Autonomous Agent task (files, shell, web, GitHub releases)
@@ -78,15 +78,22 @@ locallm models
 
 ## ✨ Feature Overview
 
-### 📊 Live System Monitor & Telemetry HUD (`locallm top` / `/top`)
-- **Real-Time Hardware Cockpit**: 1-second auto-refreshing HUD tracking GPU VRAM allocation, GPU compute utilization, GPU temperature, host CPU cores, and system RAM.
-- **Active Memory Resident Tracking**: Direct visibility into models actively occupying GPU VRAM via backend telemetry (`/api/ps`), with one-key return (`q` or `Enter`).
-- **Universal Slash Command**: Access the Live Monitor on-the-fly anytime from inside chat sessions with `/top` or `/monitor`.
+### 🖥️ Real-Time Telemetry Header Banner
+- **Live System & Hardware Cockpit**: The Unicode header banner at the top of every screen automatically displays real-time hardware telemetry:
+  - **Service & Ping**: Backend connectivity and live network ping latency (`● Service: ONLINE (1.8ms)`).
+  - **GPU & VRAM Meter**: Real-time VRAM allocation bar with exact headroom (`▰ VRAM: [█░░░░░░░░░] 1.6/12.0 GB (13%) (+10.3G free)`), GPU core compute load, and operating temperature (`8% load • 39°C`).
+  - **Host RAM & CPU**: Host system memory usage bar and active CPU utilization with core count.
+  - **Resident Models**: Direct visibility into models actively occupying GPU memory via `/api/ps`.
 
-### ⚡ Live Thinking Animation & Stream Speedometer
+### ⚡ Live Thinking Animation & Typing Effect
 - **Live Reasoning Stream**: Native real-time thought tracking for reasoning models (DeepSeek-R1, QwQ) with live timer and token count (`💭 Thought Process (3.2s)`), resolving cleanly into `✔ Thought for 3.2s` before streaming the markdown answer.
+- **Automatic Live Typing Effect**: Real-time typewriter cursor (`▌`) and smooth emission cadence while generating tokens. Code blocks auto-close on the fly to maintain clean syntax highlighting while the cursor is typing.
 - **Real-Time Stream Speedometer**: Dynamic live footer while emitting tokens (`▘ Emitting: 142 tokens • 42.1 tok/s • 3.4s • VRAM: 7.2/12.0 GB`), powered by high-contrast square snake spinners that smoothly settle into the final bracket footer.
 - **Monospace Alignment & Anti-Slop**: Pure text menus and Rich formatting designed specifically for Windows terminal monospace fonts with zero alignment breakage.
+
+### 📊 Live System Monitor HUD (`locallm top` / `/top`)
+- **Full-Screen Hardware Telemetry**: 1-second auto-refreshing HUD tracking GPU VRAM, compute load, temperature, host CPU, and RAM with non-blocking exit (`q` or `Enter`).
+- **Universal Slash Command**: Access the Live Monitor on-the-fly anytime from inside chat sessions with `/top` or `/monitor`.
 
 ### 🤖 Interactive Assistant & Bot Runners
 - **Interactive Assistant Cockpit**: Rich session welcome card with detected capabilities (Tools, Vision, Reasoning), active workspace, context limits, and keyboard shortcuts (`Enter` send, `Ctrl+J` newline).
@@ -120,6 +127,15 @@ locallm models
 - **Sticky Routing (Anti-Swap Protection)**: Retains the currently loaded GPU model if it satisfies prompt requirements, preventing expensive disk I/O and latency spikes.
 - **VRAM Hardware Guard**: Checks KV cache footprints and model weights against actual free GPU memory, automatically falling back to the next fitting model to prevent system freeze or CPU spillover.
 
+### 🌐 Model Context Protocol (MCP) Multi-Server Support
+- **Multi-Connection Architecture**: Connect to multiple MCP servers concurrently (`filesystem`, `github`, `postgres`, `sqlite`, remote APIs).
+- **Transport Flexibility**: Native support for **`stdio`** (subprocesses via `npx`, `python`, `node`, `uvx`) and **`sse`** (remote HTTP/SSE streams).
+- **Zero External Bloat**: High-performance, zero-conflict JSON-RPC 2.0 client built directly on standard Python libraries and HTTPX.
+- **Cross-Platform & Standard Compatible**: Standard `mcp_servers.json` configuration compatible with Claude Desktop and Cursor.
+- **Unified Tool Dispatch & Namespacing**: Discovered MCP tools are dynamically exposed to Chat, Autonomous ReAct Agent, Telegram Bot, and WhatsApp Bot with collision-free namespacing (`mcp__<server>__<tool>`).
+- **Access Control & Privilege Gating**: Flag servers or individual tools as `privileged` to restrict them to authorized administrator callers only.
+- **Interactive TUI & CLI**: Manage servers with `locallm mcp list`, `locallm mcp test <name>`, `locallm mcp enable/disable <name>`, or the interactive wizard in `Integrations -> Model Context Protocol (MCP)`.
+
 ### 🗂️ Zero-Bleed Workspaces & Skills
 - **Strict Context Isolation**: Each project workspace (`~/.locallm/workspaces/<name>/`) contains isolated `knowledge/`, `skills/`, and `sessions/`. No cross-contamination across projects.
 - **Drop-In Markdown Knowledge**: Drop `.md` or `.txt` reference files, API specs, and runbooks directly into workspace directories.
@@ -142,32 +158,37 @@ locallm models
 
 ---
 
-## 🧭 TUI Interface & Navigation
+## 🧭 Interface & Navigation
 
-### 1. Modern Reactive Desktop TUI (`locallm`)
-When running `locallm` (default UI mode: `modern`), the full-screen reactive desktop cockpit opens. Navigate tabs using mouse clicks or keyboard hotkeys:
+When launching `locallm`, the terminal displays the real-time telemetry header banner followed by the interactive main menu:
 
 ```text
-Modern Reactive TUI Tabs:
-  ├── 💬 Assistant     (F2 / Ctrl+1) -> Streaming chat, tool cards, telemetry meter, workspace file tree
-  ├── 📁 Workspaces    (F3 / Ctrl+2) -> Switch workspaces, inspect knowledge/skills, scaffold new workspace
-  ├── 🤖 Integrations  (F4 / Ctrl+3) -> Autonomous ReAct agent runner, Telegram & WhatsApp channel managers
-  ├── 🧠 Models        (F5 / Ctrl+4) -> VRAM fit sizing, activate models, delete models, pull from registry
-  ├── 🧩 Plugins       (F6 / Ctrl+5) -> Modular plugin inspector, dynamic tool schemas, enable/disable toggle
-  ├── ⚡ Services      (F7 / Ctrl+6) -> Start/stop Ollama daemon, configure OpenAI-compatible platforms
-  └── ⚙ Settings      (F8 / Ctrl+7) -> Toggle Modern/Classic UI, live theme repainting, inference parameter grid
+╔════════════════════════════ ✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦ ════════════════════════════╗
+║                                                                             ║
+║                        █░░ █▀█ █▀▀ ▄▀█ █░░ █░░ █▀▄▀█                        ║
+║                        █▄▄ █▄█ █▄▄ █▀█ █▄▄ █▄▄ █░▀░█                        ║
+║                                                                             ║
+║  ● Service: ONLINE (1.8ms)             ⚡ Endpoint: http://127.0.0.1:11434  ║
+║  (Ollama)                                                                   ║
+║  ◆ Model: deepseek-r1:8b                        ★ Features: Tools, Vision   ║
+║  ■ GPU: RTX 4070 (8% load • 39°C)         ▰ VRAM: [█░░░░░░░░░] 1.6/12.0 GB  ║
+║                                                        (13%) (+10.3G free)  ║
+║  ◈ Host: RAM: [███░░░░░] 13.2/31.9         ● VRAM Resident: Standby (Idle)  ║
+║  GB (41%) • CPU: 13.2% (16c)                                                ║
+║  ▸ Workspace: default                        ⚡ Cyber Neon  •  ✦ 2 Plugins  ║
+║                                                                             ║
+╚═════════════════════════════════════════════════════════════════════════════╝
 ```
-
-### 2. Classic Scrolling CLI Menu (`locallm --classic`)
-If you prefer traditional terminal scrolling, pass `--classic` or switch UI Mode in Settings:
 
 ```text
 Main Menu:
-  ├── Assistant             -> Standalone interactive chat with live tool execution
+  ├── Assistant             -> Standalone interactive chat with live tool execution & typing effect
   ├── Workspaces            -> Isolated environments: Switch, Create, Edit AGENTS.md, Delete, Back
   ├── Integrations          -> Channels & external runners
   │     ├── Telegram        -> 24/7 Telegram bot: Start, Configure Token, Whitelist, Back
   │     ├── WhatsApp        -> WhatsApp bot: Start, Configure Whitelist, Clear Session, Back
+  │     ├── Model Context Protocol (MCP) -> Multi-server MCP manager: Test, Add, Enable/Disable, Remove, Back
+  │     └── Agent & Automation -> Autonomous multi-step ReAct agent loop
   │     ├── Agent & Auto    -> Autonomous Agent: Run Task, Toggle Auto-Approve, Back
   │     └── Back            -> Return to Main Menu
   ├── Model Manager         -> Model management per platform
@@ -181,7 +202,7 @@ Main Menu:
   │     ├── [Custom Plat]   -> Status, Set Active, Configure Endpoint/Key, Delete, Back
   │     ├── Add Platform    -> Register new OpenAI-compatible platform
   │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global parameters (UI Mode, Backend, Temperature, Context, Theme, Reset)
+  ├── Settings              -> Global parameters (Backend, Temperature, Context, Theme, Reset)
   └── Exit                  -> Unload GPU VRAM and terminate cleanly
 ```
 
@@ -195,10 +216,9 @@ Main Menu:
 
 | Command | Description | Example |
 | :--- | :--- | :--- |
-| `locallm` | Open interactive TUI dashboard (Modern TUI default) | `locallm` |
-| `locallm --classic` | Force classic scrolling terminal menu | `locallm --classic` |
-| `locallm tui` | Launch modern full-screen reactive TUI with live telemetry | `locallm tui --theme matrix` |
-| `locallm chat` | Launch interactive assistant session | `locallm chat --model auto` |
+| `locallm` | Open interactive main menu with real-time hardware telemetry header | `locallm` |
+| `locallm top` | Launch auto-refreshing real-time system & VRAM monitor HUD | `locallm top --refresh 0.5` |
+| `locallm chat` | Launch interactive assistant session with typing effect | `locallm chat --model auto` |
 | `locallm agent` | Run autonomous ReAct agent loop | `locallm agent --task "Scaffold FastAPI app"` |
 | `locallm run "<prompt>"` | Single-shot prompt execution (piping / scripts) | `locallm run "Summarize commit history"` |
 | `locallm models` | Inspect models and physical VRAM fit | `locallm models` |
@@ -242,6 +262,7 @@ During interactive chat (`locallm chat`), Telegram bot, or WhatsApp bot conversa
 
 | Slash Command | Natural Keywords | Description |
 | :--- | :--- | :--- |
+| `/top` | `/monitor`, `top`, `monitor` | Opens real-time system & VRAM monitor HUD on the fly from inside chat. |
 | `/stats` | `stats`, `context`, `telemetry` | Renders active model, context tokens used/limit, speed (`tok/s`), and history depth. |
 | `/model` | `model` | Displays active model and features. Use `/model auto` to toggle dynamic routing. |
 | `/clear` | `/reset`, `clear`, `reset`, `start fresh` | Wipes current conversation history and clears memory. |

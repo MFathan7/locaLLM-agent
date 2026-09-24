@@ -72,6 +72,12 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
     elif name.startswith("whatsapp_"):
         return f"locaLLM is dispatching WhatsApp action: {name}..."
 
+    elif name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        srv = parts[1] if len(parts) >= 2 else "mcp"
+        tool_raw = parts[2] if len(parts) >= 3 else parts[-1]
+        return f"locaLLM is executing [{srv}] {tool_raw}..."
+
     return f"locaLLM is executing {name}..."
 
 
@@ -142,5 +148,11 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
     elif name == "read_skill":
         sname = args.get("skill_name", "")
         return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Loaded skill:[/] [dim {palette.primary}]{sname}[/]"
+
+    elif name.startswith("mcp__"):
+        parts = name.split("__", 2)
+        srv = parts[1] if len(parts) >= 2 else "mcp"
+        tool_raw = parts[2] if len(parts) >= 3 else parts[-1]
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Executed MCP [{srv}]:[/] [bold {palette.primary}]{tool_raw}[/]"
 
     return f"  [bold {palette.success}]✔[/] [{palette.success}]Executed:[/] [bold {palette.primary}]{name}[/]"

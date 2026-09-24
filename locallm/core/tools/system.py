@@ -106,6 +106,7 @@ tool(
     description="Get the current working directory path",
     parameters={"type": "object", "properties": {}},
     is_mutating=False,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(get_current_directory_fn)
 
@@ -123,6 +124,7 @@ tool(
         },
     },
     is_mutating=True,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(execute_command_fn)
 

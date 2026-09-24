@@ -7,7 +7,7 @@ import html
 import json
 from pathlib import Path
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 import questionary
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -20,9 +20,16 @@ from telegram.ext import (
 from locallm.config import LocaLLMConfig, save_config
 from locallm.core.memory import ConversationMemory
 from locallm.core.ollama_client import OllamaClient
-from locallm.core.tools import ASSISTANT_TOOLS, TELEGRAM_TOOLS, execute_tool, resolve_smart_path
+from locallm.core.tools import (
+    ASSISTANT_TOOLS,
+    TELEGRAM_TOOLS,
+    execute_tool,
+    get_caller_tools,
+    resolve_smart_path,
+)
 from locallm.core.workspace import (
     delete_workspace_session,
+    get_workspace_security_policy,
     load_workspace_context,
     load_workspace_session,
     save_workspace_session,
@@ -303,12 +310,49 @@ def _get_or_create_session(
     return user_sessions[user_id]
 
 
+def _check_telegram_caller_authorization(
+    user_id: int,
+    active_ws: str,
+    config: LocaLLMConfig,
+    username: Optional[str] = None,
+) -> Tuple[bool, bool]:
+    """Check caller authorization and determine whether access is permitted.
+
+    Supports both permanent numeric Telegram user IDs and unique usernames.
+
+    Returns:
+        Tuple[bool, bool]: (is_authorized, access_allowed)
+    """
+    policy = get_workspace_security_policy(active_ws)
+    combined_authorized = set(config.telegram_allowed_users).union(policy.master_telegram_ids)
+
+    # 1. Match numeric User ID
+    if user_id in combined_authorized:
+        return True, True
+
+    # 2. Match Telegram Username (e.g. @mfathan7 or mfathan7)
+    clean_username = username.lower().lstrip("@") if username else ""
+    if clean_username and clean_username in policy.master_telegram_usernames:
+        return True, True
+
+    if not combined_authorized and not policy.master_telegram_usernames:
+        # Open access mode: caller is authorized by default
+        return True, True
+
+    # Caller is unauthorized / public:
+    if policy.direct_message_policy == "reject" and not policy.public_allowed_tools:
+        return False, False
+
+    return False, True
+
+
 async def _execute_telegram_tool(
     name: str,
     arguments: Dict[str, Any],
     update: Update,
+    is_authorized: bool = True,
 ) -> str:
-    """Execute Telegram-native function calling tools."""
+    """Execute Telegram-native function calling tools with privilege enforcement."""
     if not update.message:
         return "Error: No active Telegram message context."
 
@@ -323,6 +367,7 @@ async def _execute_telegram_tool(
             "full_name": user.full_name if user else "",
             "language_code": user.language_code if user else "",
             "is_premium": getattr(user, "is_premium", False),
+            "is_authorized": is_authorized,
             "chat_id": chat.id if chat else 0,
             "chat_type": chat.type if chat else "private",
             "chat_title": getattr(chat, "title", ""),
@@ -346,6 +391,8 @@ async def _execute_telegram_tool(
                 )
                 return f"Photo from URL '{target}' sent successfully to chat."
             else:
+                if not is_authorized:
+                    return "Access denied. Administrative privileges required."
                 resolved = resolve_smart_path(target)
                 if not resolved.is_file():
                     return f"Error: Local image file '{target}' does not exist (resolved path: {resolved})."
@@ -360,6 +407,9 @@ async def _execute_telegram_tool(
             return f"Error sending photo: {exc}"
 
     elif name == "telegram_send_document":
+        if not is_authorized:
+            return "Access denied. Administrative privileges required."
+
         target = str(arguments.get("file_path", "")).strip()
         caption = arguments.get("caption")
         caption_html = markdown_to_telegram_html(caption) if caption else None
@@ -411,6 +461,7 @@ async def _process_and_reply(
     client: OllamaClient,
     session: ConversationMemory,
     user_name: str,
+    is_authorized: bool = True,
 ) -> None:
     """Run model inference with silent native tool execution and reply to Telegram."""
     if not update.message:
@@ -488,7 +539,17 @@ async def _process_and_reply(
         MAX_TELEGRAM_TOOL_STEPS = 15
         step = 0
         response_text = ""
-        tools_schema = TELEGRAM_TOOLS if has_tools else None
+
+        # Deterministic role-based tool gating
+        policy = get_workspace_security_policy(active_ws)
+        caller_tools = get_caller_tools(
+            is_authorized=is_authorized,
+            workspace_name=active_ws,
+            category="telegram",
+            allowed_tools_override=policy.public_allowed_tools if not is_authorized else None,
+            denied_tools_override=policy.public_denied_tools,
+        )
+        tools_schema = caller_tools if has_tools else None
 
         while step < MAX_TELEGRAM_TOOL_STEPS:
             step += 1
@@ -529,13 +590,14 @@ async def _process_and_reply(
                             func_args = {}
                     console.print(f"[dim cyan][Telegram Tool][/] Executing: {func_name}({func_args})")
                     if func_name.startswith("telegram_"):
-                        obs = await _execute_telegram_tool(func_name, func_args, update)
+                        obs = await _execute_telegram_tool(func_name, func_args, update, is_authorized=is_authorized)
                     else:
                         obs = execute_tool(
                             func_name,
                             func_args,
                             permission_policy=config.agent_permission_policy,
                             interactive=False,
+                            session_state={"is_authorized": is_authorized},
                             workspace_name=active_ws,
                         )
                     session.history.append({"role": "tool", "tool_call_id": tc_id, "content": obs})
@@ -706,20 +768,24 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
         user = update.effective_user
         user_id = user.id if user else 0
         user_name = user.username or user.first_name if user else "Unknown"
+        active_ws = getattr(config, "active_workspace", "default")
 
-        if config.telegram_allowed_users and user_id not in config.telegram_allowed_users:
+        is_authorized, access_allowed = _check_telegram_caller_authorization(
+            user_id, active_ws, config, username=user.username if user else None
+        )
+        if not access_allowed:
             await update.message.reply_text("Unauthorized. Your user ID is not on the access whitelist.")
             return
 
         prompt = update.message.text.strip()
-        console.print(f"[dim cyan][Telegram][/] [bold white]{user_name}[/] ({user_id}): {prompt[:60]}...")
+        console.print(f"[dim cyan][Telegram][/] [bold white]{user_name}[/] ({user_id}) [authorized={is_authorized}]: {prompt[:60]}...")
 
         session = _get_or_create_session(config, user_id, user=user)
-        user_context_tag = f"[Caller Metadata: full_name=\"{user.full_name}\", username=@{user.username if user.username else 'none'}, sender_id={user_id}]"
+        user_context_tag = f"[Caller Metadata: full_name=\"{user.full_name}\", username=@{user.username if user.username else 'none'}, sender_id={user_id}, is_authorized={is_authorized}]"
         session.add_user_message(f"{user_context_tag}\n<user_input>\n{prompt}\n</user_input>")
 
         await update.message.chat.send_action("typing")
-        await _process_and_reply(update, config, client, session, user_name)
+        await _process_and_reply(update, config, client, session, user_name, is_authorized=is_authorized)
 
     async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if not update.message or not update.message.photo:
@@ -728,8 +794,12 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
         user = update.effective_user
         user_id = user.id if user else 0
         user_name = user.username or user.first_name if user else "Unknown"
+        active_ws = getattr(config, "active_workspace", "default")
 
-        if config.telegram_allowed_users and user_id not in config.telegram_allowed_users:
+        is_authorized, access_allowed = _check_telegram_caller_authorization(
+            user_id, active_ws, config, username=user.username if user else None
+        )
+        if not access_allowed:
             await update.message.reply_text("Unauthorized. Your user ID is not on the access whitelist.")
             return
 
@@ -746,7 +816,7 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
             b64_image = base64.b64encode(img_bytes).decode("utf-8")
 
             session.add_user_message(caption, images=[b64_image])
-            await _process_and_reply(update, config, client, session, user_name)
+            await _process_and_reply(update, config, client, session, user_name, is_authorized=is_authorized)
         except Exception as exc:
             console.print(f"[danger][Telegram Photo Error][/] {exc}")
             await update.message.reply_text(f"Error processing image: {exc}")
@@ -758,8 +828,12 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
         user = update.effective_user
         user_id = user.id if user else 0
         user_name = user.username or user.first_name if user else "Unknown"
+        active_ws = getattr(config, "active_workspace", "default")
 
-        if config.telegram_allowed_users and user_id not in config.telegram_allowed_users:
+        is_authorized, access_allowed = _check_telegram_caller_authorization(
+            user_id, active_ws, config, username=user.username if user else None
+        )
+        if not access_allowed:
             await update.message.reply_text("Unauthorized. Your user ID is not on the access whitelist.")
             return
 
@@ -779,7 +853,7 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
             else:
                 session.add_user_message(f"[Video Uploaded: {update.message.video.file_name or 'video'}]: {caption}")
 
-            await _process_and_reply(update, config, client, session, user_name)
+            await _process_and_reply(update, config, client, session, user_name, is_authorized=is_authorized)
         except Exception as exc:
             console.print(f"[danger][Telegram Video Error][/] {exc}")
             await update.message.reply_text(f"Error processing video: {exc}")
@@ -790,7 +864,11 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
 
         user = update.effective_user
         user_id = user.id if user else 0
-        if config.telegram_allowed_users and user_id not in config.telegram_allowed_users:
+        active_ws = getattr(config, "active_workspace", "default")
+        is_authorized, access_allowed = _check_telegram_caller_authorization(
+            user_id, active_ws, config, username=user.username if user else None
+        )
+        if not access_allowed:
             await update.message.reply_text("Unauthorized.")
             return
 
@@ -810,8 +888,12 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
         user = update.effective_user
         user_id = user.id if user else 0
         user_name = user.username or user.first_name if user else "Unknown"
+        active_ws = getattr(config, "active_workspace", "default")
 
-        if config.telegram_allowed_users and user_id not in config.telegram_allowed_users:
+        is_authorized, access_allowed = _check_telegram_caller_authorization(
+            user_id, active_ws, config, username=user.username if user else None
+        )
+        if not access_allowed:
             await update.message.reply_text("Unauthorized.")
             return
 
@@ -839,7 +921,7 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
                 else:
                     session.add_user_message(f"[Attached File: {doc.file_name} ({doc.file_size} bytes)]: {caption}")
 
-            await _process_and_reply(update, config, client, session, user_name)
+            await _process_and_reply(update, config, client, session, user_name, is_authorized=is_authorized)
         except Exception as exc:
             console.print(f"[danger][Telegram Document Error][/] {exc}")
             await update.message.reply_text(f"Error reading document: {exc}")

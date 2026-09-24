@@ -180,6 +180,7 @@ tool(
         },
     },
     is_mutating=True,
+    is_privileged=True,
     categories={"telegram"},
 )(telegram_send_document_fn)
 
@@ -265,6 +266,7 @@ tool(
         },
     },
     is_mutating=True,
+    is_privileged=True,
     categories={"whatsapp"},
 )(whatsapp_send_document_fn)
 

@@ -1,5 +1,6 @@
 """Workspace management engine for isolated knowledge, skills, and session contexts."""
 
+from dataclasses import dataclass, field
 from datetime import datetime
 import io
 import json
@@ -7,7 +8,7 @@ import os
 from pathlib import Path
 import re
 import shutil
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 import zipfile
 
 import httpx
@@ -446,6 +447,149 @@ def get_skill_content(skill_name: str, workspace_name: Optional[str] = "default"
             except Exception:
                 return None
     return None
+
+
+@dataclass
+class WorkspaceSecurityPolicy:
+    """Security and capability gating policy resolved dynamically from workspace directives."""
+
+    master_telegram_ids: Set[int] = field(default_factory=set)
+    master_telegram_usernames: Set[str] = field(default_factory=set)
+    master_whatsapp_identifiers: Set[str] = field(default_factory=set)
+    public_allowed_tools: Set[str] = field(default_factory=set)
+    public_denied_tools: Set[str] = field(default_factory=set)
+    direct_message_policy: str = "auto"  # "reject", "public_only", "auto"
+
+
+def get_workspace_security_policy(workspace_name: Optional[str] = "default") -> WorkspaceSecurityPolicy:
+    """Extract security directives and master sender whitelists from workspace and project documents."""
+    policy = WorkspaceSecurityPolicy()
+    clean_name = workspace_name.strip() if workspace_name else "default"
+    ws_path = get_workspace_path(clean_name)
+
+    # 1. Inspect workspace.json
+    meta_file = ws_path / "workspace.json"
+    if meta_file.is_file():
+        try:
+            with open(meta_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    for item in data.get("master_telegram_ids", []):
+                        try:
+                            policy.master_telegram_ids.add(int(item))
+                        except (ValueError, TypeError):
+                            pass
+                    for item in data.get("master_telegram_usernames", []):
+                        clean_un = str(item).strip().lstrip("@").lower()
+                        if clean_un:
+                            policy.master_telegram_usernames.add(clean_un)
+                    for item in data.get("master_whatsapp_identifiers", []):
+                        clean_str = str(item).strip()
+                        if clean_str:
+                            policy.master_whatsapp_identifiers.add(clean_str)
+                    for t in data.get("public_allowed_tools", []):
+                        policy.public_allowed_tools.add(str(t).strip().lower())
+                    for t in data.get("public_denied_tools", []):
+                        policy.public_denied_tools.add(str(t).strip().lower())
+                    if "direct_message_policy" in data:
+                        policy.direct_message_policy = str(data["direct_message_policy"]).strip().lower()
+        except Exception:
+            pass
+
+    # Helper function to parse text directives from markdown
+    def _parse_directives_from_text(text: str) -> None:
+        if not text:
+            return
+
+        # Telegram Master / Owner / Admin Directives:
+        # Matches: MASTER_TELEGRAM_ID, OWNER_TELEGRAM, OWNER TELEGRAM, TELEGRAM_OWNER, TELEGRAM OWNER, ADMIN_TELEGRAM, etc.
+        telegram_pattern = r"(?:(?:MASTER|OWNER|ADMIN)[_\s]+TELEGRAM(?:[_\s]+ID)?(?:S)?|TELEGRAM[_\s]+(?:MASTER|OWNER|ADMIN)(?:[_\s]+ID)?(?:S)?)\s*[:=]\s*\[?(.*?)\]?(?:\n|\Z|\))"
+        for m in re.finditer(telegram_pattern, text, re.IGNORECASE):
+            raw_val = m.group(1)
+            # 1. Numeric Telegram IDs
+            for num in re.findall(r"\b\d+\b", raw_val):
+                try:
+                    policy.master_telegram_ids.add(int(num))
+                except ValueError:
+                    pass
+            # 2. Telegram @usernames
+            for un in re.findall(r"@([a-zA-Z0-9_]{3,})", raw_val):
+                policy.master_telegram_usernames.add(un.strip().lower())
+            # 3. Quoted identifiers (e.g. ["fathan", "655038084"])
+            for q in re.findall(r"['\"]([^'\"]+)['\"]", raw_val):
+                clean_q = q.strip().lstrip("@").lower()
+                if clean_q.isdigit():
+                    try:
+                        policy.master_telegram_ids.add(int(clean_q))
+                    except ValueError:
+                        pass
+                elif clean_q and len(clean_q) >= 3:
+                    policy.master_telegram_usernames.add(clean_q)
+
+        # WhatsApp Master / Owner / Admin Directives:
+        # Matches: MASTER_WHATSAPP_IDENTIFIERS, OWNER_WHATSAPP, OWNER WHATSAPP, WHATSAPP_OWNER, WHATSAPP OWNER, etc.
+        whatsapp_pattern = r"(?:(?:MASTER|OWNER|ADMIN)[_\s]+WHATSAPP(?:[_\s]+(?:IDENTIFIERS?|ID|NUMBERS?))?|WHATSAPP[_\s]+(?:MASTER|OWNER|ADMIN)(?:[_\s]+(?:IDENTIFIERS?|ID|NUMBERS?))?)\s*[:=]\s*\[?(.*?)\]?(?:\n|\Z|\))"
+        for m in re.finditer(whatsapp_pattern, text, re.IGNORECASE):
+            raw_ids = m.group(1)
+            quoted = re.findall(r"['\"]([^'\"]+)['\"]", raw_ids)
+            if quoted:
+                for q in quoted:
+                    clean_q = q.strip()
+                    if clean_q:
+                        policy.master_whatsapp_identifiers.add(clean_q)
+            else:
+                for num in re.findall(r"\b\d{7,}\b", raw_ids):
+                    policy.master_whatsapp_identifiers.add(num.strip())
+
+        # [PUBLIC_TOOLS_ALLOW] or ALLOWED_PUBLIC_TOOLS
+        for m in re.finditer(r"(?:\[PUBLIC_TOOLS_ALLOW\]|PUBLIC_TOOLS_ALLOW\s*[:=]|ALLOWED_PUBLIC_TOOLS\s*[:=]\s*\[)([\s\S]*?)(?:\[|\n\n|\Z|\])", text, re.IGNORECASE):
+            block = m.group(1)
+            for item in re.findall(r"[-*]?\s*([a-zA-Z0-9_]+)", block):
+                name = item.strip().lower()
+                if name and name not in ("public_tools_allow", "allowed_public_tools"):
+                    policy.public_allowed_tools.add(name)
+
+        # [PUBLIC_TOOLS_DENY] or DENIED_PUBLIC_TOOLS
+        for m in re.finditer(r"(?:\[PUBLIC_TOOLS_DENY\]|PUBLIC_TOOLS_DENY\s*[:=]|DENIED_PUBLIC_TOOLS\s*[:=]\s*\[)([\s\S]*?)(?:\[|\n\n|\Z|\])", text, re.IGNORECASE):
+            block = m.group(1)
+            for item in re.findall(r"[-*]?\s*([a-zA-Z0-9_]+)", block):
+                name = item.strip().lower()
+                if name and name not in ("public_tools_deny", "denied_public_tools"):
+                    policy.public_denied_tools.add(name)
+
+        # Detect direct message policy: e.g. "Direct Messages (1-on-1): STRICTLY REJECT"
+        if re.search(r"Direct Messages.*?STRICTLY REJECT", text, re.IGNORECASE):
+            if policy.direct_message_policy == "auto":
+                policy.direct_message_policy = "reject"
+
+    # 2. Inspect workspace AGENTS.md / SOUL.md
+    for cand in [ws_path / "AGENTS.md", ws_path / "SOUL.md"]:
+        if cand.is_file():
+            try:
+                _parse_directives_from_text(cand.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                pass
+
+    # 3. Inspect workspace knowledge documents
+    knowledge_dir = ws_path / "knowledge"
+    if knowledge_dir.is_dir():
+        for k_file in knowledge_dir.rglob("*"):
+            if k_file.is_file() and k_file.suffix.lower() in (".md", ".txt"):
+                try:
+                    _parse_directives_from_text(k_file.read_text(encoding="utf-8", errors="replace"))
+                except Exception:
+                    pass
+
+    # 4. Inspect CWD project documents (AGENTS.md, rules.md, CLAUDE.md, tests/README.md)
+    cwd = Path.cwd()
+    for proj_file in [cwd / "AGENTS.md", cwd / "CLAUDE.md", cwd / "rules.md", cwd / "agent.md", cwd / "tests" / "README.md"]:
+        if proj_file.is_file():
+            try:
+                _parse_directives_from_text(proj_file.read_text(encoding="utf-8", errors="replace"))
+            except Exception:
+                pass
+
+    return policy
 
 
 def sanitize_workspace_content(text: str) -> str:

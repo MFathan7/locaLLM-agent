@@ -19,9 +19,15 @@ from rich.table import Table
 from locallm.config import LocaLLMConfig, save_config
 from locallm.core.memory import ConversationMemory
 from locallm.core.ollama_client import OllamaClient
-from locallm.core.tools import WHATSAPP_TOOLS, execute_tool, resolve_smart_path
+from locallm.core.tools import (
+    WHATSAPP_TOOLS,
+    execute_tool,
+    get_caller_tools,
+    resolve_smart_path,
+)
 from locallm.core.workspace import (
     delete_workspace_session,
+    get_workspace_security_policy,
     load_workspace_context,
     load_workspace_session,
     save_workspace_session,
@@ -244,25 +250,37 @@ def configure_whatsapp_whitelist(config: LocaLLMConfig) -> None:
                 console.print("[bold green]Whitelist cleared. Bot is now open to all numbers.[/]\n")
 
 
-def execute_whatsapp_tool(name: str, arguments: Dict[str, Any], phone_number: str) -> str:
-    """Execute WhatsApp-specific native tools."""
+def execute_whatsapp_tool(
+    name: str,
+    arguments: Dict[str, Any],
+    phone_number: str,
+    is_authorized: bool = True,
+    workspace_name: Optional[str] = "default",
+    permission_policy: str = "always_allow",
+) -> str:
+    """Execute WhatsApp-specific native tools with authorization gating."""
     if name == "whatsapp_get_contact_info":
         return json.dumps({
             "phone_number": phone_number,
             "channel": "whatsapp",
+            "is_authorized": is_authorized,
             "active_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
 
     elif name == "whatsapp_send_image":
-        img_path = arguments.get("image_path_or_url", "")
+        img_path = str(arguments.get("image_path_or_url", "")).strip()
         caption = arguments.get("caption", "")
+        if not is_authorized and not (img_path.lower().startswith("http://") or img_path.lower().startswith("https://")):
+            return "Access denied. Administrative privileges required."
         resolved = resolve_smart_path(img_path)
         if not resolved.exists():
             return f"Error: Image '{img_path}' not found on disk."
         return f"Image '{resolved.name}' delivered to WhatsApp chat with caption: '{caption}'"
 
     elif name == "whatsapp_send_document":
-        doc_path = arguments.get("file_path", "")
+        if not is_authorized:
+            return "Access denied. Administrative privileges required."
+        doc_path = str(arguments.get("file_path", "")).strip()
         caption = arguments.get("caption", "")
         resolved = resolve_smart_path(doc_path)
         if not resolved.exists():
@@ -270,13 +288,20 @@ def execute_whatsapp_tool(name: str, arguments: Dict[str, Any], phone_number: st
         return f"Document '{resolved.name}' delivered to WhatsApp chat ({resolved.stat().st_size} bytes)"
 
     elif name == "whatsapp_send_sticker":
-        img_path = arguments.get("image_path", "")
+        img_path = str(arguments.get("image_path", "")).strip()
         resolved = resolve_smart_path(img_path)
         if not resolved.exists():
             return f"Error: Sticker source image '{img_path}' not found on disk."
         return f"Sticker generated from '{resolved.name}' and delivered to WhatsApp chat."
 
-    return execute_tool(name, arguments)
+    return execute_tool(
+        name,
+        arguments,
+        permission_policy=permission_policy,
+        interactive=False,
+        session_state={"is_authorized": is_authorized},
+        workspace_name=workspace_name,
+    )
 
 
 def process_whatsapp_message(
@@ -292,9 +317,27 @@ def process_whatsapp_message(
     """Process an incoming WhatsApp message through locaLLM with tools & workspace memory."""
     clean_number = normalize_phone_number(sender_number)
     user_label = f"{sender_name} ({clean_number})" if sender_name else clean_number
+    active_ws = getattr(config, "active_workspace", "default")
+
+    policy = get_workspace_security_policy(active_ws)
+    combined_authorized = set(config.whatsapp_allowed_numbers).union(policy.master_whatsapp_identifiers)
+
+    is_authorized = True
+    access_allowed = True
+
+    if combined_authorized:
+        if clean_number in combined_authorized:
+            is_authorized = True
+            access_allowed = True
+        else:
+            is_authorized = False
+            if policy.direct_message_policy == "reject" and not policy.public_allowed_tools:
+                access_allowed = False
+            else:
+                access_allowed = True
 
     # 1. Whitelist Verification (can be bypassed for local simulator testing)
-    if not skip_whitelist and config.whatsapp_allowed_numbers and clean_number not in config.whatsapp_allowed_numbers:
+    if not skip_whitelist and not access_allowed:
         console.print(f"[yellow][WhatsApp Blocked][/] Message from unwhitelisted sender: {user_label}")
         return "Access denied. Your phone number is not registered in the locaLLM whitelist."
 
@@ -387,10 +430,19 @@ def process_whatsapp_message(
 
     try:
         # Check tool execution
+        caller_tools = get_caller_tools(
+            is_authorized=is_authorized,
+            workspace_name=active_ws,
+            category="whatsapp",
+            allowed_tools_override=policy.public_allowed_tools if not is_authorized else None,
+            denied_tools_override=policy.public_denied_tools,
+        )
+        tools_schema = caller_tools if has_tools else None
+
         turn_msg = client.chat_turn(
             model=target_model,
             messages=session.get_messages(),
-            tools=WHATSAPP_TOOLS if has_tools else None,
+            tools=tools_schema,
             temperature=config.temperature,
             num_ctx=context_limit,
             stats_out=stats,
@@ -409,7 +461,14 @@ def process_whatsapp_message(
                     except Exception:
                         func_args = {}
                 console.print(f"[dim cyan][WhatsApp Tool][/] Executing: {func_name}({func_args})")
-                obs = execute_whatsapp_tool(func_name, func_args, clean_number)
+                obs = execute_whatsapp_tool(
+                    func_name,
+                    func_args,
+                    clean_number,
+                    is_authorized=is_authorized,
+                    workspace_name=active_ws,
+                    permission_policy=config.agent_permission_policy,
+                )
                 session.history.append({"role": "tool", "content": obs})
 
             # Synthesize final answer after tool observation

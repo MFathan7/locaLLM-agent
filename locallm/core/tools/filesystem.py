@@ -204,6 +204,7 @@ tool(
         },
     },
     is_mutating=False,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(list_directory_fn)
 
@@ -229,6 +230,7 @@ tool(
         },
     },
     is_mutating=False,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(read_file_fn)
 
@@ -250,6 +252,7 @@ tool(
         },
     },
     is_mutating=True,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(write_file_fn)
 
@@ -267,6 +270,7 @@ tool(
         },
     },
     is_mutating=True,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(create_directory_fn)
 
@@ -344,5 +348,6 @@ tool(
         },
     },
     is_mutating=False,
+    is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(resolve_path_fn)

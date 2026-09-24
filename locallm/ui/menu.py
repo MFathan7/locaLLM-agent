@@ -103,12 +103,12 @@ def _run_integrations_menu(config: LocaLLMConfig, client: Optional[Any] = None) 
             choices=[
                 "Telegram",
                 "WhatsApp",
+                "Model Context Protocol (MCP)",
                 "Agent & Automation",
                 "Back",
             ],
             style=QUESTIONARY_STYLE,
         ).ask()
-
 
         if choice is None or choice == "Back":
             break
@@ -117,6 +117,10 @@ def _run_integrations_menu(config: LocaLLMConfig, client: Optional[Any] = None) 
             run_telegram_menu(config, client)
         elif choice == "WhatsApp":
             run_whatsapp_menu(config, client)
+        elif choice == "Model Context Protocol (MCP)":
+            from locallm.modules.mcp_menu import run_mcp_menu
+
+            run_mcp_menu(config)
         elif choice == "Agent & Automation":
             run_agent_menu(config, client)
 

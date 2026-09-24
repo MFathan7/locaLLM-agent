@@ -21,6 +21,11 @@ locallm/core/plugin_manager.py
 locallm/core/router.py
 locallm/core/service_manager.py
 locallm/core/workspace.py
+locallm/core/mcp/__init__.py
+locallm/core/mcp/client.py
+locallm/core/mcp/manager.py
+locallm/core/mcp/models.py
+locallm/core/mcp/transport.py
 locallm/core/tools/__init__.py
 locallm/core/tools/base.py
 locallm/core/tools/filesystem.py
@@ -32,6 +37,7 @@ locallm/core/tools/web.py
 locallm/modules/agent.py
 locallm/modules/assistant.py
 locallm/modules/automation.py
+locallm/modules/mcp_menu.py
 locallm/modules/models_manager.py
 locallm/modules/monitor.py
 locallm/modules/plugin_menu.py
@@ -45,6 +51,7 @@ locallm/ui/chat_view.py
 locallm/ui/menu.py
 locallm/ui/spinner.py
 locallm/ui/theme.py
+tests/test_access_control.py
 tests/test_assistant_agent.py
 tests/test_cleanup_and_stop.py
 tests/test_config.py
@@ -54,6 +61,7 @@ tests/test_hardware.py
 tests/test_integrations_menu.py
 tests/test_live_chat.py
 tests/test_live_monitor.py
+tests/test_mcp.py
 tests/test_model_deletion.py
 tests/test_ollama_client.py
 tests/test_plugin_manager.py

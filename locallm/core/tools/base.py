@@ -11,6 +11,7 @@ class BaseTool(ABC):
     description: str
     parameters: Dict[str, Any]
     is_mutating: bool = False
+    is_privileged: bool = False
     categories: Set[str] = {"assistant"}
 
     def __init__(
@@ -19,12 +20,14 @@ class BaseTool(ABC):
         description: str,
         parameters: Optional[Dict[str, Any]] = None,
         is_mutating: bool = False,
+        is_privileged: bool = False,
         categories: Optional[Iterable[str]] = None,
     ) -> None:
         self.name = name
         self.description = description
         self.parameters = parameters or {"type": "object", "properties": {}}
         self.is_mutating = is_mutating
+        self.is_privileged = is_privileged
         self.categories = set(categories) if categories else {"assistant"}
 
     @abstractmethod
@@ -58,6 +61,7 @@ class FunctionTool(BaseTool):
         fn: Callable[..., str],
         parameters: Optional[Dict[str, Any]] = None,
         is_mutating: bool = False,
+        is_privileged: bool = False,
         categories: Optional[Iterable[str]] = None,
     ) -> None:
         super().__init__(
@@ -65,6 +69,7 @@ class FunctionTool(BaseTool):
             description=description,
             parameters=parameters,
             is_mutating=is_mutating,
+            is_privileged=is_privileged,
             categories=categories,
         )
         self._fn = fn
@@ -123,6 +128,10 @@ class ToolRegistry:
         """Return names of all tools registered as mutating."""
         return {name for name, t in self._tools.items() if t.is_mutating}
 
+    def get_privileged_tool_names(self) -> Set[str]:
+        """Return names of all tools registered as privileged."""
+        return {name for name, t in self._tools.items() if t.is_privileged}
+
 
 # Global tool registry singleton
 registry = ToolRegistry()
@@ -133,6 +142,7 @@ def tool(
     description: str,
     parameters: Optional[Dict[str, Any]] = None,
     is_mutating: bool = False,
+    is_privileged: bool = False,
     categories: Optional[Iterable[str]] = None,
     reg: Optional[ToolRegistry] = None,
 ) -> Callable[[Callable[..., str]], FunctionTool]:
@@ -146,6 +156,7 @@ def tool(
             fn=fn,
             parameters=parameters,
             is_mutating=is_mutating,
+            is_privileged=is_privileged,
             categories=categories,
         )
         target_registry.register(ft)

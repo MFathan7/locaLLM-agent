@@ -25,6 +25,7 @@ class PluginInfo:
     entrypoint_path: Optional[Path]
     tools: List[Dict[str, Any]] = field(default_factory=list)
     mutating_tools: Set[str] = field(default_factory=set)
+    privileged_tools: Set[str] = field(default_factory=set)
     source: str = "global"  # "global", "workspace", "local"
     error: Optional[str] = None
 
@@ -92,6 +93,7 @@ def _load_plugin_from_dir(plugin_dir: Path, source: str = "global") -> Optional[
     raw_tools = data.get("tools", [])
     standard_tools: List[Dict[str, Any]] = []
     mutating_tools: Set[str] = set()
+    privileged_tools: Set[str] = set()
 
     for item in raw_tools:
         if not isinstance(item, dict):
@@ -116,8 +118,12 @@ def _load_plugin_from_dir(plugin_dir: Path, source: str = "global") -> Optional[
 
         if func_name:
             standard_tools.append(tool_obj)
-            if item.get("mutating", False) or item.get("function", {}).get("mutating", False):
+            is_mutating = bool(item.get("mutating", False) or item.get("function", {}).get("mutating", False))
+            is_privileged = bool(item.get("privileged", False) or item.get("function", {}).get("privileged", False) or is_mutating)
+            if is_mutating:
                 mutating_tools.add(func_name)
+            if is_privileged:
+                privileged_tools.add(func_name)
 
     return PluginInfo(
         name=name,
@@ -130,6 +136,7 @@ def _load_plugin_from_dir(plugin_dir: Path, source: str = "global") -> Optional[
         entrypoint_path=entrypoint_path,
         tools=standard_tools,
         mutating_tools=mutating_tools,
+        privileged_tools=privileged_tools,
         source=source,
     )
 
@@ -206,6 +213,15 @@ def get_plugin_mutating_tools(workspace_name: Optional[str] = None) -> Set[str]:
         if p.enabled and not p.error:
             mutating.update(p.mutating_tools)
     return mutating
+
+
+def get_plugin_privileged_tools(workspace_name: Optional[str] = None) -> Set[str]:
+    """Return set of all privileged tool names contributed by active plugins."""
+    privileged: Set[str] = set()
+    for p in list_plugins(workspace_name):
+        if p.enabled and not p.error:
+            privileged.update(p.privileged_tools)
+    return privileged
 
 
 def execute_plugin_tool(

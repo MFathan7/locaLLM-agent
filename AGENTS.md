@@ -1,123 +1,55 @@
 # locaLLM Architectural & Development Rules
 
-Architectural standards, TUI design guidelines, menu governance, and technical specifications for **locaLLM**.
+Architectural standards, TUI design guidelines, and technical specifications for **locaLLM**.
 
 ---
 
 ## 1. Core Principles
-1. **Platform**: Autonomous local AI workspace powered by Ollama and OpenAI-compatible custom platforms.
+1. **Platform**: Autonomous local AI platform powered by Ollama and OpenAI-compatible inference backends.
 2. **Deterministic Control**: Never auto-spawn background daemons silently. Control lifecycle via `Services` menu or CLI `start`/`stop`.
-3. **Strict English-Only in Codebase**: All source code, docstrings, comments, UI text, menu options, CLI help, error messages, and bot responses must strictly be in English. No Indonesian or mixed-language strings anywhere in the codebase.
+3. **Strict English-Only in Codebase**: All source code, docstrings, comments, UI text, menu options, CLI help, error messages, and bot responses must strictly be in English. No Indonesian or mixed-language strings in the codebase.
 4. **Code Quality**: Strict Python type hints, UTF-8 console output (`sys.stdout.reconfigure(encoding='utf-8')`), and all changes verified with `python -m unittest discover -s tests -p "test_*.py"` (`self.skipTest()` when external services offline).
 
 ---
 
 ## 2. Console UI & Typography
-1. **Pure Text Menu Choices**: **NO EMOJIS OR ICONS** in Questionary `choices=[]` (breaks Windows monospace alignment). Use pure text: `Assistant`, `Integrations`, `Model Manager`, `Services`, `Settings`, `Back`, `Exit`.
-2. **High-Contrast Palette (No Dark Purple)**: Dim/secondary: `#aaaaaa` / `#bbbbbb`; Highlights/models/commands: `#00d7ff` (cyan); Success: `#00ff87` (green); Primary: `#ffffff` (white). Never use dim purple (`[dim]` in Rich).
-3. **Minimalist Header Banner**: Unicode banner `✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦` displaying service status, endpoint, active model, model features (`Tools`, `Vision`, `Reasoning`), and GPU VRAM. No redundant title strings.
-4. **Square Snake Spinner**: Custom spinner `▘▀▝▐▗▄▖▌` during model thinking or ReAct tool planning before stream tokens emit.
+1. **Pure Text Choices (NO Emojis/Icons)**: In Questionary `choices=[]`, use pure text only (`Assistant`, `Integrations`, `Model Manager`, `Services`, `Settings`, `Back`, `Exit`). Never use emojis/icons (breaks Windows monospace alignment).
+2. **High-Contrast Palette**: Dim/secondary: `#aaaaaa` / `#bbbbbb`; Highlights/models: `#00d7ff` (cyan); Success: `#00ff87` (green); Primary: `#ffffff` (white). Never use dim purple (`[dim]` in Rich).
+3. **Header Telemetry Banner**: Unicode banner `✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦` displaying service status, endpoint, active model, features, GPU VRAM bar, headroom, compute/temp, host RAM/CPU, and resident models.
+4. **Navigation & Flow**: Every submenu must have `Back`. Pause before clearing console after output actions: `questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()`.
 
 ---
 
-## 3. Menu Hierarchy & Navigation
-```text
-Main Menu:
-  ├── Assistant             -> Interactive standalone chat session
-  ├── Workspaces            -> Isolated environments: Switch, Create, Delete, Details, Back
-  ├── Integrations          -> Channels & runners
-  │     ├── Telegram        -> Telegram Bot: Start Bot, Configure Token, Whitelist Users, Back
-  │     ├── WhatsApp        -> WhatsApp Bot: Start Bot, Configure Whitelist, Clear Session, Back
-  │     ├── Agent & Auto    -> Autonomous Agent: Run Task, Toggle Auto-Approve Commands, Back
-  │     └── Back            -> Return to Main Menu
-  ├── Model Manager         -> Model management per platform
-  │     ├── Ollama          -> List models, size, VRAM Fit check, Pull model, Back
-  │     ├── [Custom Platform] -> OpenAI-compatible platform models, Back
-  │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
-  │     └── Back            -> Return to Main Menu
-  ├── Plugins               -> Modular integrations: Inspect, Toggle, Scaffold, Back
-  ├── Services              -> Server daemon lifecycle per platform
-  │     ├── Ollama          -> Status, Start Server, Stop Server, Configure Endpoint, Back
-  │     ├── [Custom Platform] -> Status, Set Active, Configure Endpoint/Key, Delete, Back
-  │     ├── Add Custom Platform -> Register new OpenAI-compatible platform
-  │     └── Back            -> Return to Main Menu
-  ├── Settings              -> Global inference only: Backend, Temp, Context Window, Prompt, Reset
-  └── Exit                  -> Unload VRAM and terminate application
-```
-
-### Navigation Rules:
-- **Every Submenu Must Have `Back`**: Always allow returning to parent without exiting.
-- **Domain Separation**: Telegram token/whitelist in `Integrations -> Telegram`; Shell auto-approve in `Integrations -> Agent & Auto`; Endpoints in `Services -> [Platform] -> Configure Endpoint`; `Settings` strictly for general inference parameters.
-- **Anti-Screen-Flash-Clear**: Pause before clearing console after actions with output: `questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()`.
+## 3. Chat & Streaming Engine
+1. **Silent Tool Execution**: Tools run quietly behind spinners (`▘▀▝▐▗▄▖▌`) or bot typing actions. Never dump raw JSON payloads into chat history.
+2. **Live Typing Effect**: Assistant tokens stream with typewriter cursor (`▌`), smooth cadence, and auto-closing markdown fences during generation to preserve syntax highlighting.
+3. **Context Telemetry**: Show cumulative session usage: `• Context: X/Y tokens (Z%) • Speed: N tok/s` (Green <70%, Yellow 70–90%, Red >=90%). Never print per-turn prompt/eval breakdown.
+4. **Slash Commands**: Support `/top` (Live Monitor), `/stats`, `/model`, `/clear`, `/sessions`, `/help`, `/back`, `/exit`. Fallback to non-streaming turn if stream yields 0 tokens.
 
 ---
 
-## 4. Chat & Cross-Platform Parity (CLI, Telegram, WhatsApp)
-1. **Silent Tool Execution**: Tools (`search_web`, `fetch_web`, `list_directory`, `read_file`, `get_current_time`, `execute_command`, `get_weather`, etc.) must run silently behind loading indicators (spinner in CLI, `typing` action in bots). Never print raw JSON payloads into chat history.
-2. **Context Telemetry**: Render cumulative active session token usage vs model context window (`num_ctx`, default `8,192`):
-   `• Context: 2,681/8,192 tokens (32.7%) • Speed: 37.8 tok/s`
-   Dynamic threshold colors: **Green** (<70%), **Yellow** (70–90%), **Red** (>=90%). Never show per-response prompt/eval tokens.
-3. **Universal Slash Commands & Keywords**:
-   - `/stats` (`stats`, `context`, `telemetry`): Model, tokens/limit, %, speed (`tok/s`), workspace, history depth.
-   - `/model` (`model`): Active model name and features (Tools, Vision, Reasoning).
-   - `/clear` / `/reset` (`reset`, `clear`, `start fresh`): Wipe session history and free memory.
-   - `/help` (`help`): Command and keyword reference.
-4. **Chat Ergonomics**: No redundant welcome greetings. Show concise command hint: `Commands: /help, /stats, /model, /clear, /back, /exit`. If streaming returns 0 tokens, run non-streaming fallback turn.
+## 4. Tools & Filesystem Intelligence
+1. **Modular Tool Registry (`locallm/core/tools/`)**: Register tools via `@tool(...)` with explicit JSON schema and `is_mutating: bool`. Never hardcode ad-hoc dictionary lists or manual dispatch switches.
+2. **Permission Policy**: Mutating tools (`is_mutating=True`) adhere strictly to configured policy: `always_allow`, `ask` (interactive approval), or `deny` (read-only mode).
+3. **Pagination & Boundaries**: Content-returning tools must support `offset: int = 0` and `max_chars: int = 4000` chunking. File paths resolve via `resolve_smart_path(...)` with alias expansion (`~`, `downloads`, etc.) and boundary isolation.
+4. **UI Synchronization (`locallm/core/tools/ui.py`)**: Every tool must have `describe_tool_action` (spinner text) and `format_live_tool_report` (completion line).
+5. **Direct Execution Authority**: Models must never refuse with "I am only an AI"; use proactive search and local execution tools directly.
 
 ---
 
-## 5. Tools & Filesystem Intelligence
-1. **Modular Tool Registry (`locallm/core/tools/`)**:
-   - **Domain Module Registration**: Every new tool must be created in the appropriate domain submodule under `locallm/core/tools/` (`filesystem.py`, `web.py`, `system.py`, `messaging.py`) and registered via `@tool(...)` or `BaseTool`. Never hardcode ad-hoc dictionary lists or manual dispatch if-statements in `execute_tool`.
-   - **Explicit JSON Schema & Metadata**: Declarations must define `name` (snake_case), clear `description`, typed JSON Schema `parameters` (`type`, `properties`, `required`), `is_mutating: bool`, and `categories` (`{"assistant", "telegram", "whatsapp"}`).
-   - **Mutating Tool Governance**: Any action modifying disk, running shell commands, or changing system state must declare `is_mutating=True` to automatically adhere to user permission policies (`always_allow`, `ask`, `deny`).
-2. **Dynamic Truncation & Pagination**:
-   - Content-returning tools with variable or unbounded output sizes (e.g. file reading, web fetching, search APIs) must declare optional `offset: int = 0` and `max_chars: int = 4000` in their parameter schemas.
-   - Payloads exceeding `max_chars` must emit cleanly sliced text with pagination indicators showing the current window and next offset (`[Showing characters X to Y of Z. Use offset=Y to read next chunk]`) to prevent context window exhaustion and prompt evaluation latency.
-3. **Smart Path Resolution & Boundary Sandboxing**:
-   - File/path tools must route paths through `resolve_smart_path(raw_path, boundary_dir)`.
-   - Automatically map aliases (`downloads`, `desktop`, `documents`, `~`, `%USERPROFILE%`) to real home directories.
-   - When a `boundary_dir` is passed (e.g. in messaging bridge sessions or restricted mode), any path traversal attempting to escape the boundary must strictly raise `PermissionError` and be blocked.
-4. **UI & Execution Feedback Synchronization (`locallm/core/tools/ui.py`)**:
-   - Every new tool must be paired with corresponding entries in `locallm/core/tools/ui.py`:
-     - `describe_tool_action`: present-continuous spinner text for terminal spinners and notifications.
-     - `format_live_tool_report`: high-contrast live completion report lines displaying success/failure icons and succinct parameter summaries.
-5. **Folder-First Listing (`list_directory`)**: Prioritize subdirectories (`[DIR]`, up to 80) above files (`[FILE]`) with summary header (`Total: X folders, Y files`).
-6. **Web & GitHub (`fetch_web`)**: Direct raw `README.md` fetch for GitHub URLs and compact structured JSON extraction for GitHub repo APIs to prevent raw JSON context bloat.
-7. **Tool Authority Mandate**: System prompts must establish direct local execution authority. Never return canned refusals like "I am only an AI".
-8. **Unit Test Verification**: Every newly implemented tool must be accompanied by unit tests in `tests/` verifying schema structure, registry discovery, execution logic, pagination, and boundary/error conditions.
+## 5. Hardware & VRAM Sizing Formula
+1. **KV Cache Calculation**:
+   - `Channels = Layers × KV_Heads × Head_Dim` (uses GQA `KV_Heads`; binds SWA hybrid models to `Window_l = 1024`).
+   - `Bytes_per_Token = 2 × Channels × Precision_Bytes` (FP16: 2B, FP8/Q8: 1B).
+   - `KV_Cache_GB = (Context_Tokens × Bytes_per_Token) / (1024³)`.
+2. **Validation**: `Total_VRAM = Model_Weights_GB + KV_Cache_GB + CUDA_Overhead (~0.6 GB)`.
+   - `100% GPU (FIT)`: `Total_VRAM ≤ Usable_VRAM` (`Usable_VRAM = Total_VRAM - OS_Display_Usage`).
+   - `SPILLOVER`: `Total_VRAM > Usable_VRAM` (warns about CPU offload/RAM swap).
 
 ---
 
-## 6. Hardware & GPU Sizing Formula
-1. **KV Cache (GB)**:
-   - `Channels = Layers × KV_Heads × Head_Dim`
-   - `Bytes_per_Token = 2 × Channels × Precision_Bytes`
-   - `KV_Cache_GB = (Bytes_per_Token × Context_Tokens) / (1024³)`
-   - *Precision*: 2 bytes (FP16 default) or 1 byte (FP8/Q8 quantized).
-   - *GQA Awareness*: Uses `KV_Heads` (not query heads) for exact Grouped-Query Attention scaling.
-   - *SWA Awareness*: Hybrid models (e.g. Gemma 4) bound local attention layers to `Window_l = 1,024` tokens.
-2. **Usable VRAM (GB)**: `Usable_VRAM = Total_GPU_VRAM - OS_Display_Usage` (measured via idle `free_vram` from `pynvml` / `nvidia-smi`).
-3. **Total Inference VRAM (GB)**: `Total_VRAM = Model_Weights_GB + KV_Cache_GB + CUDA_Overhead_GB` (~0.6 GB CUDA runtime & activation buffer).
-4. **Validation Classification**:
-   - `100% GPU (FIT)`: `Total_VRAM ≤ Usable_VRAM` (Headroom ≥ 0).
-   - `SPILLOVER`: `Total_VRAM > Usable_VRAM` (partial CPU offload or RAM swap needed).
-5. **Max Context Tokens**: `Max_Context = (Usable_VRAM - Model_Weights - CUDA_Overhead) × 1024³ / Bytes_per_Token` (maximum safe window without spillover).
-
----
-
-## 7. Autonomous Agent & Capability-Driven Routing Architecture
-1. **No Brittle Keyword Dictionaries**: Never gate tools or route models using hardcoded language-specific regex dictionaries (e.g. slang, localized phrasing, or test-case keywords). Natural language is multilingual and combinatorial.
-2. **Native Tool Calling Autonomy**: The LLM itself determines when to invoke tools via function calling schemas (`tools=[]`), not external regex gatekeepers. Both Assistant and Agent modes must always expose full tools (`write_file`, `create_directory`, `read_file`, `list_directory`, `execute_command`, `fetch_web`, etc.).
-3. **Capability-First Model Hierarchy**: Prioritize models declaring `"Tools"` capability and adequate parameter capacity. Never downgrade an active, capable model to a lightweight model merely because a prompt is brief or conversational.
-4. **Sticky Routing (Anti-Thrashing)**: If the currently loaded model is capable and fits within VRAM headroom, retain it. Swaps only occur for explicit modality shifts (e.g. `has_image` for Vision) or dedicated specialist tasks.
-5. **Unrestricted Filesystem Access**: Tools must support any valid absolute or relative path anywhere across the user's filesystem (all drives and directories), automatically scaffolding parent folders as required.
-6. **Autonomous Multi-Step ReAct Loop**: The LLM autonomously determines the sequence of actions and stopping conditions. Turns loop continuously while `tool_calls` are emitted (up to `MAX_TOOL_STEPS = 25`), executing tools, updating spinners silently, and feeding observations back to the model until it outputs its final summary.
-7. **Permission Policy (`always_allow`, `ask`, `deny`)**: Mutating tools (`write_file`, `create_directory`, `execute_command`) adhere to the configured policy: `always_allow` executes without prompting; `ask` interactively requests user authorization (`Allow Once`, `Always Allow (session)`, `Deny`); `deny` strictly blocks mutating operations in read-only mode.
-8. **Skills & Knowledge Architecture**: Project context (`AGENTS.md`, `CLAUDE.md`) and skills (`.locallm/skills/`, `.agents/skills/`, `skills/`, and workspace knowledge) are discovered automatically from both active workspace and project root, and queryable via native tools (`list_skills`, `read_skill`).
-9. **Modular Plugin Architecture & Extensibility**:
-   - **Zero Hardcoding**: Never hardcode custom plugin tools or database connectors into the core engine. All extensions are discovered dynamically via standard JSON manifests (`plugin.json`) and entrypoint scripts (`main.py`).
-   - **Three-Tier Discovery**: Plugins are loaded with precedence: Project-Local (`<cwd>/plugins/`) > Workspace-Isolated (`~/.locallm/workspaces/<name>/plugins/`) > Global (`~/.locallm/plugins/`).
-   - **Dynamic Function Calling Schema Injection**: Tools declared in active plugins are automatically merged into the LLM's function calling schema (`get_all_assistant_tools`).
-   - **Mutating Safety & Policy**: Any plugin tool declaring `"mutating": true` in its manifest automatically adheres to the interactive Permission Policy (`ask`, `always_allow`, `deny`).
-   - **Configurable Web Search**: Web search (`search_web`) remains customizable across search engines (`auto`, `bing`, `duckduckgo`, `custom`) with custom endpoint support to protect against network blocking.
+## 6. Autonomous Agent & Routing Architecture
+1. **No Brittle Keyword Regexes**: Never gate tools or route models via hardcoded localized regexes. LLM determines tool calling autonomously via function schemas (`tools=[]`).
+2. **Sticky Capability-First Routing**: Prioritize models declaring `Tools` and adequate parameter capacity (`14B` > `7B` > `3B`). Retain the active model if it fits VRAM headroom (anti-thrashing).
+3. **Multi-Step ReAct Loop**: Autonomous turns loop continuously while `tool_calls` are emitted (up to `MAX_TOOL_STEPS = 25`).
+4. **Zero-Hardcoding Plugin System**: Discover extensions dynamically via `plugin.json` manifests (Local `<cwd>/plugins/` > Workspace > Global `~/.locallm/plugins/`).

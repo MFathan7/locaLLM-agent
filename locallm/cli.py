@@ -252,6 +252,35 @@ def build_parser() -> argparse.ArgumentParser:
     plug_rm.add_argument("name", type=str, help="Plugin name to remove")
     plug_rm.add_argument("--yes", "-y", action="store_true", help="Confirm deletion without prompting")
 
+    # Model Context Protocol (MCP) manager
+    mcp_parser = subparsers.add_parser(
+        "mcp",
+        help="Manage Model Context Protocol (MCP) multi-server connections and tools",
+        description="Inspect, list, test, enable, disable, add, or remove Model Context Protocol (MCP) servers.",
+    )
+    mcp_sub = mcp_parser.add_subparsers(dest="mcp_action", help="MCP actions")
+    mcp_sub.add_parser("list", help="List all configured MCP servers and connection statuses")
+    mcp_sub.add_parser("menu", help="Launch interactive MCP TUI management wizard")
+    mcp_add = mcp_sub.add_parser(
+        "add",
+        help="Add an MCP server in one command (e.g. 'locallm mcp add <name> <command> [args...]')",
+    )
+    mcp_add.add_argument("--url", type=str, default="", help="HTTP/SSE endpoint URL (for remote MCP servers)")
+    mcp_add.add_argument("--env", "-e", action="append", default=[], help="Environment variables (KEY=VAL)")
+    mcp_add.add_argument("--privileged", action="store_true", help="Require admin/master privilege for tools")
+    mcp_add.add_argument("--scope", choices=["global", "workspace"], default="global", help="Config scope (default: global)")
+    mcp_add.add_argument("--desc", type=str, default="", help="Optional description")
+    mcp_add.add_argument("name", type=str, help="Server name or command")
+    mcp_add.add_argument("server_command", nargs=argparse.REMAINDER, metavar="command", help="Command and arguments to execute")
+    mcp_test = mcp_sub.add_parser("test", help="Test connection and discover tools for an MCP server")
+    mcp_test.add_argument("name", type=str, help="MCP server name to test")
+    mcp_enable = mcp_sub.add_parser("enable", help="Enable an MCP server")
+    mcp_enable.add_argument("name", type=str, help="MCP server name to enable")
+    mcp_disable = mcp_sub.add_parser("disable", help="Disable an MCP server")
+    mcp_disable.add_argument("name", type=str, help="MCP server name to disable")
+    mcp_rm = mcp_sub.add_parser("remove", help="Remove an MCP server from configuration")
+    mcp_rm.add_argument("name", type=str, help="MCP server name to remove")
+
     return parser
 
 
@@ -259,7 +288,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     """Main CLI execution router."""
     KNOWN_SUBCOMMANDS = {
         "chat", "telegram", "whatsapp", "agent", "run", "models", "config",
-        "status", "service", "start", "stop", "workspace", "platform", "plugin",
+        "status", "service", "start", "stop", "workspace", "platform", "plugin", "mcp",
     }
 
     if argv is None:
@@ -357,6 +386,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         _handle_platform_cli(args, config)
     elif cmd == "plugin":
         _handle_plugin_cli(args, config)
+    elif cmd == "mcp":
+        _handle_mcp_cli(args, config)
     elif cmd == "status":
         render_banner(config, client)
     elif cmd == "start":
@@ -671,6 +702,238 @@ def _handle_platform_cli(args, config) -> None:
             console.print(f"[success]{msg}[/]")
         else:
             console.print(f"[danger]{msg}[/]")
+
+
+def _handle_mcp_cli(args, config) -> None:
+    """Execute Model Context Protocol (MCP) commands from CLI."""
+    from rich.table import Table
+    from locallm.core.mcp import mcp_manager
+    from locallm.modules.mcp_menu import run_mcp_menu
+
+    action = getattr(args, "mcp_action", None)
+    active_ws = getattr(config, "active_workspace", "default")
+
+    if not action or action == "menu":
+        run_mcp_menu(config)
+        return
+
+    if action == "list":
+        configs = mcp_manager.load_configs(active_ws)
+        palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+        table = Table(
+            title="Model Context Protocol (MCP) Servers",
+            border_style=palette.border_style,
+            header_style=f"bold {palette.primary}",
+            box=palette.box_style,
+        )
+        table.add_column("Status", style="bold", width=12)
+        table.add_column("Server Name", style=f"bold {palette.primary}")
+        table.add_column("Transport", justify="center")
+        table.add_column("Scope", justify="center")
+        table.add_column("Command / URL")
+        table.add_column("Privileged", justify="center")
+
+        if not configs:
+            table.add_row(
+                "[dim]NO SERVERS[/]",
+                "[dim]None configured[/]",
+                "-",
+                "-",
+                "[dim]Use 'locallm mcp menu' to add a server[/]",
+                "-",
+            )
+        else:
+            statuses = {s.server_name: s for s in mcp_manager.get_statuses(active_ws)}
+            for name, cfg in sorted(configs.items()):
+                st_info = statuses.get(name)
+                if not cfg.enabled:
+                    st = "[#aaaaaa]DISABLED[/]"
+                elif st_info and st_info.is_connected:
+                    st = f"[bold {palette.success}]CONNECTED[/]"
+                else:
+                    st = f"[bold {palette.primary}]IDLE[/]"
+
+                target = cfg.url if cfg.transport == "sse" else f"{cfg.command} {' '.join(cfg.args)}"
+                priv = "[bold yellow]YES[/]" if cfg.privileged else "[#aaaaaa]NO[/]"
+                table.add_row(st, name, cfg.transport.upper(), f"[{cfg.scope}]", target or "[dim]None[/]", priv)
+
+        console.print(table)
+        return
+
+    if action == "add":
+        _handle_mcp_add(args, active_ws)
+        return
+
+    if action == "test":
+        target = args.name.strip().lower()
+        console.print(f"[dim cyan]Connecting to MCP server '{target}'...[/]")
+        ok, msg, tools = mcp_manager.test_server(target, workspace_name=active_ws)
+        if ok:
+            console.print(f"[bold green]✔[/] {msg}")
+            for t in tools:
+                func = t.get("function", {})
+                console.print(f"  • [bold white]{func.get('name')}[/]: [dim]{func.get('description')}[/]")
+        else:
+            console.print(f"[bold red]✖[/] {msg}")
+
+    elif action == "enable":
+        target = args.name.strip().lower()
+        configs = mcp_manager.load_configs(active_ws)
+        if target in configs:
+            cfg = configs[target]
+            cfg.enabled = True
+            mcp_manager.save_config(cfg, workspace_name=active_ws)
+            console.print(f"[success]MCP server '{target}' enabled successfully.[/]")
+        else:
+            console.print(f"[danger]MCP server '{target}' not found.[/]")
+
+    elif action == "disable":
+        target = args.name.strip().lower()
+        configs = mcp_manager.load_configs(active_ws)
+        if target in configs:
+            cfg = configs[target]
+            cfg.enabled = False
+            mcp_manager.save_config(cfg, workspace_name=active_ws)
+            console.print(f"[success]MCP server '{target}' disabled successfully.[/]")
+        else:
+            console.print(f"[danger]MCP server '{target}' not found.[/]")
+
+    elif action == "remove":
+        target = args.name.strip().lower()
+        configs = mcp_manager.load_configs(active_ws)
+        if target in configs:
+            cfg = configs[target]
+            ok = mcp_manager.remove_config(target, scope=cfg.scope, workspace_name=active_ws)
+            if ok:
+                console.print(f"[success]MCP server '{target}' removed successfully.[/]")
+            else:
+                console.print(f"[danger]Failed to remove MCP server '{target}'.[/]")
+        else:
+            console.print(f"[danger]MCP server '{target}' not found.[/]")
+
+
+def _handle_mcp_add(args, active_ws: str) -> None:
+    """Register an MCP server into configuration from a streamlined CLI command."""
+    from typing import Dict
+    from locallm.core.mcp import mcp_manager
+    from locallm.core.mcp.models import MCPServerConfig
+
+    raw_name = args.name.strip()
+    cmd_tokens = list(getattr(args, "server_command", None) or getattr(args, "command", None) or [])
+    url = getattr(args, "url", "").strip()
+    scope = getattr(args, "scope", "global")
+    privileged = getattr(args, "privileged", False)
+    desc = getattr(args, "desc", "")
+
+    env_dict: Dict[str, str] = {}
+    for item in getattr(args, "env", []) or []:
+        for pair in item.split(","):
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                env_dict[k.strip()] = v.strip()
+
+    # Filter out leading -- separator and any inline flags if present
+    if cmd_tokens and cmd_tokens[0] == "--":
+        cmd_tokens = cmd_tokens[1:]
+
+    filtered_tokens = []
+    i = 0
+    while i < len(cmd_tokens):
+        tok = cmd_tokens[i]
+        if tok == "--scope" and i + 1 < len(cmd_tokens):
+            scope = cmd_tokens[i + 1]
+            i += 2
+        elif tok == "--privileged":
+            privileged = True
+            i += 1
+        elif tok in ("--url", "-u") and i + 1 < len(cmd_tokens):
+            url = cmd_tokens[i + 1]
+            i += 2
+        elif tok in ("--env", "-e") and i + 1 < len(cmd_tokens):
+            pair = cmd_tokens[i + 1]
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                env_dict[k.strip()] = v.strip()
+            i += 2
+        elif tok.startswith("--env=") or tok.startswith("-e="):
+            pair = tok.split("=", 1)[1]
+            if "=" in pair:
+                k, v = pair.split("=", 1)
+                env_dict[k.strip()] = v.strip()
+            i += 1
+        else:
+            filtered_tokens.append(tok)
+            i += 1
+    cmd_tokens = filtered_tokens
+
+    if url or raw_name.startswith("http://") or raw_name.startswith("https://"):
+        target_url = url or raw_name
+        server_name = raw_name if not (raw_name.startswith("http://") or raw_name.startswith("https://")) else "sse_server"
+        new_cfg = MCPServerConfig(
+            name=server_name.lower(),
+            transport="sse",
+            url=target_url,
+            enabled=True,
+            privileged=privileged,
+            description=desc,
+            scope=scope,
+        )
+    else:
+        RUNNER_COMMANDS = {"npx", "python", "node", "uvx", "uv", "docker"}
+        if raw_name.lower() in RUNNER_COMMANDS and cmd_tokens:
+            command = raw_name
+            args_list = cmd_tokens
+            server_name = ""
+            for tok in reversed(args_list):
+                if not tok.startswith("-") and not tok.startswith("/"):
+                    base_tok = tok.split("/")[-1].replace("@", "")
+                    if base_tok:
+                        server_name = base_tok
+                        break
+            if not server_name:
+                server_name = "mcp_server"
+        elif not cmd_tokens:
+            server_name = raw_name
+            command = raw_name
+            args_list = []
+        else:
+            server_name = raw_name
+            if cmd_tokens[0].startswith("http://") or cmd_tokens[0].startswith("https://"):
+                new_cfg = MCPServerConfig(
+                    name=server_name.lower(),
+                    transport="sse",
+                    url=cmd_tokens[0],
+                    enabled=True,
+                    privileged=privileged,
+                    description=desc,
+                    scope=scope,
+                )
+                mcp_manager.save_config(new_cfg, workspace_name=active_ws)
+                console.print(f"[success]✔ MCP server '{new_cfg.name}' registered successfully ({scope} scope).[/]")
+                console.print(f"  [dim]Target URL:[/] [#00d7ff]{new_cfg.url}[/]")
+                console.print(f"  [dim]Test with:[/] [bold white]locallm mcp test {new_cfg.name}[/]\n")
+                return
+
+            command = cmd_tokens[0]
+            args_list = cmd_tokens[1:]
+
+        new_cfg = MCPServerConfig(
+            name=server_name.lower(),
+            transport="stdio",
+            command=command,
+            args=args_list,
+            env=env_dict,
+            enabled=True,
+            privileged=privileged,
+            description=desc,
+            scope=scope,
+        )
+
+    mcp_manager.save_config(new_cfg, workspace_name=active_ws)
+    cmd_str = f"{new_cfg.command} {' '.join(new_cfg.args)}".strip() if new_cfg.transport == "stdio" else new_cfg.url
+    console.print(f"[success]✔ MCP server '{new_cfg.name}' registered successfully ({scope} scope).[/]")
+    console.print(f"  [dim]Target:[/] [#00d7ff]{cmd_str}[/]")
+    console.print(f"  [dim]Test with:[/] [bold white]locallm mcp test {new_cfg.name}[/]\n")
 
 
 if __name__ == "__main__":
