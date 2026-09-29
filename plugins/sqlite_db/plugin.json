@@ -1,0 +1,50 @@
+{
+  "name": "sqlite_db",
+  "version": "1.0.0",
+  "description": "Query and inspect SQLite databases locally with table formatting",
+  "author": "locaLLM Team",
+  "enabled": true,
+  "entrypoint": "main.py",
+  "tools": [
+    {
+      "type": "function",
+      "function": {
+        "name": "sqlite_query",
+        "description": "Execute a SQL query (SELECT, etc.) on a local SQLite database and return formatted results",
+        "parameters": {
+          "type": "object",
+          "required": ["db_path", "query"],
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Path to SQLite database file (e.g. 'data.db', 'app.sqlite', or absolute path)"
+            },
+            "query": {
+              "type": "string",
+              "description": "SQL query string to execute (e.g. 'SELECT * FROM users LIMIT 10')"
+            }
+          }
+        }
+      },
+      "mutating": false
+    },
+    {
+      "type": "function",
+      "function": {
+        "name": "sqlite_schema",
+        "description": "Inspect all tables, column definitions, and schema of a local SQLite database",
+        "parameters": {
+          "type": "object",
+          "required": ["db_path"],
+          "properties": {
+            "db_path": {
+              "type": "string",
+              "description": "Path to SQLite database file"
+            }
+          }
+        }
+      },
+      "mutating": false
+    }
+  ]
+}
