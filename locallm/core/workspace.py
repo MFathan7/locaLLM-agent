@@ -93,6 +93,16 @@ def get_workspace_path(name: str) -> Path:
 get_workspace_dir = get_workspace_path
 
 
+def ensure_workspace_structure(ws_path: Path) -> None:
+    """Ensure standard workspace directory layout exists (knowledge, skills, sessions, files, images)."""
+    if ws_path.is_dir():
+        (ws_path / "knowledge").mkdir(exist_ok=True)
+        (ws_path / "skills").mkdir(exist_ok=True)
+        (ws_path / "sessions").mkdir(exist_ok=True)
+        (ws_path / "files").mkdir(exist_ok=True)
+        (ws_path / "images").mkdir(exist_ok=True)
+
+
 def get_workspace_agents_path(name: str) -> Path:
     """Return path to the AGENTS.md or SOUL.md file for a workspace."""
     ws_path = get_workspace_path(name)
@@ -152,6 +162,8 @@ def list_workspaces() -> List[Dict[str, Any]]:
     for entry in sorted(base.iterdir(), key=lambda p: (p.name != "default", p.name.lower())):
         if not entry.is_dir():
             continue
+
+        ensure_workspace_structure(entry)
 
         meta_file = entry / "workspace.json"
         meta: Dict[str, Any] = {}
@@ -295,6 +307,8 @@ def load_workspace_context(name: str) -> str:
     if not ws_path.exists() or not ws_path.is_dir():
         ws_path = ensure_default_workspace()
         clean_name = "default"
+
+    ensure_workspace_structure(ws_path)
 
     # Ensure physical AGENTS.md file exists on disk in workspace
     ws_agents_file = ws_path / "AGENTS.md"

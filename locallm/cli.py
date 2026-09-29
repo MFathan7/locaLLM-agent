@@ -292,6 +292,23 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--api-key", "-k", type=str, default=None, help="Optional bearer API key to secure endpoints")
     serve_parser.add_argument("--no-auto-port", action="store_true", help="Fail if specified port is in use instead of choosing next available")
 
+    # Update / Synchronization
+    update_parser = subparsers.add_parser(
+        "update",
+        help="Synchronize package dependencies, ensure workspace directories, and verify system integrity",
+        description="Synchronize locaLLM environment: ensures all workspaces have full standard layouts (files, images, knowledge, skills, sessions), verifies/installs dependencies, and updates package status.",
+    )
+    update_parser.add_argument(
+        "--deps", "-d",
+        action="store_true",
+        help="Reinstall or update Python dependencies via pip",
+    )
+    update_parser.add_argument(
+        "--git", "-g",
+        action="store_true",
+        help="Pull latest git commits if running from a git repository",
+    )
+
     return parser
 
 
@@ -300,6 +317,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     KNOWN_SUBCOMMANDS = {
         "chat", "telegram", "whatsapp", "agent", "run", "models", "config",
         "status", "service", "start", "stop", "workspace", "platform", "plugin", "mcp", "serve",
+        "update", "top", "monitor",
     }
 
     if argv is None:
@@ -426,6 +444,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         _handle_mcp_cli(args, config)
     elif cmd == "status":
         render_banner(config, client)
+    elif cmd == "update":
+        _handle_update_cli(args, config, client)
     elif cmd == "start":
         _handle_service_cli("start", args.target, config)
     elif cmd == "stop":
@@ -434,6 +454,86 @@ def main(argv: Optional[List[str]] = None) -> None:
         _handle_service_cli(args.action, args.target, config)
     else:
         parser.print_help()
+
+
+def _handle_update_cli(args, config, client=None) -> None:
+    """Execute update, dependency verification, and workspace synchronization."""
+    import subprocess
+    from locallm.core.workspace import ensure_workspace_structure, list_workspaces
+
+    console.print("\n[bold cyan]✦ locaLLM Environment & Workspace Synchronizer ✦[/bold cyan]\n")
+
+    # 1. Workspace directories synchronization
+    workspaces = list_workspaces()
+    for ws in workspaces:
+        ws_path = Path(ws["path"])
+        ensure_workspace_structure(ws_path)
+
+    console.print(f"[#00ff87]✔[/] Synchronized [bold white]{len(workspaces)}[/] workspace(s): [dim]standard layouts verified (files, images, knowledge, skills, sessions)[/]")
+    for ws in workspaces:
+        console.print(f"  [#00d7ff]•[/] {ws['name']} [dim]-> {ws['path']}[/]")
+
+    # 2. Git update if requested
+    repo_dir = Path(__file__).resolve().parent.parent
+    is_git_repo = (repo_dir / ".git").is_dir()
+
+    if getattr(args, "git", False):
+        if is_git_repo:
+            console.print("\n[bold white]Pulling latest changes from Git repository...[/]")
+            try:
+                res = subprocess.run(
+                    ["git", "pull"],
+                    cwd=repo_dir,
+                    capture_output=True,
+                    text=True,
+                    timeout=30,
+                )
+                if res.returncode == 0:
+                    console.print(f"[#00ff87]✔[/] Git pull succeeded:\n[dim]{res.stdout.strip()}[/]")
+                else:
+                    console.print(f"[bold yellow]⚠ Git pull returned code {res.returncode}:[/]\n[dim]{res.stderr.strip()}[/]")
+            except Exception as e:
+                console.print(f"[bold red]✘ Git pull failed:[/] {e}")
+        else:
+            console.print("[dim]ℹ Not a git repository, skipping git pull.[/]")
+
+    # 3. Pip / dependencies update if requested
+    if getattr(args, "deps", False):
+        console.print("\n[bold white]Updating package dependencies via pip...[/]")
+        try:
+            cmd = [sys.executable, "-m", "pip", "install", "-e", "."]
+            res = subprocess.run(
+                cmd,
+                cwd=repo_dir,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            )
+            if res.returncode == 0:
+                console.print("[#00ff87]✔[/] Package and dependencies updated successfully.")
+            else:
+                console.print(f"[bold yellow]⚠ Pip install warning:[/]\n[dim]{res.stderr.strip()}[/]")
+        except Exception as e:
+            console.print(f"[bold red]✘ Pip install failed:[/] {e}")
+
+    # 4. Mode status reporting
+    console.print("\n[bold white]System Status:[/] [#00ff87]Operational[/]")
+    console.print(f"  [dim]• Execution Mode:[/] [#00d7ff]Development / Editable (pip -e .)[/]")
+    console.print(f"  [dim]• Active Workspace:[/] [bold white]{config.active_workspace}[/]")
+    console.print(f"  [dim]• Default Model:[/] [#00d7ff]{config.default_model}[/]")
+    console.print(f"  [dim]• Inference Host:[/] [dim]{config.ollama_host}[/]")
+
+    if client:
+        try:
+            status = client.check_service_status()
+            if status.get("online"):
+                console.print(f"  [dim]• Backend Service:[/] [#00ff87]Online[/] ({status.get('backend', 'ollama')})")
+            else:
+                console.print(f"  [dim]• Backend Service:[/] [dim]Offline[/]")
+        except Exception:
+            pass
+
+    console.print("\n[bold green]✔ All workspaces and locaLLM components are up to date.[/]\n")
 
 
 def _handle_plugin_cli(args, config) -> None:

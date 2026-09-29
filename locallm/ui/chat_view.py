@@ -461,6 +461,7 @@ def print_conversational_cli_help(theme: Optional[str] = None) -> None:
     table.add_row("locallm start [target]", "Start Ollama background daemon (default: ollama)")
     table.add_row("locallm stop [target]", "Stop local service processes and release GPU VRAM")
     table.add_row("locallm status", "Inspect backend connection, GPU VRAM, and active model features")
+    table.add_row("locallm update", "Synchronize dependencies, verify workspaces, and refresh status")
     table.add_row("locallm config", "Configure global inference settings (backend, temperature, context)")
 
     examples_text = (
