@@ -80,6 +80,54 @@ class TestSmartPathAndTools(unittest.TestCase):
                 skill_res = execute_tool("read_skill", {"skill_name": "vuln-scanner"}, workspace_name="test_ws")
                 self.assertIn("Vuln Scanner", skill_res)
 
+    def test_workspace_files_and_images_storage(self):
+        import tempfile
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_root = Path(tmp)
+            with patch("locallm.core.workspace.get_workspaces_dir", return_value=tmp_root):
+                ws_dir = tmp_root / "media_ws"
+                (ws_dir / "files").mkdir(parents=True)
+                (ws_dir / "images").mkdir(parents=True)
+
+                # 1. Write file to workspace files directory
+                write_res = execute_tool(
+                    "write_file",
+                    {"path": "files/report.txt", "content": "Annual Cyber Report 2026"},
+                    workspace_name="media_ws",
+                )
+                self.assertTrue("Successfully wrote" in write_res)
+                self.assertTrue((ws_dir / "files" / "report.txt").is_file())
+                self.assertEqual((ws_dir / "files" / "report.txt").read_text(encoding="utf-8"), "Annual Cyber Report 2026")
+
+                # 2. Write image to workspace images directory
+                img_write_res = execute_tool(
+                    "write_file",
+                    {"path": "images/topology.svg", "content": "<svg><circle/></svg>"},
+                    workspace_name="media_ws",
+                )
+                self.assertTrue("Successfully wrote" in img_write_res)
+                self.assertTrue((ws_dir / "images" / "topology.svg").is_file())
+
+                # 3. Read back using explicit paths
+                read_file_res = execute_tool("read_file", {"path": "files/report.txt"}, workspace_name="media_ws")
+                self.assertIn("Annual Cyber Report 2026", read_file_res)
+
+                read_img_res = execute_tool("read_file", {"path": "images/topology.svg"}, workspace_name="media_ws")
+                self.assertIn("<svg><circle/></svg>", read_img_res)
+
+                # 4. Read image without 'images/' prefix (auto image extension detection)
+                auto_img_res = execute_tool("read_file", {"path": "topology.svg"}, workspace_name="media_ws")
+                self.assertIn("<svg><circle/></svg>", auto_img_res)
+
+                # 5. List directory for files and images
+                list_files = execute_tool("list_directory", {"path": "files"}, workspace_name="media_ws")
+                self.assertIn("report.txt", list_files)
+
+                list_images = execute_tool("list_directory", {"path": "images"}, workspace_name="media_ws")
+                self.assertIn("topology.svg", list_images)
+
 
 if __name__ == "__main__":
     unittest.main()

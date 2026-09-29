@@ -62,6 +62,14 @@ Follow a strict Test-Driven Verification cycle for all code generation, refactor
   - You MUST PROACTIVELY invoke `search_web` on your first turn to research verified information before answering.
   - Exception: Do not trigger `search_web` for translation or linguistic phrasing tasks (see Linguistic & Intent Disambiguation).
 
+## Workspace Storage & Asset Organization
+- Each workspace provides dedicated internal directories for all files and media assets:
+  - **`files/`**: Store all generated reports, exported code, documents, data files, and logs here (relative path `files/<filename>`).
+  - **`images/`**: Store and retrieve all generated images, visual assets, diagrams, charts, and screenshots here (relative path `images/<filename>`).
+- When saving, creating, or looking up previous files and images:
+  - ALWAYS prioritize the workspace `files/` and `images/` directories.
+  - NEVER search or save files into random user directories (such as user home, OS desktop, or system root) unless explicitly instructed with an absolute path.
+
 ## Tool Observation Synthesis
 - Never cite internal function names (e.g. `get_current_time`, `search_web`) or raw schema parameters to the user.
 - Seamlessly synthesize tool observations and local environment context into natural, authoritative answers.
@@ -102,6 +110,8 @@ def ensure_default_workspace() -> Path:
         (default_dir / "knowledge").mkdir(exist_ok=True)
         (default_dir / "skills").mkdir(exist_ok=True)
         (default_dir / "sessions").mkdir(exist_ok=True)
+        (default_dir / "files").mkdir(exist_ok=True)
+        (default_dir / "images").mkdir(exist_ok=True)
 
         meta = {
             "name": "default",
@@ -119,6 +129,10 @@ def ensure_default_workspace() -> Path:
             "whenever the `default` workspace is active.\n"
         )
         (default_dir / "knowledge" / "README.md").write_text(readme_content, encoding="utf-8")
+
+    # Ensure default workspace internal directories exist
+    (default_dir / "files").mkdir(exist_ok=True)
+    (default_dir / "images").mkdir(exist_ok=True)
 
     # Ensure default workspace AGENTS.md is scaffolded
     agents_file = default_dir / "AGENTS.md"
@@ -222,6 +236,8 @@ def create_workspace(
         (ws_path / "knowledge").mkdir(exist_ok=True)
         (ws_path / "skills").mkdir(exist_ok=True)
         (ws_path / "sessions").mkdir(exist_ok=True)
+        (ws_path / "files").mkdir(exist_ok=True)
+        (ws_path / "images").mkdir(exist_ok=True)
 
         meta = {
             "name": clean_name,
@@ -483,15 +499,20 @@ def load_workspace_context(name: str) -> str:
         return ""
 
     ws_dir_res = str(ws_path.resolve())
+    ws_files_res = str((ws_path / "files").resolve())
+    ws_images_res = str((ws_path / "images").resolve())
     ws_skills_res = str((ws_path / "skills").resolve())
     ws_know_res = str((ws_path / "knowledge").resolve())
 
     header = (
         f"Active Workspace: '{clean_name}'\n"
         f"Workspace Directory: {ws_dir_res}\n"
+        f"Workspace Files Directory: {ws_files_res}\n"
+        f"Workspace Images Directory: {ws_images_res}\n"
         f"Workspace Skills Directory: {ws_skills_res}\n"
         f"Workspace Knowledge Directory: {ws_know_res}\n"
-        "Skill Tool Notice: When consulting workspace skills or workflows, invoke `read_skill(skill_name='<id>')` or `list_skills()`. File tools (`read_file`, `list_directory`) also resolve relative to working directory or workspace."
+        "Storage & Asset Directive: Save and retrieve all workspace documents, outputs, scripts, and data in the workspace `files/` directory, and visual assets, photos, diagrams, or generated pictures in the `images/` directory. Do not save files or search outside the workspace or working directory unless specifically directed.\n"
+        "Skill Tool Notice: When consulting workspace skills or workflows, invoke `read_skill(skill_name='<id>')` or `list_skills()`. File tools (`read_file`, `write_file`, `list_directory`) also resolve relative to working directory or workspace."
     )
     body = "\n\n".join(sections)
     return f"{header}\n\n{body}"

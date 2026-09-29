@@ -47,6 +47,8 @@ class TestWorkspaceEngine(unittest.TestCase):
         self.assertTrue((default_dir / "knowledge").is_dir())
         self.assertTrue((default_dir / "skills").is_dir())
         self.assertTrue((default_dir / "sessions").is_dir())
+        self.assertTrue((default_dir / "files").is_dir())
+        self.assertTrue((default_dir / "images").is_dir())
         self.assertTrue((default_dir / "workspace.json").is_file())
 
     def test_create_workspace_success(self):
@@ -57,6 +59,10 @@ class TestWorkspaceEngine(unittest.TestCase):
         )
         self.assertTrue(ok)
         self.assertIn("created successfully", msg)
+
+        ws_dir = self.workspaces_root / "finance_bot"
+        self.assertTrue((ws_dir / "files").is_dir())
+        self.assertTrue((ws_dir / "images").is_dir())
 
         ws_info = get_workspace_info("finance_bot")
         self.assertIsNotNone(ws_info)
@@ -435,6 +441,8 @@ class TestWorkspaceEngine(unittest.TestCase):
         self.assertIn("[Persona & Cognitive Directives (Workspace: custom_ws)]", ctx)
         self.assertIn("specialized cyber analyst", ctx)
         self.assertIn("Workspace Directory:", ctx)
+        self.assertIn("Workspace Files Directory:", ctx)
+        self.assertIn("Workspace Images Directory:", ctx)
         self.assertIn("Workspace Skills Directory:", ctx)
 
     def test_load_workspace_context_skills_discovery_and_filtering(self):

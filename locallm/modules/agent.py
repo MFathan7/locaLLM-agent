@@ -69,7 +69,8 @@ class ReActAgent:
             "3. Stopping Condition: When the objective is completely satisfied, provide a clear, comprehensive final summary of the accomplished tasks and findings.\n"
             "4. Read-Only vs Mutating Discipline: If the user's objective only asks to find, locate, search, check, or report file paths, existence, or metadata, NEVER invoke write_file, create_directory, or modifying commands. Use resolve_path, list_directory, or read_file exclusively.\n"
             "5. Autonomous Verification & Self-Testing: When creating or modifying code, scripts, or configurations, never conclude without verification. Use execute_command to run actual tests (pytest, unittest, etc.), compilation/syntax checks, or standalone validation scripts. Test real edge cases with proper assertions—never do superficial tests. If errors occur, diagnose the traceback, fix the code, and re-test until it passes cleanly.\n"
-            "6. Linguistic & Intent Disambiguation: If the task is translation, phrasing, or grammar advice, provide the translation directly. Do NOT execute web searches or technical commands on the text to be translated."
+            "6. Linguistic & Intent Disambiguation: If the task is translation, phrasing, or grammar advice, provide the translation directly. Do NOT execute web searches or technical commands on the text to be translated.\n"
+            "7. Workspace Storage Organization: Save generated documents and scripts inside the workspace 'files/' directory (e.g. files/output.txt), and visual assets or diagrams in 'images/' (e.g. images/chart.png). Always look inside these directories when retrieving previously created files or images."
         )
         if ws_context:
             system_content += f"\n\n{ws_context}"

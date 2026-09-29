@@ -38,6 +38,23 @@ def resolve_smart_path(
             norm = clean.replace("\\", "/").strip("/")
             norm_lower = norm.lower()
 
+            # Determine active workspace
+            ws_target_name = workspace_name
+            if not ws_target_name:
+                try:
+                    from locallm.config import load_config
+                    ws_target_name = load_config().active_workspace
+                except Exception:
+                    ws_target_name = "default"
+
+            from locallm.core.workspace import get_workspace_path
+            ws_dir = get_workspace_path(ws_target_name or "default")
+            ws_files = ws_dir / "files"
+            ws_images = ws_dir / "images"
+            ws_skills = ws_dir / "skills"
+            ws_knowledge = ws_dir / "knowledge"
+
+            matched_alias = False
             # Handle direct .locallm path alias (e.g. .locallm/... -> ~/.locallm/...)
             if norm_lower.startswith(".locallm/") or norm_lower == ".locallm":
                 subpath = norm[len(".locallm"):].lstrip("/")
@@ -46,6 +63,21 @@ def resolve_smart_path(
                     candidate = target_locallm
                 else:
                     candidate = cand_path.resolve()
+                matched_alias = True
+            elif norm_lower == "files" or norm_lower.startswith("files/"):
+                subpath = norm[len("files"):].lstrip("/")
+                ws_files.mkdir(parents=True, exist_ok=True)
+                candidate = (ws_files / subpath).resolve()
+                matched_alias = True
+            elif norm_lower == "images" or norm_lower.startswith("images/"):
+                subpath = norm[len("images"):].lstrip("/")
+                ws_images.mkdir(parents=True, exist_ok=True)
+                candidate = (ws_images / subpath).resolve()
+                matched_alias = True
+            elif norm_lower == "workspace" or norm_lower.startswith("workspace/"):
+                subpath = norm[len("workspace"):].lstrip("/")
+                candidate = (ws_dir / subpath).resolve()
+                matched_alias = True
             else:
                 aliases = {
                     "downloads": home / "Downloads",
@@ -54,14 +86,12 @@ def resolve_smart_path(
                     "documents": home / "Documents",
                     "document": home / "Documents",
                     "pictures": home / "Pictures",
-                    "images": home / "Pictures",
                     "videos": home / "Videos",
                     "music": home / "Music",
                     "home": home,
                     "~": home,
                 }
 
-                matched_alias = False
                 if norm_lower in aliases:
                     candidate = aliases[norm_lower].resolve()
                     matched_alias = True
@@ -75,21 +105,12 @@ def resolve_smart_path(
                             break
 
                 if not matched_alias or not candidate.exists():
-                    # Intelligent workspace and skill directory discovery
-                    ws_target_name = workspace_name
-                    if not ws_target_name:
-                        try:
-                            from locallm.config import load_config
-                            ws_target_name = load_config().active_workspace
-                        except Exception:
-                            ws_target_name = "default"
-
-                    from locallm.core.workspace import get_workspace_path
-                    ws_dir = get_workspace_path(ws_target_name or "default")
-                    ws_skills = ws_dir / "skills"
-                    ws_knowledge = ws_dir / "knowledge"
-
                     clean_rel = norm
+                    clean_rel_p = Path(clean_rel)
+                    is_image_file = clean_rel_p.suffix.lower() in {
+                        ".png", ".jpg", ".jpeg", ".webp", ".gif", ".svg", ".bmp", ".ico"
+                    }
+
                     if clean_rel.lower().startswith("skills/"):
                         skill_sub = clean_rel[7:].lstrip("/")
                     else:
@@ -102,6 +123,9 @@ def resolve_smart_path(
 
                     cwd = Path.cwd()
                     ws_candidates = [
+                        # Workspace files & images
+                        ws_files / clean_rel,
+                        ws_images / clean_rel,
                         # Direct workspace paths
                         ws_dir / clean_rel,
                         ws_skills / skill_sub,
@@ -125,6 +149,8 @@ def resolve_smart_path(
                         home / ".locallm" / "skills" / skill_sub,
                         home / ".locallm" / "skills" / (skill_sub + "/SKILL.md"),
                     ]
+                    if is_image_file:
+                        ws_candidates.insert(0, ws_images / clean_rel_p.name)
 
                     found_cand = None
                     for c in ws_candidates:
