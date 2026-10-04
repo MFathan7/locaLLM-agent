@@ -9,6 +9,7 @@ from datetime import datetime
 import http.server
 import json
 from pathlib import Path
+import re
 import socket
 import socketserver
 import threading
@@ -199,6 +200,113 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         self._send_cors_headers()
         self.end_headers()
 
+    def do_DELETE(self) -> None:
+        """Handle DELETE requests (e.g. session deletion)."""
+        path = self.path.split("?")[0].rstrip("/")
+        if path in ("/api/sessions", "/v1/sessions"):
+            try:
+                from urllib.parse import parse_qs, urlparse
+                from locallm.core.workspace import delete_workspace_session
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("workspace", ["default"])[0]
+                session_id = params.get("id", [""])[0]
+                if session_id:
+                    delete_workspace_session(target_ws, session_id)
+                self._send_json_response(200, {"success": True})
+                self._log_request_event("DELETE", path, 200, detail=f"Deleted session {session_id}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        if path in ("/api/workspaces", "/v1/workspaces"):
+            try:
+                from urllib.parse import parse_qs, urlparse
+                from locallm.core.workspace import delete_workspace
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("name", [""])[0]
+                active_ws = self.server.workspace or "default"
+                if not target_ws:
+                    self._send_json_response(400, {"error": "Workspace name is required"})
+                    return
+                success, msg = delete_workspace(target_ws, active_ws)
+                if not success:
+                    self._send_json_response(400, {"error": msg})
+                    return
+                self._send_json_response(200, {"success": True, "message": msg})
+                self._log_request_event("DELETE", path, 200, detail=f"Deleted workspace {target_ws}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
+        self._log_request_event("DELETE", path, 404)
+
+    def do_PUT(self) -> None:
+        """Handle PUT requests (e.g. workspace updates)."""
+        path = self.path.split("?")[0].rstrip("/")
+        if path in ("/api/workspaces", "/v1/workspaces"):
+            try:
+                body = self._read_json_body() or {}
+                ws_name = body.get("name", "").strip().lower()
+                if not ws_name:
+                    self._send_json_response(400, {"error": "Workspace name is required"})
+                    return
+
+                from locallm.core.workspace import get_workspace_path, get_workspace_agents_path
+                import json
+                ws_path = get_workspace_path(ws_name)
+                if not ws_path.exists():
+                    self._send_json_response(404, {"error": f"Workspace '{ws_name}' not found"})
+                    return
+
+                meta_file = ws_path / "workspace.json"
+                meta = {}
+                if meta_file.exists():
+                    try:
+                        meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        meta = {}
+
+                if "description" in body:
+                    meta["description"] = body["description"]
+                if "icon" in body:
+                    meta["icon"] = body["icon"]
+                if "color" in body:
+                    meta["color"] = body["color"]
+                if "custom_instructions" in body:
+                    meta["custom_instructions"] = body["custom_instructions"]
+                    agents_file = get_workspace_agents_path(ws_name)
+                    agents_file.write_text(f"# Workspace Instructions: {ws_name}\n\n{body['custom_instructions']}\n", encoding="utf-8")
+
+                meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+
+                if "skills" in body and isinstance(body["skills"], list):
+                    skills_dir = ws_path / "skills"
+                    skills_dir.mkdir(exist_ok=True)
+                    for s in body["skills"]:
+                        s_id = (s.get("id") or s.get("name", "skill")).lower().replace(" ", "-")
+                        s_file = skills_dir / f"{s_id}.md"
+                        s_content = s.get("content") or f"# Skill: {s.get('name')}\n{s.get('description', '')}\n"
+                        s_file.write_text(s_content, encoding="utf-8")
+
+                self._send_json_response(200, {
+                    "name": ws_name,
+                    "description": meta.get("description", ""),
+                    "icon": meta.get("icon", "Folder"),
+                    "color": meta.get("color", "#3B82F6"),
+                    "custom_instructions": meta.get("custom_instructions", ""),
+                    "skills": body.get("skills", []),
+                })
+                self._log_request_event("PUT", path, 200, detail=f"Updated workspace {ws_name}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
+        self._log_request_event("PUT", path, 404)
+
     def do_GET(self) -> None:
         """Handle GET requests for health diagnostics and model listings."""
         path = self.path.split("?")[0].rstrip("/")
@@ -222,7 +330,45 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self._log_request_event("GET", path, 401)
             return
 
-        if path in ("/v1/models", "/models"):
+        if path in ("/api/config", "/v1/config"):
+            try:
+                from locallm.config import load_config
+                cfg = load_config()
+                data = cfg.model_dump()
+                data["model"] = getattr(cfg, "default_model", "gemma4:12b")
+                data["provider"] = "ollama" if cfg.active_backend == "ollama" else "openai"
+                data["contextLength"] = getattr(cfg, "context_window", 8192)
+                self._send_json_response(200, data)
+                self._log_request_event("GET", path, 200)
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve config: {exc}")
+            return
+
+        if path in ("/api/workspaces", "/v1/workspaces"):
+            try:
+                from locallm.core.workspace import list_workspaces
+                workspaces = list_workspaces()
+                self._send_json_response(200, workspaces)
+                self._log_request_event("GET", path, 200, detail=f"{len(workspaces)} workspaces")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve workspaces: {exc}")
+            return
+
+        if path in ("/api/sessions", "/v1/sessions"):
+            try:
+                from urllib.parse import parse_qs, urlparse
+                from locallm.core.workspace import list_workspace_sessions
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("workspace", ["default"])[0]
+                sessions = list_workspace_sessions(target_ws)
+                self._send_json_response(200, sessions)
+                self._log_request_event("GET", path, 200, detail=f"{len(sessions)} sessions")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve sessions: {exc}")
+            return
+
+        if path in ("/v1/models", "/models", "/api/models"):
             try:
                 raw_models: List[Dict[str, Any]] = []
                 if hasattr(self.server.client, "list_models"):
@@ -284,7 +430,75 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self._log_request_event("POST", path, 401)
             return
 
-        if path not in ("/v1/chat/completions", "/chat/completions"):
+        # 1. Configuration sync endpoint
+        if path in ("/api/config", "/v1/config"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                from locallm.config import load_config, save_config, LocaLLMConfig
+                current_cfg = load_config()
+                current_dict = current_cfg.model_dump()
+                current_dict.update({k: v for k, v in payload.items() if k in current_dict})
+                if "model" in payload and "default_model" not in payload:
+                    current_dict["default_model"] = payload["model"]
+                new_cfg = LocaLLMConfig(**current_dict)
+                save_config(new_cfg)
+                self.server.config = new_cfg
+                self.server.default_model = new_cfg.default_model
+                self.server.workspace = new_cfg.active_workspace
+                self._send_json_response(200, {"success": True, "config": new_cfg.model_dump()})
+                self._log_request_event("POST", path, 200, detail="Config updated")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+                self._log_request_event("POST", path, 500, detail=str(exc))
+            return
+
+        # 2. Workspace creation endpoint
+        if path in ("/api/workspaces", "/v1/workspaces"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                from locallm.core.workspace import create_workspace
+                name = str(payload.get("name", "")).strip()
+                desc = str(payload.get("description", "")).strip()
+                if not name:
+                    self._send_json_response(400, {"error": "Workspace name is required"})
+                    return
+                ws_path = create_workspace(name, description=desc)
+                self._send_json_response(200, {"name": name, "description": desc, "path": str(ws_path)})
+                self._log_request_event("POST", path, 200, detail=f"Created workspace {name}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        # 3. Session saving endpoint
+        if path in ("/api/sessions", "/v1/sessions"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                from locallm.core.workspace import save_workspace_session
+                from locallm.core.memory import ConversationMemory
+                ws_name = payload.get("workspace", "default")
+                session_id = payload.get("id", str(int(time.time())))
+                memory = ConversationMemory()
+                for msg in payload.get("messages", []):
+                    memory.add_message(msg.get("role", "user"), msg.get("content", ""))
+                save_workspace_session(ws_name, session_id, memory, metadata={
+                    "title": payload.get("title", "New Chat"),
+                    "session_id": session_id,
+                    "workspace": ws_name,
+                    "model": payload.get("model", "-")
+                })
+                self._send_json_response(200, {"success": True})
+                self._log_request_event("POST", path, 200, detail=f"Saved session {session_id}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        if path not in ("/v1/chat/completions", "/chat/completions", "/api/chat"):
             self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
             self._log_request_event("POST", path, 404)
             return
@@ -317,9 +531,70 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self._log_request_event("POST", path, 400)
             return
 
+        # Extract options from request body
+        options = payload.get("options", {})
+        web_search_enabled = bool(options.get("webSearch", False))
+        tools_enabled = bool(options.get("tools", False))
+
+        # Extract last user prompt
+        last_prompt = ""
+        for m in reversed(messages):
+            if m.get("role") == "user":
+                last_prompt = str(m.get("content", ""))
+                break
+
+        # Check if user explicitly asked for web search or if web search option was toggled
+        is_explicit_search = False
+        if last_prompt:
+            lp_lower = last_prompt.lower()
+            if any(k in lp_lower for k in ("cari di web", "cari di website", "search web", "search on web", "googling", "browsing", "cari online", "search the web")):
+                is_explicit_search = True
+
+        search_directive = ""
+        should_search_web = web_search_enabled or is_explicit_search
+        if should_search_web and last_prompt:
+            try:
+                from locallm.core.tools.web import perform_web_search
+                # Strip conversational fluff to get optimal search query
+                clean_query = re.sub(
+                    r"^(?:coba\s+|tolong\s+|bisa\s+|mohon\s+)?(?:kamu\s+)?(?:carikan|cari|search\s+for|search)?(?:\s+(?:di|pada|ke|on|in)\s+(?:website|web|internet|google))?[\s,:]*",
+                    "",
+                    last_prompt.strip(),
+                    flags=re.IGNORECASE,
+                ).strip()
+                clean_query = re.sub(
+                    r"^(?:apakah\s+(?:ada|bisa|terdapat)|ada(?:kah)?(?:\s+tidak|\s+gak)?|apa\s+saja|rekomendasi)\s+",
+                    "",
+                    clean_query,
+                    flags=re.IGNORECASE,
+                ).strip()
+                clean_query = re.sub(
+                    r"^(?:informasi\s+(?:tentang|mengenai)?|info\s+(?:tentang|mengenai)?)\s*",
+                    "",
+                    clean_query,
+                    flags=re.IGNORECASE,
+                ).strip().rstrip("?.! ") or last_prompt.strip()
+
+                search_res = perform_web_search(clean_query, max_results=5)
+                if search_res and not search_res.startswith("Error:"):
+                    search_directive = (
+                        f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
+                        "Directives: Use the above verified real-time web search results to thoroughly answer the user's inquiry. "
+                        "Cite your sources using markdown links [Source Title](URL) directly in your response so the user can verify them. "
+                        "Do not output JSON commands or tool call blocks."
+                    )
+            except Exception as exc:
+                self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
+        elif not tools_enabled:
+            search_directive = (
+                "\n\nDirectives: External tools and web search are currently disabled for this turn. "
+                "Do NOT output tool calls, JSON commands (e.g. { 'command': ... }), or reasoning blocks. "
+                "Provide a direct, natural response based on your existing knowledge."
+            )
+
         # Resolve active workspace context
         req_ws = self.headers.get("X-Workspace", "").strip() or self.server.workspace
-        ws_context = load_workspace_context(req_ws)
+        ws_context = load_workspace_context(req_ws) + search_directive
 
         # Inject workspace context into system messages
         processed_messages = self._prepare_messages_with_context(messages, ws_context)

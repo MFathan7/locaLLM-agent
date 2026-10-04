@@ -84,7 +84,7 @@ export function PlusMenu({
             animate="show"
             exit="exit"
             style={{ transformOrigin: 'bottom left' }}
-            className="absolute bottom-full left-0 mb-3 w-52 p-1.5 rounded-3xl liquid-glass-strong z-30"
+            className="absolute bottom-full left-0 mb-3 w-52 p-1.5 rounded-2xl bg-white dark:bg-[#141b2a] border border-slate-200 dark:border-slate-800 shadow-2xl shadow-black/25 z-30"
             role="menu"
           >
             <MenuItem
@@ -94,7 +94,7 @@ export function PlusMenu({
             />
 
             {hasDynamic && (
-              <motion.div variants={itemVariants} className="my-1 mx-2 h-px bg-black/10 dark:bg-white/10" />
+              <motion.div variants={itemVariants} className="my-1 mx-2 h-px bg-slate-200 dark:bg-slate-800" />
             )}
 
             {capabilities.webSearch && (
@@ -140,10 +140,10 @@ function MenuItem({
       onClick={onClick}
       role="menuitem"
       className={clsx(
-        'w-full flex items-center gap-2.5 px-3 py-2 rounded-2xl text-[13px] font-medium text-left cursor-pointer transition-colors',
+        'w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] font-medium text-left cursor-pointer transition-colors',
         active
-          ? 'bg-blue-500/15 text-blue-700 dark:text-blue-300'
-          : 'text-slate-700 dark:text-slate-200 hover:bg-black/[0.06] dark:hover:bg-white/10'
+          ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-600 dark:text-blue-400 font-semibold'
+          : 'text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800/70 hover:text-slate-900 dark:hover:text-white'
       )}
     >
       {icon}

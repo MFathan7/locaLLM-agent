@@ -1,8 +1,24 @@
+export interface SourceItem {
+  id: string;
+  title: string;
+  url: string;
+  domain: string;
+  snippet?: string;
+  date?: string;
+  favicon?: string;
+}
+
 export interface Message {
   id: string;
-  role: 'user' | 'assistant' | 'system';
+  role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: number;
+  sources?: SourceItem[];
+  options?: {
+    files?: string[];
+    webSearch?: boolean;
+    tools?: boolean;
+  };
 }
 
 export interface ModelCapabilities {
@@ -14,7 +30,8 @@ export interface ModelCapabilities {
 export interface ModelInfo {
   id: string;
   name: string;
-  provider: LocaLLMConfig['provider'];
+  provider: string;
+  platform?: string;
   capabilities: ModelCapabilities;
 }
 
@@ -24,11 +41,23 @@ export interface SendOptions {
   tools: boolean;
 }
 
+export interface WorkspaceSkill {
+  id: string;
+  name: string;
+  description?: string;
+  content: string;
+  enabled?: boolean;
+}
+
 export interface Workspace {
   name: string;
   description?: string;
+  icon?: string;
+  color?: string;
+  custom_instructions?: string;
   knowledgeCount?: number;
   skillsCount?: number;
+  skills?: WorkspaceSkill[];
 }
 
 export interface ChatSession {
@@ -40,14 +69,43 @@ export interface ChatSession {
   folder?: string;
 }
 
-export interface LocaLLMConfig {
-  systemPrompt: string;
-  temperature: number;
-  topP: number;
-  maxTokens: number;
-  contextLength: number;
-  model: string;
-  provider: 'ollama' | 'openai' | 'anthropic' | 'gemini';
-  ollamaBaseUrl: string;
-  dynamicRouting: boolean;
+export interface CustomPlatformConfig {
+  name: string;
+  api_base: string;
+  api_key?: string;
+  default_model?: string;
 }
+
+export interface LocaLLMConfig {
+  active_backend: string;
+  ollama_host: string;
+  ollama_model: string;
+  custom_platforms: CustomPlatformConfig[];
+  default_model: string;
+  temperature: number;
+  context_window: number;
+  system_prompt: string;
+  telegram_token?: string;
+  telegram_allowed_users?: number[];
+  whatsapp_enabled?: boolean;
+  agent_auto_approve_commands?: boolean;
+  agent_permission_policy: 'ask' | 'always_allow' | 'deny';
+  agent_max_steps: number;
+  active_workspace: string;
+  search_provider: 'auto' | 'bing' | 'duckduckgo' | 'custom';
+  search_api_url?: string;
+  ui_theme?: string;
+  server_enabled: boolean;
+  server_host: string;
+  server_port: number;
+  server_api_key?: string;
+
+  // Compatibility aliases
+  model?: string;
+  provider?: string;
+  contextLength?: number;
+  maxTokens?: number;
+  topP?: number;
+  dynamicRouting?: boolean;
+}
+

@@ -15,8 +15,8 @@ export function AuroraBackground({ intense }: AuroraBackgroundProps) {
       <motion.div
         className="absolute inset-0"
         initial={false}
-        animate={{ opacity: intense ? 1 : 0.4 }}
-        transition={{ duration: 0.9, ease: 'easeInOut' }}
+        animate={{ opacity: intense ? 1 : 0 }}
+        transition={{ duration: 0.6, ease: 'easeInOut' }}
       >
         <div className="aurora-blob aurora-a -top-[10%] -left-[8%] w-[46vw] h-[46vw] bg-sky-500/55 dark:bg-sky-500/35" />
         <div className="aurora-blob aurora-b top-[8%] -right-[10%] w-[42vw] h-[42vw] bg-teal-400/50 dark:bg-teal-500/30" />

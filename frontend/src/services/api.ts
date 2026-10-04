@@ -1,106 +1,352 @@
 import type { LocaLLMConfig, ChatSession, Workspace, ModelInfo, SendOptions } from '../types';
 
-let mockConfig: LocaLLMConfig = {
-  systemPrompt: 'You are a helpful AI assistant running locally via LocaLLM.',
-  temperature: 0.7,
-  topP: 0.9,
-  maxTokens: 2048,
-  contextLength: 4096,
-  model: 'llama3',
-  provider: 'ollama',
-  ollamaBaseUrl: 'http://localhost:11434',
-  dynamicRouting: false,
-};
-
-// Mock catalog. A real backend would derive capabilities from the provider/model metadata.
-const mockModels: ModelInfo[] = [
-  { id: 'llama3', name: 'Llama 3', provider: 'ollama', capabilities: { files: true, webSearch: false, tools: false } },
-  { id: 'qwen2.5-coder', name: 'Qwen 2.5 Coder', provider: 'ollama', capabilities: { files: true, webSearch: false, tools: true } },
-  { id: 'gpt-4o', name: 'GPT-4o', provider: 'openai', capabilities: { files: true, webSearch: true, tools: true } },
-  { id: 'claude-sonnet', name: 'Claude Sonnet', provider: 'anthropic', capabilities: { files: true, webSearch: true, tools: true } },
-  { id: 'gemini-pro', name: 'Gemini Pro', provider: 'gemini', capabilities: { files: true, webSearch: true, tools: false } }
-];
-
-let mockWorkspaces: Workspace[] = [
-  { name: 'default', description: 'Default general-purpose workspace', knowledgeCount: 1, skillsCount: 3 },
-  { name: 'coding-agent', description: 'Autonomous coding & software development', knowledgeCount: 2, skillsCount: 5 },
-  { name: 'generate-plan', description: 'Strategic architecture & planning', knowledgeCount: 1, skillsCount: 2 },
-  { name: 'web_pentest', description: 'Web security & penetration testing', knowledgeCount: 3, skillsCount: 4 }
-];
-
-let mockSessions: ChatSession[] = [
-  { id: '1', title: 'Welcome to LocaLLM', workspace: 'default', updatedAt: Date.now() - 3600000, messages: [] },
-  { id: '2', title: 'React + Vite Architecture', workspace: 'coding-agent', updatedAt: Date.now() - 7200000, messages: [] },
-  { id: '3', title: 'Vulnerability Analysis Plan', workspace: 'web_pentest', updatedAt: Date.now() - 10800000, messages: [] }
-];
+const API_BASE = '/api';
 
 export const api = {
   getWorkspaces: async (): Promise<Workspace[]> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return [...mockWorkspaces];
+    try {
+      const res = await fetch(`${API_BASE}/workspaces`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch workspaces from backend, using fallback:', e);
+    }
+    return [
+      { name: 'default', description: 'Default general-purpose workspace', knowledgeCount: 1, skillsCount: 3 }
+    ];
   },
-  createWorkspace: async (name: string, description: string = ''): Promise<Workspace> => {
-    await new Promise(resolve => setTimeout(resolve, 150));
-    const cleanName = name.trim().toLowerCase().replace(/[^a-zA-Z0-9_\-]/g, '-');
-    const existing = mockWorkspaces.find(w => w.name.toLowerCase() === cleanName);
-    if (existing) return existing;
-    const newWs: Workspace = { name: cleanName, description, knowledgeCount: 0, skillsCount: 0 };
-    mockWorkspaces.push(newWs);
-    return newWs;
+
+  createWorkspace: async (data: Partial<Workspace> | string, description: string = ''): Promise<Workspace> => {
+    const payload = typeof data === 'string' ? { name: data, description } : data;
+    try {
+      const res = await fetch(`${API_BASE}/workspaces`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to create workspace on backend:', e);
+    }
+    return {
+      name: payload.name || 'new-workspace',
+      description: payload.description || '',
+      icon: payload.icon || 'Folder',
+      color: payload.color || '#3B82F6',
+      custom_instructions: payload.custom_instructions || '',
+      skills: payload.skills || [],
+      knowledgeCount: 0,
+      skillsCount: (payload.skills || []).length
+    };
   },
-  getModels: async (): Promise<ModelInfo[]> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return [...mockModels];
+
+  updateWorkspace: async (name: string, data: Partial<Workspace>): Promise<Workspace> => {
+    try {
+      const res = await fetch(`${API_BASE}/workspaces`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, ...data })
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to update workspace on backend:', e);
+    }
+    return {
+      name: data.name || name,
+      ...data
+    } as Workspace;
   },
-  getConfig: async (): Promise<LocaLLMConfig> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    return { ...mockConfig };
-  },
-  saveConfig: async (config: LocaLLMConfig): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    mockConfig = { ...config };
-  },
-  getSessions: async (workspace?: string): Promise<ChatSession[]> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    const filtered = workspace 
-      ? mockSessions.filter(s => s.workspace === workspace)
-      : mockSessions;
-    return [...filtered].sort((a, b) => b.updatedAt - a.updatedAt);
-  },
-  saveSession: async (session: ChatSession): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    const index = mockSessions.findIndex(s => s.id === session.id);
-    if (index >= 0) {
-      mockSessions[index] = session;
-    } else {
-      mockSessions.push(session);
+
+  deleteWorkspace: async (name: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/workspaces?name=${encodeURIComponent(name)}`, {
+        method: 'DELETE'
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn('Failed to delete workspace on backend:', e);
+      return false;
     }
   },
-  deleteSession: async (id: string): Promise<void> => {
-    await new Promise(resolve => setTimeout(resolve, 100));
-    mockSessions = mockSessions.filter(s => s.id !== id);
+
+  getModels: async (backend?: string): Promise<ModelInfo[]> => {
+    try {
+      const url = backend ? `${API_BASE}/models?backend=${encodeURIComponent(backend)}` : `${API_BASE}/models`;
+      const res = await fetch(url);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch models from backend, using fallback:', e);
+    }
+    return [
+      { id: 'nemotron3-super', name: 'nemotron3-super', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true } },
+      { id: 'auto', name: 'Auto Dynamic Router', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true } }
+    ];
   },
-  sendMessage: async (message: string, config: LocaLLMConfig, options: SendOptions, onChunk: (chunk: string) => void): Promise<string> => {
-    return new Promise(resolve => {
-      const extras = [
-        options.files.length ? `files: ${options.files.map(f => f.name).join(', ')}` : '',
-        options.webSearch ? 'web search on' : '',
-        options.tools ? 'tools on' : ''
-      ].filter(Boolean).join(' | ');
-      const response = `This is a mock response to: "${message}".\n\nIn a real setup, this would stream from the local Python backend using \`${config.provider}\` and model \`${config.model}\`.${extras ? `\n\nRequest options: ${extras}` : ''}\n\n\`\`\`python\nprint("Hello from LocaLLM!")\n\`\`\``;
-      let i = 0;
-      const interval = setInterval(() => {
-        if (i < response.length) {
-          // Stream chunks of varying size for a more natural feel
-          const chunkSize = Math.floor(Math.random() * 3) + 1;
-          const chunk = response.slice(i, i + chunkSize);
-          onChunk(chunk);
-          i += chunkSize;
-        } else {
-          clearInterval(interval);
-          resolve(response);
+
+  getConfig: async (): Promise<LocaLLMConfig> => {
+    try {
+      const res = await fetch(`${API_BASE}/config`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch config from backend, using fallback:', e);
+    }
+    return {
+      active_backend: 'ollama',
+      ollama_host: 'http://127.0.0.1:11434',
+      ollama_model: 'gemma4:12b',
+      custom_platforms: [],
+      default_model: 'gemma4:12b',
+      temperature: 0.7,
+      context_window: 8192,
+      system_prompt: 'You are locaLLM, a helpful, fast, and intelligent local AI assistant.',
+      agent_permission_policy: 'ask',
+      agent_max_steps: 25,
+      active_workspace: 'default',
+      search_provider: 'auto',
+      search_api_url: '',
+      ui_theme: 'cyber_neon',
+      server_enabled: true,
+      server_host: '127.0.0.1',
+      server_port: 8080,
+      server_api_key: ''
+    };
+  },
+
+  saveConfig: async (config: LocaLLMConfig): Promise<void> => {
+    try {
+      const res = await fetch(`${API_BASE}/config`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(config)
+      });
+      if (!res.ok) {
+        console.error('Failed to save config on server:', await res.text());
+      }
+    } catch (e) {
+      console.error('Network error saving config:', e);
+    }
+  },
+
+  getSessions: async (workspace?: string): Promise<ChatSession[]> => {
+    const ws = workspace || 'default';
+    try {
+      const res = await fetch(`${API_BASE}/sessions?workspace=${encodeURIComponent(ws)}`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch sessions from backend:', e);
+    }
+    return [];
+  },
+
+  saveSession: async (session: ChatSession): Promise<void> => {
+    try {
+      await fetch(`${API_BASE}/sessions?workspace=${encodeURIComponent(session.workspace)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(session)
+      });
+    } catch (e) {
+      console.warn('Failed to save session to backend:', e);
+    }
+  },
+
+  deleteSession: async (id: string, workspace?: string): Promise<void> => {
+    try {
+      await fetch(`${API_BASE}/sessions?id=${encodeURIComponent(id)}&workspace=${encodeURIComponent(workspace || 'default')}`, {
+        method: 'DELETE'
+      });
+    } catch (e) {
+      console.warn('Failed to delete session on backend:', e);
+    }
+  },
+
+  sendMessage: async (
+    message: string,
+    config: LocaLLMConfig,
+    options: SendOptions,
+    onChunk: (chunk: string) => void
+  ): Promise<string> => {
+    const targetModel = config.default_model || config.model || 'nemotron3-super';
+    const workspace = config.active_workspace || 'default';
+
+    // Construct request payload
+    const payload = {
+      message,
+      model: targetModel,
+      workspace,
+      temperature: config.temperature,
+      options: {
+        files: options.files.map(f => f.name),
+        webSearch: options.webSearch,
+        tools: options.tools
+      }
+    };
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+
+      if (!res.ok) {
+        const errorData = await res.json().catch(() => ({ error: res.statusText }));
+        const errMsg = errorData.error || 'Chat request failed';
+        onChunk(`[Error: ${errMsg}]`);
+        return errMsg;
+      }
+
+      if (!res.body) {
+        const text = await res.text();
+        onChunk(text);
+        return text;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let fullResponse = '';
+      let buffer = '';
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split('\n');
+        buffer = lines.pop() || '';
+
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed || trimmed.startsWith(':')) continue;
+
+          if (trimmed.startsWith('data: ')) {
+            const dataStr = trimmed.slice(6);
+            if (dataStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const delta = parsed.choices?.[0]?.delta;
+              const content = delta?.content || delta?.reasoning_content || '';
+              if (content) {
+                fullResponse += content;
+                onChunk(content);
+              }
+            } catch {
+              // Raw text chunk fallback
+              if (dataStr) {
+                fullResponse += dataStr;
+                onChunk(dataStr);
+              }
+            }
+          } else {
+            // Direct streaming text
+            fullResponse += line + '\n';
+            onChunk(line + '\n');
+          }
         }
-      }, 30);
-    });
+      }
+
+      if (buffer.trim()) {
+        try {
+          const dataStr = buffer.trim().replace(/^data:\s*/, '');
+          if (dataStr && dataStr !== '[DONE]') {
+            const parsed = JSON.parse(dataStr);
+            const content = parsed.choices?.[0]?.delta?.content || '';
+            if (content) {
+              fullResponse += content;
+              onChunk(content);
+            }
+          }
+        } catch {
+          fullResponse += buffer;
+          onChunk(buffer);
+        }
+      }
+
+      return fullResponse || '(Empty response)';
+    } catch (err: any) {
+      console.warn('Direct chat stream failed, generating fallback response:', err);
+      const fallback = `Could not connect to LocaLLM inference engine at port ${config.server_port || 8080}. Ensure locaLLM API server is running with 'server_enabled: true'.`;
+      onChunk(fallback);
+      return fallback;
+    }
+  },
+
+  generateTitle: async (userPrompt: string, config: LocaLLMConfig): Promise<string> => {
+    const targetModel = config.default_model || config.model || 'nemotron3-super';
+    const workspace = config.active_workspace || 'default';
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3500);
+
+    const titlePrompt = `Summarize this user request into a 3 to 5 words title in the same language. Output ONLY the title without quotes, punctuation or extra words:\n"${userPrompt.slice(0, 250)}"`;
+
+    try {
+      const res = await fetch(`${API_BASE}/chat`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        signal: controller.signal,
+        body: JSON.stringify({
+          message: titlePrompt,
+          model: targetModel,
+          workspace,
+          temperature: 0.3,
+          options: {
+            files: [],
+            webSearch: false,
+            tools: false
+          }
+        })
+      });
+      clearTimeout(timeoutId);
+
+      if (!res.ok) return '';
+
+      if (res.body) {
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let full = '';
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          const chunk = decoder.decode(value, { stream: true });
+          const lines = chunk.split('\n');
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.slice(6);
+              if (dataStr === '[DONE]') continue;
+              try {
+                const parsed = JSON.parse(dataStr);
+                const delta = parsed.choices?.[0]?.delta?.content || '';
+                full += delta;
+              } catch {
+                full += dataStr;
+              }
+            } else if (trimmed && !trimmed.startsWith(':')) {
+              full += trimmed + ' ';
+            }
+          }
+          if (full.length > 60) break;
+        }
+        return full.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+      }
+      const text = await res.text();
+      return text.replace(/<think>[\s\S]*?<\/think>/gi, '').trim();
+    } catch {
+      return '';
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 };

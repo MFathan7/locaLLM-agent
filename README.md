@@ -6,18 +6,18 @@
               ✦  ʟ ᴏ ᴄ ᴀ ʟ ʟ ᴍ  ✦
 ```
 
-> **Developer-first autonomous local AI platform and interactive terminal cockpit powered by Ollama and OpenAI-compatible inference backends (vLLM, LocalAI, text-generation-webui).**
+> **Developer-first autonomous local AI platform, interactive terminal cockpit, and modern Liquid Glass Web UI powered by Ollama and OpenAI-compatible inference backends (vLLM, LocalAI, text-generation-webui).**
 
-`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant**, a **Multi-Step ReAct Coding Agent**, **24/7 Telegram & WhatsApp Bots**, **Isolated Project Workspaces**, and a **Hardware-Aware Model Manager**.
+`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant**, a **Modern Liquid Glass Web UI**, a **Multi-Step ReAct Coding Agent**, **24/7 Telegram & WhatsApp Bots**, **Isolated Project Workspaces**, and a **Hardware-Aware Model Manager**.
 
 ---
 
 ## ⚡ Quickstart (Get Running in 60 Seconds)
 
 ### 1. Prerequisites
-- **Python**: 3.9+ (Python 3.10–3.13 recommended)
+- **Python**: 3.9+ (Python 3.10-3.13 recommended)
 - **Local Inference Engine**: [Ollama](https://ollama.com/) running locally (`http://127.0.0.1:11434`) or any OpenAI-compatible server (e.g. vLLM, LocalAI)
-- **Node.js**: 18+ *(optional, required only for WhatsApp bot QR pairing via Baileys)*
+- **Node.js**: 18+ and npm (for the Web UI and WhatsApp bot pairing)
 
 ### 2. Installation
 
@@ -57,7 +57,22 @@ pip install -r requirements.txt
 pip install -e .
 ```
 
-### 3. Updating locaLLM to Latest Version
+### 3. Launching the Web UI Cockpit (Vite + React)
+`locaLLM` includes a modern, high-performance Web UI synchronized 1:1 with the CLI engine:
+
+```bash
+# 1. Go to the frontend directory
+cd frontend
+
+# 2. Install frontend dependencies (first run)
+npm install
+
+# 3. Start the development server with the backend bridge
+npm run dev
+```
+Open **`http://localhost:5173`** in your browser. All configuration changes, workspaces, and chat histories created in the Web UI are directly shared with the CLI.
+
+### 4. Updating locaLLM to Latest Version
 If you already installed `locaLLM` and want to update to the latest features, run:
 ```bash
 # 1. Pull latest updates from GitHub
@@ -67,11 +82,14 @@ git pull origin main
 pip install -r requirements.txt
 pip install -e .
 
-# 3. Verify health & connectivity
+# 3. Update frontend dependencies if needed
+cd frontend && npm install && cd ..
+
+# 4. Verify health & connectivity
 locallm status
 ```
 
-### 4. Essential Commands
+### 5. Essential Commands
 ```bash
 # 1. Launch the Interactive Main Menu with Live Telemetry Header
 locallm
@@ -96,6 +114,40 @@ locallm models
 ---
 
 ## ✨ Feature Overview
+
+### 🌐 Modern Liquid Glass Web UI (Vite + React + Tailwind)
+- **Apple Liquid Glass Aesthetic**: Inspired by modern macOS and iOS glass design, featuring translucent glassmorphism surfaces (`backdrop-filter: blur(24px)`), gradient specular highlights, soft sheen curves, and an animated blurred Aurora mesh background.
+- **Direct 1:1 Synchronization with CLI**: The Web UI communicates through a native local bridge with zero data silos. System prompts, sampling temperature, active model, custom OpenAI platforms, agent policies, and workspace chat histories are shared bidirectionally with the CLI in real time (`~/.locallm/config.json` and `~/.locallm/workspaces/`).
+- **Dual-Theme Architecture**: Sleek dark mode and crisp high-contrast light mode with deep slate typography (`text-slate-950 font-bold`), ensuring zero text wash-out and complete legibility across all surfaces.
+- **Clean Reasoning & Trace Filtering**: Strips intermediate `<think>...</think>` tokens, raw tool JSON dumps, and search queries from final responses while displaying a pulsing `Thinking and reasoning...` indicator while reasoning is underway.
+- **Collapsible Sources Side Panel**: Automatically extracts external web citations and search references into branded source cards with domain favicons, accessible via a right-hand sliding panel.
+- **One-Click Document Export (`.doc`)**: Export any assistant response directly into a styled Microsoft Word document with headings, tables, code blocks, and citation appendices.
+- **Refined Tables & Hover Copy Icon**:
+  - Horizontal-only grid lines (no vertical lines) with centered, bold column headers and no outer perimeter borders.
+  - Hover-activated copy icon button positioned beside the table that copies the entire table with headers in both Markdown and HTML.
+- **Tactile Copy Action Buttons**: One-click copy buttons with animated hover tooltips on both assistant responses and user message bubbles.
+- **Lazy "New Chat" Creation**: Clicking New Chat enters an empty draft state without creating empty session files on disk until the first message is sent.
+- **Intelligent Auto Chat Title Generation**:
+  - Instant heuristic title extraction stripping conversational filler words (*"tolong buatkan"*, *"can you help me"*, etc.).
+  - Non-blocking asynchronous AI title synthesis running in the background to name conversations by user goal.
+- **Adaptive Header Navigation**: Top header search icon hides when the sidebar is visible and animates in when collapsed, maintaining smooth spring transitions with zero animation gaps.
+- **Rich Markdown, Code Highlighting & Image Lightbox**:
+  - Syntax-highlighted code blocks with language tags and one-click copy.
+  - Inline image rendering with full-screen zoom lightbox modal.
+- **High-Performance Conversation Search**:
+  - Instant keyboard shortcut access (`Ctrl+F` or `Cmd+K` or header search icon).
+  - Debounced input (120ms) for instantaneous 60fps keystrokes.
+  - Contextual snippet extraction displaying ~120 characters centered around matches instead of unconstrained text dumps.
+  - Smooth asynchronous chat opening with zero main-thread locking.
+- **Centered Floating Scroll-to-Bottom Button**: Dynamic scroll detector displaying a sleek circular icon-only button in the bottom-center of the viewport whenever scrolled up.
+- **Dynamic Model & Platform Picker**:
+  - Model list displays model name on top and platform name (*Ollama*, *OpenAI*, or custom platforms) underneath.
+  - Select active inference platform (native local Ollama or custom remote OpenAI-compatible servers like vLLM / iForte-GPU).
+  - Model dropdowns re-query available models with 60-second in-memory caching and request timeout guards.
+- **Dynamic Plus Action Menu**:
+  - Upload file attachments.
+  - Toggle real-time Web Search on/off for models that support it.
+  - Toggle Autonomous Agent Tools on/off dynamically per prompt.
 
 ### 🖥️ Real-Time Telemetry Header Banner
 - **Live System & Hardware Cockpit**: The Unicode header banner at the top of every screen automatically displays real-time hardware telemetry:
@@ -180,7 +232,7 @@ locallm models
 - **Monospace-Pure TUI**: Monospace-safe text choices without emojis in Questionary menus, guaranteeing pixel-perfect alignment on Windows Terminal and CMD.
 
 ### 📊 Precision VRAM Hardware Sizing
-- **GQA Channel Awareness**: Calculates exact KV cache sizes based on physical KV head geometry rather than query heads, avoiding 4×–8× memory over-estimation.
+- **GQA Channel Awareness**: Calculates exact KV cache sizes based on physical KV head geometry rather than query heads, avoiding 4x-8x memory over-estimation.
 - **Sliding Window Attention (SWA)**: Binds local attention layers for hybrid architectures (e.g. Gemma 4, Mistral), preventing false spillover warnings on large context windows.
 - **Dynamic Classification**: Automatically evaluates models as `100% GPU (FIT)` or `SPILLOVER`.
 
