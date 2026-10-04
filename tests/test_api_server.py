@@ -271,11 +271,31 @@ class TestBackgroundAPIServerLifecycle(unittest.TestCase):
         self.assertEqual(info.get("port"), port)
         self.assertEqual(info.get("api_key"), "test-bg-key")
 
-        # Verify background server accepts requests
+        # Verify background server accepts requests and buffers them quietly
         with httpx.Client(timeout=3.0) as client:
             res = client.get(f"http://127.0.0.1:{port}/health")
             self.assertEqual(res.status_code, 200)
             self.assertEqual(res.json().get("status"), "ok")
+
+        from locallm.modules.api_server import (
+            build_request_logs_table,
+            clear_api_request_logs,
+            get_api_request_logs,
+        )
+
+        logs = get_api_request_logs()
+        self.assertTrue(len(logs) > 0)
+        self.assertEqual(logs[-1]["method"], "GET")
+        self.assertEqual(logs[-1]["path"], "/health")
+        self.assertEqual(logs[-1]["status"], 200)
+
+        # Verify table builder formats cleanly
+        tbl = build_request_logs_table(limit=10)
+        self.assertIsNotNone(tbl)
+
+        # Clear logs
+        clear_api_request_logs()
+        self.assertEqual(len(get_api_request_logs()), 0)
 
         # Stop background server
         stop_ok, stop_msg = stop_background_api_server()
@@ -285,3 +305,4 @@ class TestBackgroundAPIServerLifecycle(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

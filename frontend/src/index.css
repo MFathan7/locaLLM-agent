@@ -1,0 +1,205 @@
+@import "tailwindcss";
+
+@custom-variant dark (&:where(.dark, .dark *));
+
+@layer base {
+  :root {
+    /* Light mode is deliberately tinted and mid-tone so it never glares. */
+    --bg-base: #c9d1de;
+    --text-base: #1b2433;
+
+    --lg-fill-a: rgba(255, 255, 255, 0.34);
+    --lg-fill-b: rgba(255, 255, 255, 0.16);
+    --lg-strong-a: rgba(244, 247, 252, 0.72);
+    --lg-strong-b: rgba(232, 238, 247, 0.58);
+    --lg-spec: rgba(255, 255, 255, 0.85);
+    --lg-spec-dim: rgba(255, 255, 255, 0.28);
+    --lg-inner: rgba(255, 255, 255, 0.14);
+    --lg-edge-hi: rgba(255, 255, 255, 0.9);
+    --lg-edge-lo: rgba(255, 255, 255, 0.35);
+    --lg-drop: rgba(30, 41, 66, 0.22);
+    --lg-hairline: rgba(30, 41, 66, 0.1);
+    --lg-pill: rgba(255, 255, 255, 0.5);
+  }
+
+  .dark {
+    --bg-base: #070a12;
+    --text-base: #eef2fa;
+
+    --lg-fill-a: rgba(255, 255, 255, 0.1);
+    --lg-fill-b: rgba(255, 255, 255, 0.03);
+    --lg-strong-a: rgba(26, 32, 48, 0.78);
+    --lg-strong-b: rgba(16, 20, 32, 0.7);
+    --lg-spec: rgba(255, 255, 255, 0.28);
+    --lg-spec-dim: rgba(255, 255, 255, 0.06);
+    --lg-inner: rgba(255, 255, 255, 0.04);
+    --lg-edge-hi: rgba(255, 255, 255, 0.34);
+    --lg-edge-lo: rgba(255, 255, 255, 0.1);
+    --lg-drop: rgba(0, 0, 0, 0.55);
+    --lg-hairline: rgba(255, 255, 255, 0.07);
+    --lg-pill: rgba(255, 255, 255, 0.14);
+  }
+
+  * {
+    border-color: var(--lg-hairline);
+  }
+
+  body {
+    background-color: var(--bg-base);
+    color: var(--text-base);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    overflow: hidden;
+    transition: background-color 0.4s ease, color 0.4s ease;
+  }
+}
+
+/* Scrollbars */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(30, 41, 66, 0.22); border-radius: 9999px; }
+.dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); }
+
+/* ------------------------------------------------------------------ */
+/* Liquid Glass                                                         */
+/* Layers: translucent fill, strong backdrop blur + saturation, inner   */
+/* specular rim, a gradient hairline edge (::before) and a soft sheen   */
+/* highlight (::after) that makes the surface read as curved glass.      */
+/* ------------------------------------------------------------------ */
+/* In @layer components so Tailwind utilities (e.g. `absolute`) override */
+/* the `position: relative` these classes need for their pseudo layers.  */
+@layer components {
+.liquid-glass,
+.liquid-glass-strong,
+.liquid-glass-input,
+.liquid-glass-bubble {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(135deg, var(--lg-fill-a), var(--lg-fill-b));
+  -webkit-backdrop-filter: blur(24px) saturate(190%) brightness(1.04);
+  backdrop-filter: blur(24px) saturate(190%) brightness(1.04);
+  box-shadow:
+    inset 0 1px 1px 0 var(--lg-spec),
+    inset 0 -1px 1px 0 var(--lg-spec-dim),
+    inset 0 0 22px 0 var(--lg-inner),
+    0 12px 32px -14px var(--lg-drop);
+}
+
+.liquid-glass-strong {
+  background: linear-gradient(145deg, var(--lg-strong-a), var(--lg-strong-b));
+  -webkit-backdrop-filter: blur(36px) saturate(200%);
+  backdrop-filter: blur(36px) saturate(200%);
+  box-shadow:
+    inset 0 1px 1px 0 var(--lg-spec),
+    inset 0 -1px 1px 0 var(--lg-spec-dim),
+    0 24px 60px -18px var(--lg-drop);
+}
+
+.liquid-glass-input {
+  box-shadow:
+    inset 0 1px 1px 0 var(--lg-spec),
+    inset 0 -1px 1px 0 var(--lg-spec-dim),
+    inset 0 0 26px 0 var(--lg-inner),
+    0 18px 40px -16px var(--lg-drop);
+}
+
+.liquid-glass-bubble {
+  box-shadow:
+    inset 0 1px 1px 0 var(--lg-spec),
+    inset 0 -1px 1px 0 var(--lg-spec-dim),
+    0 8px 22px -12px var(--lg-drop);
+}
+
+/* Gradient hairline edge, bright on top-left and bottom-right */
+.liquid-glass::before,
+.liquid-glass-strong::before,
+.liquid-glass-input::before,
+.liquid-glass-bubble::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1px;
+  background: linear-gradient(
+    140deg,
+    var(--lg-edge-hi) 0%,
+    transparent 28%,
+    transparent 68%,
+    var(--lg-edge-lo) 100%
+  );
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask: linear-gradient(#000 0 0) content-box exclude, linear-gradient(#000 0 0);
+  pointer-events: none;
+  z-index: 1;
+}
+
+/* Soft curved sheen across the upper edge */
+.liquid-glass::after,
+.liquid-glass-strong::after,
+.liquid-glass-input::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(120% 70% at 18% -10%, rgba(255, 255, 255, 0.32), transparent 55%);
+  opacity: 0.55;
+  pointer-events: none;
+  z-index: -1;
+}
+.dark .liquid-glass::after,
+.dark .liquid-glass-strong::after,
+.dark .liquid-glass-input::after {
+  opacity: 0.22;
+}
+
+/* The moving selection "droplet" used for workspace switching */
+.liquid-pill {
+  background: linear-gradient(135deg, var(--lg-pill), rgba(255, 255, 255, 0.08));
+  -webkit-backdrop-filter: blur(12px) saturate(220%);
+  backdrop-filter: blur(12px) saturate(220%);
+  box-shadow:
+    inset 0 1px 1px 0 var(--lg-spec),
+    inset 0 -2px 4px 0 var(--lg-spec-dim),
+    0 6px 16px -6px var(--lg-drop);
+}
+}
+
+/* ------------------------------------------------------------------ */
+/* Animated blurred gradient background                                 */
+/* ------------------------------------------------------------------ */
+.aurora-blob {
+  position: absolute;
+  border-radius: 9999px;
+  filter: blur(80px);
+  will-change: transform;
+}
+.aurora-a { animation: aurora-a 18s ease-in-out infinite alternate; }
+.aurora-b { animation: aurora-b 22s ease-in-out infinite alternate; }
+.aurora-c { animation: aurora-c 26s ease-in-out infinite alternate; }
+.aurora-d { animation: aurora-d 20s ease-in-out infinite alternate; }
+
+@keyframes aurora-a {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(18vw, 12vh) scale(1.25); }
+  100% { transform: translate(6vw, 28vh) scale(0.95); }
+}
+@keyframes aurora-b {
+  0%   { transform: translate(0, 0) scale(1.1); }
+  50%  { transform: translate(-22vw, 16vh) scale(0.9); }
+  100% { transform: translate(-8vw, -8vh) scale(1.2); }
+}
+@keyframes aurora-c {
+  0%   { transform: translate(0, 0) scale(1); }
+  50%  { transform: translate(14vw, -18vh) scale(1.3); }
+  100% { transform: translate(-12vw, -6vh) scale(1); }
+}
+@keyframes aurora-d {
+  0%   { transform: translate(0, 0) scale(0.9); }
+  100% { transform: translate(-16vw, -22vh) scale(1.25); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .aurora-a, .aurora-b, .aurora-c, .aurora-d { animation: none; }
+}

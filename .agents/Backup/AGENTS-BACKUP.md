@@ -1,3 +1,7 @@
+---
+trigger: manual
+---
+
 # locaLLM Architectural & Development Rules
 
 Architectural standards, TUI design guidelines, and technical specifications for **locaLLM**.

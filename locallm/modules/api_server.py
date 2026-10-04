@@ -4,6 +4,7 @@ Exposes standard OpenAI endpoints (/v1/chat/completions, /v1/models, /health)
 backed by locaLLM's local inference engines, smart routing, and workspace context.
 """
 
+from collections import deque
 from datetime import datetime
 import http.server
 import json
@@ -16,6 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 import questionary
+from rich.live import Live
 from rich.panel import Panel
 from rich.table import Table
 
@@ -24,6 +26,42 @@ from locallm.core.openai_client import get_inference_client
 from locallm.core.router import route_prompt
 from locallm.core.workspace import load_workspace_context
 from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
+
+_API_REQUEST_LOGS: deque = deque(maxlen=200)
+_API_LOGS_LOCK = threading.Lock()
+
+
+def record_api_request_log(
+    method: str,
+    path: str,
+    status: int,
+    detail: str = "",
+    client_ip: str = "",
+) -> Dict[str, Any]:
+    """Record an API request event in the in-memory ring buffer."""
+    entry = {
+        "timestamp": datetime.now().strftime("%H:%M:%S"),
+        "method": method,
+        "path": path,
+        "status": status,
+        "detail": detail,
+        "client_ip": client_ip,
+    }
+    with _API_LOGS_LOCK:
+        _API_REQUEST_LOGS.append(entry)
+    return entry
+
+
+def get_api_request_logs(limit: int = 50) -> List[Dict[str, Any]]:
+    """Retrieve recent API request log entries."""
+    with _API_LOGS_LOCK:
+        return list(_API_REQUEST_LOGS)[-limit:]
+
+
+def clear_api_request_logs() -> None:
+    """Clear stored API request log entries."""
+    with _API_LOGS_LOCK:
+        _API_REQUEST_LOGS.clear()
 
 
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
@@ -74,6 +112,7 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
         api_key: str = "",
         workspace: str = "default",
         default_model: Optional[str] = None,
+        is_background: bool = False,
     ):
         super().__init__(server_address, RequestHandlerClass)
         self.config = config
@@ -81,6 +120,7 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
         self.api_key = api_key.strip()
         self.workspace = workspace
         self.default_model = default_model or config.default_model
+        self.is_background = is_background
 
 
 class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
@@ -520,14 +560,26 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self._log_request_event("POST", path, 500, detail=f"stream error: {exc} ({duration}s)")
 
     def _log_request_event(self, method: str, path: str, status: int, detail: str = "") -> None:
-        """Format and print structured HTTP log event to the console."""
-        now = datetime.now().strftime("%H:%M:%S")
-        status_color = "green" if 200 <= status < 300 else ("yellow" if 300 <= status < 500 else "red")
-        detail_str = f" • [dim]{detail}[/]" if detail else ""
-        console.print(
-            f"[dim]{now}[/] [bold cyan]{method:<4}[/] [#bbbbbb]{path:<22}[/] "
-            f"[{status_color}]{status}[/]{detail_str}"
-        )
+        """Format and record structured HTTP log event."""
+        client_ip = ""
+        try:
+            if self.client_address:
+                client_ip = str(self.client_address[0])
+        except Exception:
+            pass
+
+        record_api_request_log(method, path, status, detail=detail, client_ip=client_ip)
+
+        # Suppress direct stdout console print if running as background server daemon.
+        # This prevents incoming requests from corrupting or closing interactive TUI menus.
+        if not getattr(self.server, "is_background", False):
+            now = datetime.now().strftime("%H:%M:%S")
+            status_color = "green" if 200 <= status < 300 else ("yellow" if 300 <= status < 500 else "red")
+            detail_str = f" • [dim]{detail}[/]" if detail else ""
+            console.print(
+                f"[dim]{now}[/] [bold cyan]{method:<4}[/] [#bbbbbb]{path:<22}[/] "
+                f"[{status_color}]{status}[/]{detail_str}"
+            )
 
 
 def run_api_server(
@@ -579,6 +631,7 @@ def run_api_server(
             api_key=effective_api_key,
             workspace=target_workspace,
             default_model=target_model,
+            is_background=False,
         )
     except Exception as exc:
         console.print(f"[bold red]Failed to initialize HTTP API server:[/] {exc}")
@@ -681,6 +734,7 @@ def start_background_api_server(
                 api_key=api_key,
                 workspace=workspace,
                 default_model=model,
+                is_background=True,
             )
         except Exception as exc:
             return False, f"Failed to initialize server: {exc}", requested_port
@@ -841,7 +895,89 @@ def run_api_server_menu(config: LocaLLMConfig) -> None:
 
         elif choice == "View Connection Info & Client Examples":
             _display_server_client_info(config, host, active_port, api_key)
-            questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+
+
+def build_request_logs_table(limit: int = 15, palette: Optional[Any] = None) -> Table:
+    """Construct Rich Table displaying recent HTTP requests."""
+    if palette is None:
+        palette = get_theme_palette()
+
+    table = Table(
+        box=palette.box_style,
+        border_style=palette.border_style,
+        expand=True,
+        header_style=f"bold {palette.primary}",
+        show_header=True,
+    )
+    table.add_column("Time", style="dim", width=10)
+    table.add_column("Method", style=f"bold {palette.primary}", width=8)
+    table.add_column("Endpoint / Path", width=26)
+    table.add_column("Status", justify="center", width=10)
+    table.add_column("Detail / Latency")
+
+    logs = get_api_request_logs(limit=limit)
+    if not logs:
+        table.add_row(
+            "-",
+            "-",
+            "[dim]No incoming requests recorded yet[/]",
+            "[dim]-[/]",
+            "[dim]Waiting for client requests...[/]",
+        )
+    else:
+        for entry in reversed(logs):
+            status = entry.get("status", 200)
+            status_color = (
+                palette.success
+                if 200 <= status < 300
+                else (palette.warning if 300 <= status < 500 else palette.danger)
+            )
+            table.add_row(
+                entry.get("timestamp", "--:--:--"),
+                entry.get("method", "GET"),
+                entry.get("path", "/"),
+                f"[{status_color}]{status}[/]",
+                f"[dim]{entry.get('detail', '')}[/]" if entry.get("detail") else "",
+            )
+    return table
+
+
+def _run_live_request_log_stream(
+    config: LocaLLMConfig,
+    host: str,
+    port: int,
+) -> None:
+    """Run an auto-refreshing live request log HUD until user presses 'q' or Enter."""
+    from locallm.modules.monitor import _check_exit_key
+
+    palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+    base_url = f"http://{host}:{port}/v1"
+
+    def _render() -> Panel:
+        table = build_request_logs_table(limit=18, palette=palette)
+        logs = get_api_request_logs()
+        sub_info = f"[dim]Listening on {base_url} • {len(logs)} request(s) recorded • Press[/] [bold white]q[/] [dim]or[/] [bold white]Enter[/] [dim]to return[/]"
+        return Panel(
+            table,
+            title=f"[bold {palette.primary}]⟦{palette.icon} LIVE API GATEWAY REQUEST MONITOR⟧[/]",
+            subtitle=sub_info,
+            box=palette.box_style,
+            border_style=palette.border_style,
+            padding=(0, 1),
+        )
+
+    console.clear()
+    try:
+        with Live(_render(), console=console, refresh_per_second=4, screen=False) as live:
+            while True:
+                time.sleep(0.2)
+                if _check_exit_key():
+                    break
+                live.update(_render())
+    except KeyboardInterrupt:
+        pass
+    finally:
+        console.clear()
 
 
 def _display_server_client_info(
@@ -850,38 +986,72 @@ def _display_server_client_info(
     port: int,
     api_key: str,
 ) -> None:
-    """Display copy-pasteable client snippets and endpoints card."""
+    """Display copy-pasteable client snippets, endpoints card, and interactive request activity."""
     palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
     base_url = f"http://{host}:{port}/v1"
     auth_str = f"[bold {palette.success}]Bearer Key Required[/]" if api_key else "[#aaaaaa]Open (No Key)[/]"
 
-    table = Table(
-        box=palette.box_style,
-        border_style=palette.border_style,
-        expand=True,
-    )
-    table.add_column("Endpoint / Tool", style=f"bold {palette.primary}", width=25)
-    table.add_column("Value / URL")
+    while True:
+        console.clear()
+        table = Table(
+            box=palette.box_style,
+            border_style=palette.border_style,
+            expand=True,
+        )
+        table.add_column("Endpoint / Tool", style=f"bold {palette.primary}", width=25)
+        table.add_column("Value / URL")
 
-    table.add_row("OpenAI Base URL", f"[bold {palette.accent}]{base_url}[/]")
-    table.add_row("Chat Completions Endpoint", f"[bold white]{base_url}/chat/completions[/]")
-    table.add_row("Models List Endpoint", f"[bold white]{base_url}/models[/]")
-    table.add_row("Health Probe Endpoint", f"[bold white]http://{host}:{port}/health[/]")
-    table.add_row("Authentication", auth_str)
-    if api_key:
-        table.add_row("Configured API Key", f"[bold]{api_key}[/]")
+        table.add_row("OpenAI Base URL", f"[bold {palette.accent}]{base_url}[/]")
+        table.add_row("Chat Completions Endpoint", f"[bold white]{base_url}/chat/completions[/]")
+        table.add_row("Models List Endpoint", f"[bold white]{base_url}/models[/]")
+        table.add_row("Health Probe Endpoint", f"[bold white]http://{host}:{port}/health[/]")
+        table.add_row("Authentication", auth_str)
+        if api_key:
+            table.add_row("Configured API Key", f"[bold]{api_key}[/]")
 
-    console.print(Panel(
-        table,
-        title=f"[bold {palette.primary}]⟦{palette.icon} API GATEWAY CONNECTION INFO⟧[/]",
-        border_style=palette.border_style,
-        box=palette.box_style,
-    ))
+        console.print(Panel(
+            table,
+            title=f"[bold {palette.primary}]⟦{palette.icon} API GATEWAY CONNECTION INFO⟧[/]",
+            border_style=palette.border_style,
+            box=palette.box_style,
+        ))
 
-    console.print("[dim]Client Configuration Examples:[/]")
-    console.print(f"  [dim]• Open WebUI / Continue / Dify Base URL:[/] [bold]{base_url}[/]")
-    console.print(
-        f"  [dim]• Python OpenAI SDK Example:[/]\n"
-        f"    [white]client = OpenAI(base_url=\"{base_url}\", api_key=\"{api_key or 'not-needed'}\")[/]\n"
-        f"    [white]resp = client.chat.completions.create(model=\"{config.default_model}\", messages=[{{\"role\": \"user\", \"content\": \"Hi\"}}])[/]\n"
-    )
+        # Recent request activity table
+        log_count = len(get_api_request_logs())
+        logs_table = build_request_logs_table(limit=10, palette=palette)
+        console.print(Panel(
+            logs_table,
+            title=f"[bold {palette.primary}]⟦{palette.icon} RECENT REQUEST ACTIVITY ({log_count} recorded)⟧[/]",
+            border_style=palette.border_style,
+            box=palette.box_style,
+        ))
+
+        console.print("[dim]Client Configuration Examples:[/]")
+        console.print(f"  [dim]• Open WebUI / Continue / Dify Base URL:[/] [bold]{base_url}[/]")
+        console.print(
+            f"  [dim]• Python OpenAI SDK Example:[/]\n"
+            f"    [white]client = OpenAI(base_url=\"{base_url}\", api_key=\"{api_key or 'not-needed'}\")[/]\n"
+            f"    [white]resp = client.chat.completions.create(model=\"{config.default_model}\", messages=[{{\"role\": \"user\", \"content\": \"Hi\"}}])[/]\n"
+        )
+
+        choice = questionary.select(
+            "Connection & Log Actions:",
+            choices=[
+                "Refresh Logs",
+                "Live Stream Logs (HUD)",
+                "Clear Request Logs",
+                "Back",
+            ],
+            style=QUESTIONARY_STYLE,
+        ).ask()
+
+        if choice is None or choice == "Back":
+            break
+        elif choice == "Refresh Logs":
+            continue
+        elif choice == "Live Stream Logs (HUD)":
+            _run_live_request_log_stream(config, host, port)
+        elif choice == "Clear Request Logs":
+            clear_api_request_logs()
+            console.print(f"[bold {palette.success}]✔ Request logs cleared.[/]")
+            time.sleep(0.5)
