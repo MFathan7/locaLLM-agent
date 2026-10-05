@@ -228,6 +228,12 @@ class OllamaClient:
                     "prompt_eval_duration": data.get("prompt_eval_duration", 0),
                 })
             msg = data.get("message", {})
+            thinking = msg.get("thinking", "")
+            if thinking and msg.get("content"):
+                msg["content"] = f"<think>\n{thinking}\n</think>\n\n{msg['content']}"
+            elif thinking and not msg.get("content"):
+                msg["content"] = f"<think>\n{thinking}\n</think>"
+
             if tools and not msg.get("tool_calls") and msg.get("content"):
                 from locallm.core.tools import extract_fallback_tool_calls
                 tool_names = {t.get("function", {}).get("name") for t in tools if isinstance(t, dict)}
@@ -257,6 +263,7 @@ class OllamaClient:
             "options": opts,
         }
 
+        in_thinking = False
         with httpx.Client(timeout=None) as client:
             with client.stream("POST", url, json=payload) as response:
                 response.raise_for_status()
@@ -265,10 +272,24 @@ class OllamaClient:
                         continue
                     data = json.loads(line)
                     msg = data.get("message", {})
-                    token = msg.get("content", "")
-                    if token:
-                        yield token
+                    thinking_token = msg.get("thinking", "")
+                    content_token = msg.get("content", "")
+
+                    if thinking_token:
+                        if not in_thinking:
+                            yield "<think>\n"
+                            in_thinking = True
+                        yield thinking_token
+                    elif content_token:
+                        if in_thinking:
+                            yield "\n</think>\n\n"
+                            in_thinking = False
+                        yield content_token
+
                     if data.get("done", False):
+                        if in_thinking:
+                            yield "\n</think>\n\n"
+                            in_thinking = False
                         if stats_out is not None:
                             stats_out.update({
                                 "prompt_eval_count": data.get("prompt_eval_count", 0),
@@ -278,6 +299,9 @@ class OllamaClient:
                                 "prompt_eval_duration": data.get("prompt_eval_duration", 0),
                             })
                         break
+
+                if in_thinking:
+                    yield "\n</think>\n\n"
 
     def chat(
         self,

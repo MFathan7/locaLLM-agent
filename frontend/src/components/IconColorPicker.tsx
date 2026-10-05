@@ -150,7 +150,7 @@ export function IconColorPicker({
               title={iconName}
               aria-label={`Select icon ${iconName}`}
             >
-              <WorkspaceIcon icon={iconName} className="w-5 h-5" />
+              <WorkspaceIcon icon={iconName} color={selectedColor} className="w-5.5 h-5.5" />
             </button>
           );
         })}

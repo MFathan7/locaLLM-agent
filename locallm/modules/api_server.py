@@ -122,6 +122,103 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
         self.workspace = workspace
         self.default_model = default_model or config.default_model
         self.is_background = is_background
+        self._config_mtime: float = 0.0
+        self._client_cache: Dict[str, Any] = {}
+        self._client_lock = threading.Lock()
+        self._init_config_mtime()
+
+    def _init_config_mtime(self) -> None:
+        try:
+            from locallm.config import get_config_file_path
+            cfg_p = get_config_file_path()
+            if cfg_p.exists():
+                self._config_mtime = cfg_p.stat().st_mtime
+        except Exception:
+            pass
+
+    def reload_config_if_needed(self) -> LocaLLMConfig:
+        """Check if config.json on disk was modified, and hot-reload state if so."""
+        try:
+            from locallm.config import get_config_file_path, load_config
+            cfg_p = get_config_file_path()
+            if cfg_p.exists():
+                mtime = cfg_p.stat().st_mtime
+                if mtime > self._config_mtime:
+                    fresh_cfg = load_config()
+                    self.config = fresh_cfg
+                    self.default_model = fresh_cfg.default_model
+                    self.workspace = fresh_cfg.active_workspace
+                    self._config_mtime = mtime
+                    from locallm.core.openai_client import get_inference_client
+                    with self._client_lock:
+                        self.client = get_inference_client(fresh_cfg)
+                        self._client_cache.clear()
+        except Exception:
+            pass
+        return self.config
+
+    def get_client_for_request(
+        self,
+        model: Optional[str] = None,
+        backend: Optional[str] = None,
+    ) -> Any:
+        """Dynamically resolve and cache the inference client for a request."""
+        self.reload_config_if_needed()
+        config = self.config
+
+        target_backend = (backend or "").strip().lower()
+
+        if not target_backend and model:
+            target_model = model.strip()
+            from locallm.config import get_custom_platform
+            for p in getattr(config, "custom_platforms", []):
+                if target_model == p.default_model or target_model == p.name:
+                    target_backend = p.name.lower()
+                    break
+
+            if not target_backend:
+                active = config.active_backend.strip().lower()
+                if active == "ollama":
+                    target_backend = "ollama"
+                else:
+                    custom_p = get_custom_platform(config, active)
+                    if custom_p and custom_p.default_model == target_model:
+                        target_backend = active
+                    else:
+                        if ":" in target_model or "/" in target_model:
+                            target_backend = "ollama"
+                        else:
+                            target_backend = active
+
+        if not target_backend:
+            target_backend = config.active_backend.strip().lower()
+
+        # If target matches currently active backend and self.client is available, use it directly
+        if target_backend == config.active_backend.strip().lower() and self.client:
+            return self.client
+
+        with self._client_lock:
+            if target_backend == "ollama":
+                cache_key = f"ollama:{config.ollama_host}"
+                if cache_key not in self._client_cache:
+                    from locallm.core.ollama_client import OllamaClient
+                    self._client_cache[cache_key] = OllamaClient(base_url=config.ollama_host)
+                return self._client_cache[cache_key]
+            else:
+                from locallm.config import get_custom_platform
+                from locallm.core.openai_client import OpenAIClient
+                plat = get_custom_platform(config, target_backend)
+                if plat:
+                    cache_key = f"openai:{plat.api_base}:{plat.api_key}"
+                    if cache_key not in self._client_cache:
+                        self._client_cache[cache_key] = OpenAIClient(
+                            api_base=plat.api_base,
+                            api_key=plat.api_key,
+                        )
+                    return self._client_cache[cache_key]
+
+            from locallm.core.openai_client import get_inference_client
+            return self.client or get_inference_client(config)
 
 
 class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
@@ -248,14 +345,31 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/")
         if path in ("/api/workspaces", "/v1/workspaces"):
             try:
-                body = self._read_json_body() or {}
-                ws_name = body.get("name", "").strip().lower()
+                import json
+                from locallm.core.workspace import get_workspace_path, get_workspace_agents_path, rename_workspace
+
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                body = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                raw_name = body.get("name", "").strip()
+                old_name = (body.get("oldName") or body.get("old_name") or "").strip()
+                new_name = (body.get("newName") or raw_name).strip()
+
+                # If oldName is specified and differs from new_name, perform workspace rename
+                if old_name and new_name and old_name != new_name:
+                    active_ws = getattr(self.server, "workspace", None)
+                    ok, msg = rename_workspace(old_name, new_name, active_ws)
+                    if not ok:
+                        self._send_json_response(400, {"error": msg})
+                        return
+                    if active_ws == old_name:
+                        self.server.workspace = new_name
+
+                ws_name = new_name or raw_name or old_name
                 if not ws_name:
                     self._send_json_response(400, {"error": "Workspace name is required"})
                     return
 
-                from locallm.core.workspace import get_workspace_path, get_workspace_agents_path
-                import json
                 ws_path = get_workspace_path(ws_name)
                 if not ws_path.exists():
                     self._send_json_response(404, {"error": f"Workspace '{ws_name}' not found"})
@@ -312,6 +426,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         path = self.path.split("?")[0].rstrip("/")
 
         if path in ("", "/health", "/v1/health"):
+            self.server.reload_config_if_needed()
             active_ws = self.server.workspace
             backend_name = self.server.config.active_backend
             model = self.server.default_model
@@ -357,22 +472,58 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         if path in ("/api/sessions", "/v1/sessions"):
             try:
                 from urllib.parse import parse_qs, urlparse
-                from locallm.core.workspace import list_workspace_sessions
+                from locallm.core.workspace import list_workspace_sessions, load_workspace_session
                 parsed_url = urlparse(self.path)
                 params = parse_qs(parsed_url.query)
                 target_ws = params.get("workspace", ["default"])[0]
-                sessions = list_workspace_sessions(target_ws)
-                self._send_json_response(200, sessions)
-                self._log_request_event("GET", path, 200, detail=f"{len(sessions)} sessions")
+                summary_sessions = list_workspace_sessions(target_ws)
+                detailed_sessions = []
+                for s in summary_sessions:
+                    sess_id = s.get("session_id")
+                    mem = load_workspace_session(target_ws, sess_id)
+                    msgs = []
+                    if mem and getattr(mem, "history", None):
+                        for idx, h in enumerate(mem.history):
+                            msgs.append({
+                                "id": f"{sess_id}-{idx}",
+                                "role": h.get("role", "user"),
+                                "content": h.get("content", ""),
+                                "timestamp": int(time.time() * 1000),
+                                "files": h.get("files"),
+                                "sources": h.get("sources"),
+                                "options": h.get("options"),
+                            })
+                    raw_title = s.get("title") or s.get("last_snippet") or "New Chat"
+                    clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+                    clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+                    if clean_title and "\n" in clean_title:
+                        clean_title = clean_title.split("\n")[0].strip()
+                    detailed_sessions.append({
+                        "id": sess_id,
+                        "title": clean_title or "New Chat",
+                        "workspace": target_ws,
+                        "updatedAt": s.get("updated_at"),
+                        "messages": msgs
+                    })
+                self._send_json_response(200, detailed_sessions)
+                self._log_request_event("GET", path, 200, detail=f"{len(detailed_sessions)} sessions")
             except Exception as exc:
                 self._send_openai_error(500, f"Failed to retrieve sessions: {exc}")
             return
 
         if path in ("/v1/models", "/models", "/api/models"):
             try:
+                self.server.reload_config_if_needed()
+                from urllib.parse import parse_qs, urlparse
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_backend = params.get("backend", [""])[0] or self.headers.get("X-Backend", "")
+                effective_client = self.server.get_client_for_request(backend=target_backend)
+
                 raw_models: List[Dict[str, Any]] = []
-                if hasattr(self.server.client, "list_models"):
-                    raw_models = self.server.client.list_models() or []
+                if hasattr(effective_client, "list_models"):
+                    raw_models = effective_client.list_models() or []
 
                 model_entries: List[Dict[str, Any]] = [
                     {
@@ -383,6 +534,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         "permission": [],
                         "root": "locallm-agent",
                         "parent": None,
+                        "capabilities": {"files": True, "webSearch": True, "tools": True},
                     },
                     {
                         "id": "auto",
@@ -392,6 +544,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         "permission": [],
                         "root": "auto",
                         "parent": None,
+                        "capabilities": {"files": True, "webSearch": True, "tools": True},
                     },
                 ]
 
@@ -406,6 +559,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             "permission": [],
                             "root": m_id,
                             "parent": None,
+                            "capabilities": {"files": True, "webSearch": True, "tools": True},
                         })
 
                 self._send_json_response(200, {
@@ -447,8 +601,15 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self.server.config = new_cfg
                 self.server.default_model = new_cfg.default_model
                 self.server.workspace = new_cfg.active_workspace
+                from locallm.core.openai_client import get_inference_client
+                with self.server._client_lock:
+                    self.server.client = get_inference_client(new_cfg)
+                from locallm.config import get_config_file_path
+                cfg_p = get_config_file_path()
+                if cfg_p.exists():
+                    self.server._config_mtime = cfg_p.stat().st_mtime
                 self._send_json_response(200, {"success": True, "config": new_cfg.model_dump()})
-                self._log_request_event("POST", path, 200, detail="Config updated")
+                self._log_request_event("POST", path, 200, detail="Config updated & hot-reloaded")
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
                 self._log_request_event("POST", path, 500, detail=str(exc))
@@ -484,10 +645,27 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 ws_name = payload.get("workspace", "default")
                 session_id = payload.get("id", str(int(time.time())))
                 memory = ConversationMemory()
+                clean_history = []
                 for msg in payload.get("messages", []):
-                    memory.add_message(msg.get("role", "user"), msg.get("content", ""))
+                    item = {
+                        "role": msg.get("role", "user"),
+                        "content": msg.get("content", ""),
+                    }
+                    if msg.get("sources"):
+                        item["sources"] = msg.get("sources")
+                    if msg.get("files"):
+                        item["files"] = msg.get("files")
+                    if msg.get("options"):
+                        item["options"] = msg.get("options")
+                    clean_history.append(item)
+                raw_title = payload.get("title", "New Chat")
+                clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
+                clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+                clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+                if clean_title and "\n" in clean_title:
+                    clean_title = clean_title.split("\n")[0].strip()
                 save_workspace_session(ws_name, session_id, memory, metadata={
-                    "title": payload.get("title", "New Chat"),
+                    "title": clean_title or "New Chat",
                     "session_id": session_id,
                     "workspace": ws_name,
                     "model": payload.get("model", "-")
@@ -496,6 +674,77 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._log_request_event("POST", path, 200, detail=f"Saved session {session_id}")
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
+            return
+
+        # 3.5 File parsing endpoint for .docx, .pdf, txt, etc.
+        if path in ("/api/parse-file", "/v1/parse-file"):
+            try:
+                import base64
+                from locallm.core.file_parser import parse_attachment_file
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                filename = payload.get("filename", "file.txt")
+                raw_b64 = payload.get("data", "")
+                if "," in raw_b64:
+                    raw_b64 = raw_b64.split(",", 1)[1]
+                file_bytes = base64.b64decode(raw_b64) if raw_b64 else b""
+
+                success, extracted_text, err = parse_attachment_file(filename, file_bytes)
+                if not success:
+                    self._send_json_response(400, {"success": False, "error": err, "text": ""})
+                    return
+                self._send_json_response(200, {"success": True, "text": extracted_text, "filename": filename})
+                self._log_request_event("POST", path, 200, detail=f"Parsed file {filename}")
+            except Exception as exc:
+                self._send_json_response(500, {"success": False, "error": str(exc), "text": ""})
+            return
+        # 4. GitHub Skill inspection endpoint
+        if path in ("/api/skills/inspect", "/v1/skills/inspect"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                from locallm.core.workspace import inspect_github_skills
+                source = str(payload.get("source", "")).strip()
+                if not source:
+                    self._send_json_response(400, {"success": False, "error": "Source repository or URL is required."})
+                    return
+                ok, msg, available, zip_bytes, target_subpath = inspect_github_skills(source)
+                self._send_json_response(200 if ok else 400, {
+                    "success": ok,
+                    "message": msg,
+                    "skills": available,
+                    "count": len(available),
+                })
+                self._log_request_event("POST", path, 200 if ok else 400, detail=f"Inspected {source}: {len(available)} skills")
+            except Exception as exc:
+                self._send_json_response(500, {"success": False, "error": str(exc)})
+            return
+
+        # 5. GitHub Skill installation endpoint
+        if path in ("/api/skills/install", "/v1/skills/install"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                from locallm.core.workspace import install_skill_from_source
+                source = str(payload.get("source", "")).strip()
+                target_ws = str(payload.get("workspace", "")).strip() or self.server.workspace or "default"
+                selected_skills = payload.get("skills", None)
+                if not source:
+                    self._send_json_response(400, {"success": False, "error": "Source repository or URL is required."})
+                    return
+                ok, msg, installed = install_skill_from_source(target_ws, source, selected_skills)
+                self._send_json_response(200 if ok else 400, {
+                    "success": ok,
+                    "message": msg,
+                    "installed": installed,
+                    "count": len(installed),
+                })
+                self._log_request_event("POST", path, 200 if ok else 400, detail=f"Installed to {target_ws}: {len(installed)} skills")
+            except Exception as exc:
+                self._send_json_response(500, {"success": False, "error": str(exc)})
             return
 
         if path not in ("/v1/chat/completions", "/chat/completions", "/api/chat"):
@@ -543,75 +792,57 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 last_prompt = str(m.get("content", ""))
                 break
 
-        # Check if user explicitly asked for web search or if web search option was toggled
-        is_explicit_search = False
-        if last_prompt:
-            lp_lower = last_prompt.lower()
-            if any(k in lp_lower for k in ("cari di web", "cari di website", "search web", "search on web", "googling", "browsing", "cari online", "search the web")):
-                is_explicit_search = True
-
-        search_directive = ""
+        # Check universal web search invocation: UI options flag, command tags, or URL targets
+        is_explicit_search = bool(
+            re.match(r"^(?:@web|/web|/search|web:|search:)\b", last_prompt.strip(), re.IGNORECASE)
+        )
         should_search_web = web_search_enabled or is_explicit_search
-        if should_search_web and last_prompt:
-            try:
-                from locallm.core.tools.web import perform_web_search
-                # Strip conversational fluff to get optimal search query
-                clean_query = re.sub(
-                    r"^(?:coba\s+|tolong\s+|bisa\s+|mohon\s+)?(?:kamu\s+)?(?:carikan|cari|search\s+for|search)?(?:\s+(?:di|pada|ke|on|in)\s+(?:website|web|internet|google))?[\s,:]*",
-                    "",
-                    last_prompt.strip(),
-                    flags=re.IGNORECASE,
-                ).strip()
-                clean_query = re.sub(
-                    r"^(?:apakah\s+(?:ada|bisa|terdapat)|ada(?:kah)?(?:\s+tidak|\s+gak)?|apa\s+saja|rekomendasi)\s+",
-                    "",
-                    clean_query,
-                    flags=re.IGNORECASE,
-                ).strip()
-                clean_query = re.sub(
-                    r"^(?:informasi\s+(?:tentang|mengenai)?|info\s+(?:tentang|mengenai)?)\s*",
-                    "",
-                    clean_query,
-                    flags=re.IGNORECASE,
-                ).strip().rstrip("?.! ") or last_prompt.strip()
 
-                search_res = perform_web_search(clean_query, max_results=5)
-                if search_res and not search_res.startswith("Error:"):
-                    search_directive = (
-                        f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
-                        "Directives: Use the above verified real-time web search results to thoroughly answer the user's inquiry. "
-                        "Cite your sources using markdown links [Source Title](URL) directly in your response so the user can verify them. "
-                        "Do not output JSON commands or tool call blocks."
-                    )
-            except Exception as exc:
-                self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
-        elif not tools_enabled:
-            search_directive = (
-                "\n\nDirectives: External tools and web search are currently disabled for this turn. "
-                "Do NOT output tool calls, JSON commands (e.g. { 'command': ... }), or reasoning blocks. "
-                "Provide a direct, natural response based on your existing knowledge."
+        if tools_enabled:
+            base_directive = (
+                "\n\nDirectives (Tools Enabled): Workspace agent tools, skills, and internet access are enabled for this session. "
+                "Never say you cannot perform tasks because you are 'just an AI'. "
+                "Consult the workspace skills catalogue and guidelines above to formulate practical execution steps, scripts, or recommended solutions."
+            )
+        elif not should_search_web:
+            base_directive = (
+                "\n\nDirectives: You are operating in conversational assistant mode. You have complete awareness of the active workspace context, persona, and skills catalogue listed above. "
+                "When answering inquiries or advising the user, refer to and explain any relevant workspace skills. "
+                "Do NOT output automated tool-call execution blocks or JSON commands unless tools are specifically enabled for this turn."
+            )
+        else:
+            base_directive = (
+                "\n\nDirectives: You have active live internet browsing capabilities. Synthesize the web search findings into a comprehensive, direct answer. "
+                "Do not state that you cannot access the web or are just an AI."
             )
 
         # Resolve active workspace context
         req_ws = self.headers.get("X-Workspace", "").strip() or self.server.workspace
-        ws_context = load_workspace_context(req_ws) + search_directive
+        ws_context = load_workspace_context(req_ws) + base_directive
 
         # Inject workspace context into system messages
         processed_messages = self._prepare_messages_with_context(messages, ws_context)
 
+        # Resolve target model & backend
+        self.server.reload_config_if_needed()
+        backend_req = str(payload.get("backend", "") or payload.get("provider", "") or self.headers.get("X-Backend", "")).strip()
+
         # Intelligent Router resolution
         target_model = model_req
         if model_req.lower() in ("auto", "locallm-agent", ""):
-            last_prompt = ""
+            last_prompt_route = ""
             for m in reversed(messages):
                 if m.get("role") == "user":
-                    last_prompt = str(m.get("content", ""))
+                    last_prompt_route = str(m.get("content", ""))
                     break
-            if last_prompt:
-                route_res = route_prompt(last_prompt, self.server.config, self.server.client)
+            temp_client = self.server.get_client_for_request(model=self.server.default_model, backend=backend_req)
+            if last_prompt_route:
+                route_res = route_prompt(last_prompt_route, self.server.config, temp_client)
                 target_model = route_res.selected_model
             else:
                 target_model = self.server.default_model
+
+        inference_client = self.server.get_client_for_request(model=target_model, backend=backend_req)
 
         if stream_requested:
             self._handle_streaming_completion(
@@ -621,6 +852,11 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 context_window=context_window,
                 start_time=start_time,
                 path=path,
+                client=inference_client,
+                should_search_web=should_search_web,
+                tools_enabled=tools_enabled,
+                last_prompt=last_prompt,
+                workspace_name=req_ws,
             )
         else:
             self._handle_non_streaming_completion(
@@ -630,6 +866,11 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 context_window=context_window,
                 start_time=start_time,
                 path=path,
+                client=inference_client,
+                should_search_web=should_search_web,
+                tools_enabled=tools_enabled,
+                last_prompt=last_prompt,
+                workspace_name=req_ws,
             )
 
     def _prepare_messages_with_context(
@@ -661,6 +902,35 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
         return result
 
+    def _inject_search_context(
+        self,
+        messages: List[Dict[str, Any]],
+        search_directive: str,
+    ) -> List[Dict[str, Any]]:
+        """Append real-time search results and web directives to the system prompt."""
+        if not search_directive:
+            return list(messages)
+
+        result: List[Dict[str, Any]] = []
+        has_system = False
+
+        for msg in messages:
+            if msg.get("role") == "system" and not has_system:
+                existing = str(msg.get("content", ""))
+                combined = f"{existing}\n\n{search_directive}"
+                result.append({"role": "system", "content": combined})
+                has_system = True
+            else:
+                result.append(dict(msg))
+
+        if not has_system:
+            result.insert(0, {
+                "role": "system",
+                "content": search_directive,
+            })
+
+        return result
+
     def _handle_non_streaming_completion(
         self,
         target_model: str,
@@ -669,13 +939,49 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         context_window: int,
         start_time: float,
         path: str,
+        client: Optional[Any] = None,
+        should_search_web: bool = False,
+        tools_enabled: bool = False,
+        last_prompt: str = "",
+        workspace_name: str = "default",
     ) -> None:
         """Execute non-streaming chat turn and deliver standard OpenAI completion response."""
         stats: Dict[str, Any] = {}
+        active_client = client or self.server.client
         try:
+            if should_search_web and last_prompt:
+                search_directive = ""
+                try:
+                    from locallm.core.tools.web import extract_search_query, perform_web_search
+                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
+                    search_res = perform_web_search(clean_query, max_results=5)
+                    if search_res and not search_res.startswith("Error:"):
+                        search_directive = (
+                            f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
+                            "Directives: You HAVE real-time internet search capabilities provided directly by the host environment. "
+                            "The above verified live search results were retrieved for this query. "
+                            "Never state that you are 'just an AI', 'do not have internet access', or 'cannot browse the web'. "
+                            "Thoroughly answer the user's inquiry using these search results and cite your sources using markdown links [Source Title](URL) directly in your response."
+                        )
+                    else:
+                        search_directive = (
+                            f"\n\n[Web Search Notice for '{clean_query}']:\n(Pencarian web real-time telah dijalankan namun tidak menemukan hasil spesifik atau terjadi kendala jaringan sementara).\n"
+                            "Directives: Real-time web search was actively performed by the system for this query. "
+                            "Never claim you cannot browse the web or lack internet access. "
+                            "Answer the inquiry as accurately as possible using your knowledge base while explaining that live search returned no direct results for the specific query."
+                        )
+                except Exception as exc:
+                    self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
+                    search_directive = (
+                        f"\n\n[Web Search Notice]: Gagal menghubungi penyedia pencarian web ({exc}). "
+                        "Jawab pertanyaan user sebaik mungkin menggunakan basis pengetahuan Anda dan sebutkan bahwa pencarian web sedang mengalami kendala jaringan. "
+                        "Jangan mengklaim bahwa Anda tidak memiliki kemampuan pencarian web karena Anda hanyalah model AI."
+                    )
+                messages = self._inject_search_context(messages, search_directive)
+
             turn_msg: Optional[Dict[str, Any]] = None
-            if hasattr(self.server.client, "chat_turn"):
-                turn_msg = self.server.client.chat_turn(
+            if hasattr(active_client, "chat_turn"):
+                turn_msg = active_client.chat_turn(
                     model=target_model,
                     messages=messages,
                     temperature=temperature,
@@ -736,8 +1042,14 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         context_window: int,
         start_time: float,
         path: str,
+        client: Optional[Any] = None,
+        should_search_web: bool = False,
+        tools_enabled: bool = False,
+        last_prompt: str = "",
+        workspace_name: str = "default",
     ) -> None:
-        """Stream completion tokens via Server-Sent Events (SSE)."""
+        """Stream completion tokens via Server-Sent Events (SSE) with dynamic thought progress."""
+        active_client = client or self.server.client
         cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
         created_ts = int(time.time())
 
@@ -754,6 +1066,24 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             chunk_header = f"{len(payload_bytes):X}\r\n".encode("ascii")
             self.wfile.write(chunk_header + payload_bytes + b"\r\n")
             self.wfile.flush()
+
+        def _send_delta(content_str: str) -> None:
+            if not content_str:
+                return
+            delta_chunk = {
+                "id": cmpl_id,
+                "object": "chat.completion.chunk",
+                "created": created_ts,
+                "model": target_model,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": content_str},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+            _send_chunk(f"data: {json.dumps(delta_chunk)}\n\n".encode("utf-8"))
 
         token_count = 0
         try:
@@ -773,9 +1103,89 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             }
             _send_chunk(f"data: {json.dumps(initial_chunk)}\n\n".encode("utf-8"))
 
+            # Dynamic live progress: Stream thought step tokens before model inference
+            if should_search_web and last_prompt:
+                _send_delta("<think>\nRefining user inquiry...\n")
+                search_directive = ""
+                try:
+                    from locallm.core.tools.web import extract_search_query, perform_web_search
+                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
+                    _send_delta(f"Searching web for '{clean_query}'...\n")
+
+                    search_res = perform_web_search(clean_query, max_results=5)
+                    _send_delta("Synthesizing verified findings...\n</think>\n\n")
+
+                    if search_res and not search_res.startswith("Error:"):
+                        search_directive = (
+                            f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
+                            "Directives: You HAVE real-time internet search capabilities provided directly by the host environment. "
+                            "The above verified live search results were retrieved for this query. "
+                            "Never state that you are 'just an AI', 'do not have internet access', or 'cannot browse the web'. "
+                            "Thoroughly answer the user's inquiry using these search results and cite your sources using markdown links [Source Title](URL) directly in your response."
+                        )
+                    else:
+                        search_directive = (
+                            f"\n\n[Web Search Notice for '{clean_query}']:\n(Pencarian web real-time telah dijalankan namun tidak menemukan hasil spesifik atau terjadi kendala jaringan sementara).\n"
+                            "Directives: Real-time web search was actively performed by the system for this query. "
+                            "Never claim you cannot browse the web or lack internet access. "
+                            "Answer the inquiry as accurately as possible using your knowledge base while explaining that live search returned no direct results for the specific query."
+                        )
+                except Exception as exc:
+                    self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
+                    _send_delta("Synthesizing response...\n</think>\n\n")
+                    search_directive = (
+                        f"\n\n[Web Search Notice]: Gagal menghubungi penyedia pencarian web ({exc}). "
+                        "Jawab pertanyaan user sebaik mungkin menggunakan basis pengetahuan Anda dan sebutkan bahwa pencarian web sedang mengalami kendala jaringan. "
+                        "Jangan mengklaim bahwa Anda tidak memiliki kemampuan pencarian web karena Anda hanyalah model AI."
+                    )
+                messages = self._inject_search_context(messages, search_directive)
+
+            elif tools_enabled:
+                _send_delta("<think>\nEvaluating workspace skills & tools...\n")
+                try:
+                    from locallm.core.tools import get_all_assistant_tools, execute_tool
+                    available_tools = get_all_assistant_tools(workspace_name)
+                    if available_tools and hasattr(active_client, "chat_turn"):
+                        planning_msg = active_client.chat_turn(
+                            model=target_model,
+                            messages=messages,
+                            tools=available_tools,
+                            temperature=temperature,
+                            num_ctx=context_window,
+                        )
+                        tool_calls = planning_msg.get("tool_calls") if isinstance(planning_msg, dict) else None
+                        if tool_calls:
+                            for tc in tool_calls:
+                                fn_call = tc.get("function", {}) if isinstance(tc, dict) else {}
+                                fn_name = fn_call.get("name", "")
+                                fn_args = fn_call.get("arguments", {})
+                                if isinstance(fn_args, str):
+                                    try:
+                                        fn_args = json.loads(fn_args)
+                                    except Exception:
+                                        fn_args = {}
+                                _send_delta(f"Executing tool '{fn_name}'...\n")
+                                tool_res = execute_tool(fn_name, fn_args, workspace_name=workspace_name)
+                                messages.append({
+                                    "role": "tool",
+                                    "name": fn_name,
+                                    "content": str(tool_res),
+                                })
+                            _send_delta("Synthesizing findings...\n</think>\n\n")
+                        else:
+                            _send_delta("Formulating response...\n</think>\n\n")
+                    else:
+                        _send_delta("Formulating response...\n</think>\n\n")
+                except Exception as tool_exc:
+                    self._log_request_event("WARN", path, 500, detail=f"Tool evaluation error: {tool_exc}")
+                    _send_delta("Formulating response...\n</think>\n\n")
+            else:
+                # Immediate initial thought chunk so user sees instant feedback during model prefill
+                _send_delta("<think>\nRefining user inquiry...\n</think>\n\n")
+
             # Stream generated tokens
-            if hasattr(self.server.client, "chat_stream"):
-                for token in self.server.client.chat_stream(
+            if hasattr(active_client, "chat_stream"):
+                for token in active_client.chat_stream(
                     model=target_model,
                     messages=messages,
                     temperature=temperature,
@@ -784,20 +1194,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     if not token:
                         continue
                     token_count += 1
-                    chunk = {
-                        "id": cmpl_id,
-                        "object": "chat.completion.chunk",
-                        "created": created_ts,
-                        "model": target_model,
-                        "choices": [
-                            {
-                                "index": 0,
-                                "delta": {"content": token},
-                                "finish_reason": None,
-                            }
-                        ],
-                    }
-                    _send_chunk(f"data: {json.dumps(chunk)}\n\n".encode("utf-8"))
+                    _send_delta(token)
 
             # Emit final finish chunk
             finish_chunk = {
@@ -833,6 +1230,32 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         except Exception as exc:
             duration = round(time.time() - start_time, 2)
             self._log_request_event("POST", path, 500, detail=f"stream error: {exc} ({duration}s)")
+            try:
+                err_msg = str(exc)
+                if "Inference execution failed" in err_msg and "{" in err_msg:
+                    import re
+                    m = re.search(r"'message':\s*'([^']+)'", err_msg)
+                    if m:
+                        err_msg = m.group(1).split("\n")[0]
+                err_chunk = {
+                    "id": cmpl_id,
+                    "object": "chat.completion.chunk",
+                    "created": created_ts,
+                    "model": target_model,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "delta": {"content": f"\n\n[Gagal memproses respon: {err_msg}]"},
+                            "finish_reason": "error",
+                        }
+                    ],
+                }
+                _send_chunk(f"data: {json.dumps(err_chunk)}\n\n".encode("utf-8"))
+                _send_chunk(b"data: [DONE]\n\n")
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+            except Exception:
+                pass
 
     def _log_request_event(self, method: str, path: str, status: int, detail: str = "") -> None:
         """Format and record structured HTTP log event."""

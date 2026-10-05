@@ -127,6 +127,23 @@ class OpenAIClient:
                 converted.append({"role": role, "content": str(content)})
         return converted
 
+    def _strip_multimodal(self, messages: List[Dict[str, Any]], model: str) -> List[Dict[str, Any]]:
+        """Strip image_url parts when the backend model does not support multimodal vision."""
+        text_only: List[Dict[str, Any]] = []
+        for msg in messages:
+            c = msg.get("content")
+            if isinstance(c, list):
+                text_bits = [p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]
+                clean_text = "\n".join(b for b in text_bits if b)
+                note = f"\n\n[Catatan Sistem: File gambar dilampirkan, namun model '{model}' merupakan model teks/kode murni dan tidak mendukung input visual langsung. Harap jawab berdasarkan instruksi teks pengguna.]"
+                text_only.append({
+                    "role": msg.get("role", "user"),
+                    "content": (clean_text + note) if clean_text else note.strip()
+                })
+            else:
+                text_only.append(dict(msg))
+        return text_only
+
     def chat_turn(
         self,
         model: str,
@@ -197,6 +214,13 @@ class OpenAIClient:
 
             return result
         except Exception as exc:
+            err_str = str(exc).lower()
+            # If backend model is not multimodal, strip image_url parts and retry
+            if any(term in err_str for term in ("multimodal", "image_url", "images", "vision", "not support image")):
+                kwargs["messages"] = self._strip_multimodal(kwargs.get("messages", []), model)
+                response = self.client.chat.completions.create(**kwargs)
+                choice = response.choices[0]
+                return {"role": "assistant", "content": choice.message.content or ""}
             # If tool calling failed (e.g. backend doesn't support tools), retry without tools
             if tools:
                 kwargs.pop("tools", None)
@@ -218,21 +242,48 @@ class OpenAIClient:
         start_time = time.time()
         eval_count = 0
 
-        stream = self.client.chat.completions.create(
-            model=model,
-            messages=formatted_messages,
-            temperature=temperature,
-            stream=True,
-        )
+        try:
+            stream = self.client.chat.completions.create(
+                model=model,
+                messages=formatted_messages,
+                temperature=temperature,
+                stream=True,
+            )
+        except Exception as exc:
+            err_str = str(exc).lower()
+            if any(term in err_str for term in ("multimodal", "image_url", "images", "vision", "not support image")):
+                fallback_messages = self._strip_multimodal(formatted_messages, model)
+                stream = self.client.chat.completions.create(
+                    model=model,
+                    messages=fallback_messages,
+                    temperature=temperature,
+                    stream=True,
+                )
+            else:
+                raise exc
 
+        in_thinking = False
         for chunk in stream:
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
+            reasoning = getattr(delta, "reasoning_content", None)
             content = delta.content or ""
-            if content:
+            if reasoning:
+                if not in_thinking:
+                    yield "<think>\n"
+                    in_thinking = True
+                eval_count += max(1, len(reasoning) // 4)
+                yield reasoning
+            elif content:
+                if in_thinking:
+                    yield "\n</think>\n\n"
+                    in_thinking = False
                 eval_count += max(1, len(content) // 4)
                 yield content
+
+        if in_thinking:
+            yield "\n</think>\n\n"
 
         duration_ns = int((time.time() - start_time) * 1e9)
         if stats_out is not None:

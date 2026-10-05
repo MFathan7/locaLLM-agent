@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import {
   X,
@@ -8,11 +8,17 @@ import {
   Code2,
   Languages,
   PenTool,
-  Check
+  Check,
+  Download,
+  GitBranch,
+  Search,
+  Loader2,
+  AlertCircle
 } from 'lucide-react';
 import type { Workspace, WorkspaceSkill } from '../types';
 import { WorkspaceIcon } from './WorkspaceIcon';
 import { IconColorPicker } from './IconColorPicker';
+import { api } from '../services/api';
 
 interface WorkspaceModalProps {
   isOpen: boolean;
@@ -28,6 +34,7 @@ interface WorkspaceModalProps {
     skills: WorkspaceSkill[];
   }) => Promise<void> | void;
   onClose: () => void;
+  onReload?: () => Promise<any> | any;
 }
 
 const PRESET_SKILL_TEMPLATES: Array<{
@@ -67,7 +74,8 @@ export function WorkspaceModal({
   mode,
   workspace,
   onSave,
-  onClose
+  onClose,
+  onReload
 }: WorkspaceModalProps) {
   const [name, setName] = useState('');
   const [icon, setIcon] = useState('Folder');
@@ -84,6 +92,20 @@ export function WorkspaceModal({
   const [skillContent, setSkillContent] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
+
+  // GitHub skill import
+  const [isGithubImportOpen, setIsGithubImportOpen] = useState(false);
+  const [githubRepo, setGithubRepo] = useState('');
+  const [isInspecting, setIsInspecting] = useState(false);
+  const [inspectError, setInspectError] = useState('');
+  const [discoveredSkills, setDiscoveredSkills] = useState<string[]>([]);
+  const [selectedGithubSkills, setSelectedGithubSkills] = useState<Set<string>>(new Set());
+  const [githubSkillFilter, setGithubSkillFilter] = useState('');
+  const [isInstalling, setIsInstalling] = useState(false);
+  const [installSuccessMsg, setInstallSuccessMsg] = useState('');
+
+  // Configured skills search
+  const [skillsSearch, setSkillsSearch] = useState('');
 
   useEffect(() => {
     if (workspace && mode === 'edit') {
@@ -107,9 +129,106 @@ export function WorkspaceModal({
     }
     setIsPickerOpen(false);
     setIsAddingSkill(false);
+    setIsGithubImportOpen(false);
+    setGithubRepo('');
+    setInspectError('');
+    setInstallSuccessMsg('');
+    setDiscoveredSkills([]);
+    setSelectedGithubSkills(new Set());
+    setGithubSkillFilter('');
+    setSkillsSearch('');
     setActiveTab('details');
     setErrorMsg('');
   }, [workspace, mode, isOpen]);
+
+  const handleInspectGithub = async () => {
+    const cleanRepo = githubRepo.trim();
+    if (!cleanRepo) return;
+    setIsInspecting(true);
+    setInspectError('');
+    setInstallSuccessMsg('');
+    setDiscoveredSkills([]);
+    setSelectedGithubSkills(new Set());
+
+    try {
+      const res = await api.inspectSkills(cleanRepo);
+      if (res.success && res.skills && res.skills.length > 0) {
+        setDiscoveredSkills(res.skills);
+        setSelectedGithubSkills(new Set(res.skills));
+      } else {
+        setInspectError(res.message || 'No installable skills were discovered in this repository.');
+      }
+    } catch (e: any) {
+      setInspectError(e.message || 'Failed to inspect repository.');
+    } finally {
+      setIsInspecting(false);
+    }
+  };
+
+  const handleToggleGithubSkill = (skill: string) => {
+    setSelectedGithubSkills(prev => {
+      const next = new Set(prev);
+      if (next.has(skill)) next.delete(skill);
+      else next.add(skill);
+      return next;
+    });
+  };
+
+  const handleSelectAllDiscovered = () => {
+    setSelectedGithubSkills(new Set(discoveredSkills));
+  };
+
+  const handleDeselectAllDiscovered = () => {
+    setSelectedGithubSkills(new Set());
+  };
+
+  const handleInstallGithubSkills = async () => {
+    const cleanRepo = githubRepo.trim();
+    const cleanWs = (name || workspace?.name || 'default').trim().replace(/[^a-zA-Z0-9_\- ]/g, '-');
+    const toInstall = Array.from(selectedGithubSkills);
+    if (!cleanRepo || toInstall.length === 0) return;
+
+    setIsInstalling(true);
+    setInspectError('');
+    setInstallSuccessMsg('');
+
+    try {
+      const res = await api.installSkills(cleanWs, cleanRepo, toInstall);
+      if (res.success) {
+        setInstallSuccessMsg(`Successfully installed ${res.installed?.length || toInstall.length} skill(s) into '${cleanWs}'!`);
+        if (onReload) {
+          await onReload();
+        }
+        const freshWorkspaces = await api.getWorkspaces();
+        const found = freshWorkspaces.find(w => w.name.toLowerCase() === cleanWs.toLowerCase());
+        if (found && found.skills) {
+          setSkills(found.skills);
+        }
+      } else {
+        setInspectError(res.message || 'Failed to install selected skills.');
+      }
+    } catch (e: any) {
+      setInspectError(e.message || 'Error installing skills.');
+    } finally {
+      setIsInstalling(false);
+    }
+  };
+
+  const filteredDiscoveredSkills = useMemo(() => {
+    if (!githubSkillFilter.trim()) return discoveredSkills;
+    const q = githubSkillFilter.toLowerCase();
+    return discoveredSkills.filter(s => s.toLowerCase().includes(q));
+  }, [discoveredSkills, githubSkillFilter]);
+
+  const displayedSkills = useMemo(() => {
+    if (!skillsSearch.trim()) return skills;
+    const q = skillsSearch.toLowerCase();
+    return skills.filter(s =>
+      s.name.toLowerCase().includes(q) ||
+      s.id.toLowerCase().includes(q) ||
+      (s.description && s.description.toLowerCase().includes(q))
+    );
+  }, [skills, skillsSearch]);
 
   if (!isOpen) return null;
 
@@ -151,7 +270,7 @@ export function WorkspaceModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const cleanName = name.trim().replace(/[^a-zA-Z0-9_\-]/g, '-').toLowerCase();
+    const cleanName = name.trim().replace(/[^a-zA-Z0-9_\- ]/g, '-');
     if (!cleanName) {
       setErrorMsg('Workspace name is required');
       return;
@@ -267,17 +386,13 @@ export function WorkspaceModal({
                     <button
                       type="button"
                       onClick={() => setIsPickerOpen(prev => !prev)}
-                      style={{
-                        backgroundColor: color,
-                        boxShadow: `0 4px 14px -3px ${color}80`
-                      }}
-                      className="w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 border border-white/20 shadow-md group"
+                      className="w-12 h-12 rounded-2xl flex items-center justify-center cursor-pointer transition-transform hover:scale-105 active:scale-95 border border-slate-200 dark:border-white/10 bg-slate-100/70 dark:bg-white/5 backdrop-blur-md shadow-xs group"
                       title="Click to customize icon & color"
                     >
                       <WorkspaceIcon
                         icon={icon}
                         color={color}
-                        className="w-6 h-6"
+                        className="w-7 h-7"
                       />
                     </button>
 
@@ -373,20 +488,193 @@ export function WorkspaceModal({
                 </div>
               </div>
 
-              {/* Skills List Header & Add Button */}
-              <div className="flex items-center justify-between pt-2 border-t border-slate-200 dark:border-white/10">
+              {/* Skills List Header & Action Buttons */}
+              <div className="flex flex-wrap items-center justify-between gap-2 pt-2 border-t border-slate-200 dark:border-white/10">
                 <span className="text-xs font-semibold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                  Configured Skills ({skills.length})
+                  Configured Skills ({skillsSearch.trim() ? `${displayedSkills.length} of ${skills.length}` : skills.length})
                 </span>
-                <button
-                  type="button"
-                  onClick={() => setIsAddingSkill(prev => !prev)}
-                  className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20 transition-colors cursor-pointer"
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  <span>Custom Skill</span>
-                </button>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setIsGithubImportOpen(prev => !prev); setIsAddingSkill(false); }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+                      isGithubImportOpen
+                        ? 'bg-purple-600 text-white shadow-sm'
+                        : 'text-purple-600 dark:text-purple-400 bg-purple-500/10 hover:bg-purple-500/20'
+                    }`}
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Import from GitHub</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => { setIsAddingSkill(prev => !prev); setIsGithubImportOpen(false); }}
+                    className={`inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-xs font-semibold transition-colors cursor-pointer ${
+                      isAddingSkill
+                        ? 'bg-blue-600 text-white shadow-sm'
+                        : 'text-blue-600 dark:text-blue-400 bg-blue-500/10 hover:bg-blue-500/20'
+                    }`}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    <span>Custom Skill</span>
+                  </button>
+                </div>
               </div>
+
+              {/* GitHub Import Drawer Form */}
+              <AnimatePresence>
+                {isGithubImportOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    className="overflow-hidden p-3.5 rounded-2xl bg-purple-500/[0.04] dark:bg-purple-950/20 border border-purple-500/20 space-y-3"
+                  >
+                    <div className="flex items-center justify-between">
+                      <div className="flex items-center gap-2 text-xs font-bold text-slate-800 dark:text-slate-200">
+                        <GitBranch className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                        <span>Import Skills from GitHub Repository</span>
+                      </div>
+                      <span className="text-[11px] text-slate-400">
+                        owner/repo or full URL
+                      </span>
+                    </div>
+
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={githubRepo}
+                        onChange={(e) => setGithubRepo(e.target.value)}
+                        placeholder="e.g. anthropics/courses or owner/repo"
+                        disabled={isInspecting || isInstalling}
+                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleInspectGithub(); } }}
+                        className="flex-1 px-3 py-1.5 rounded-xl bg-white dark:bg-black/40 border border-slate-300 dark:border-white/10 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-purple-500"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleInspectGithub}
+                        disabled={isInspecting || isInstalling || !githubRepo.trim()}
+                        className="px-4 py-1.5 rounded-xl text-xs font-semibold bg-purple-600 text-white hover:bg-purple-500 disabled:opacity-50 transition-all cursor-pointer flex items-center gap-1.5 shrink-0 shadow-sm"
+                      >
+                        {isInspecting ? (
+                          <>
+                            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                            <span>Inspecting...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Search className="w-3.5 h-3.5" />
+                            <span>Inspect</span>
+                          </>
+                        )}
+                      </button>
+                    </div>
+
+                    {inspectError && (
+                      <div className="p-2.5 rounded-xl text-xs bg-red-500/10 border border-red-500/20 text-red-600 dark:text-red-400 flex items-center gap-2">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+                        <span>{inspectError}</span>
+                      </div>
+                    )}
+
+                    {installSuccessMsg && (
+                      <div className="p-2.5 rounded-xl text-xs bg-emerald-500/10 border border-emerald-500/20 text-emerald-600 dark:text-emerald-400 flex items-center gap-2">
+                        <Check className="w-3.5 h-3.5 shrink-0" />
+                        <span>{installSuccessMsg}</span>
+                      </div>
+                    )}
+
+                    {discoveredSkills.length > 0 && (
+                      <div className="space-y-2 pt-1 border-t border-purple-500/10">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="font-semibold text-slate-700 dark:text-slate-300">
+                            Discovered Skills ({discoveredSkills.length})
+                          </span>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <button
+                              type="button"
+                              onClick={handleSelectAllDiscovered}
+                              className="text-purple-600 dark:text-purple-400 hover:underline cursor-pointer"
+                            >
+                              Select All
+                            </button>
+                            <span className="text-slate-300 dark:text-slate-600">|</span>
+                            <button
+                              type="button"
+                              onClick={handleDeselectAllDiscovered}
+                              className="text-slate-500 hover:underline cursor-pointer"
+                            >
+                              Clear
+                            </button>
+                          </div>
+                        </div>
+
+                        {discoveredSkills.length > 6 && (
+                          <input
+                            type="text"
+                            value={githubSkillFilter}
+                            onChange={(e) => setGithubSkillFilter(e.target.value)}
+                            placeholder="Filter discovered skills..."
+                            className="w-full px-2.5 py-1 rounded-lg bg-white/80 dark:bg-black/30 border border-slate-200 dark:border-white/10 text-[11px] text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:border-purple-500"
+                          />
+                        )}
+
+                        <div className="max-h-36 overflow-y-auto space-y-1 pr-1 custom-scrollbar">
+                          {filteredDiscoveredSkills.map(sk => {
+                            const isSelected = selectedGithubSkills.has(sk);
+                            return (
+                              <label
+                                key={sk}
+                                className={`flex items-center gap-2 p-1.5 rounded-lg text-xs cursor-pointer transition-colors ${
+                                  isSelected
+                                    ? 'bg-purple-500/15 text-purple-900 dark:text-purple-100 font-medium'
+                                    : 'hover:bg-black/5 dark:hover:bg-white/5 text-slate-700 dark:text-slate-300'
+                                }`}
+                              >
+                                <input
+                                  type="checkbox"
+                                  checked={isSelected}
+                                  onChange={() => handleToggleGithubSkill(sk)}
+                                  className="rounded border-slate-300 text-purple-600 focus:ring-purple-500"
+                                />
+                                <span className="truncate">{sk}</span>
+                              </label>
+                            );
+                          })}
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => setIsGithubImportOpen(false)}
+                            className="px-3 py-1 rounded-xl text-xs text-slate-500 hover:text-slate-800 dark:hover:text-white"
+                          >
+                            Close
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleInstallGithubSkills}
+                            disabled={isInstalling || selectedGithubSkills.size === 0}
+                            className="px-4 py-1 rounded-xl text-xs font-semibold bg-emerald-600 text-white hover:bg-emerald-500 disabled:opacity-50 cursor-pointer shadow-sm flex items-center gap-1.5"
+                          >
+                            {isInstalling ? (
+                              <>
+                                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                <span>Installing...</span>
+                              </>
+                            ) : (
+                              <>
+                                <Download className="w-3.5 h-3.5" />
+                                <span>Install ({selectedGithubSkills.size}) Skills</span>
+                              </>
+                            )}
+                          </button>
+                        </div>
+                      </div>
+                    )}
+                  </motion.div>
+                )}
+              </AnimatePresence>
 
               {/* Custom Skill Drawer Form */}
               <AnimatePresence>
@@ -442,21 +730,50 @@ export function WorkspaceModal({
                 )}
               </AnimatePresence>
 
+              {/* Filter configured skills if large list */}
+              {skills.length > 5 && (
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 absolute left-3 top-2.5 text-slate-400 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={skillsSearch}
+                    onChange={(e) => setSkillsSearch(e.target.value)}
+                    placeholder="Search skills in this workspace..."
+                    className="w-full pl-8 pr-3 py-1.5 rounded-xl bg-black/[0.02] dark:bg-black/40 border border-slate-200 dark:border-white/10 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              )}
+
               {/* Skills List Items */}
               <div className="space-y-2 max-h-48 overflow-y-auto pr-1 custom-scrollbar">
                 {skills.length === 0 ? (
                   <div className="text-center py-6 text-xs text-slate-400 dark:text-slate-500">
-                    No custom skills attached yet. Select a preset above or add a custom skill.
+                    No skills configured in this workspace yet. Select a preset above, import from GitHub, or add a custom skill.
+                  </div>
+                ) : displayedSkills.length === 0 ? (
+                  <div className="text-center py-6 text-xs text-slate-400 dark:text-slate-500">
+                    No skills match '{skillsSearch}'.
                   </div>
                 ) : (
-                  skills.map((s) => (
+                  displayedSkills.map((s) => (
                     <div
                       key={s.id}
                       className="p-3 rounded-2xl bg-black/[0.02] dark:bg-white/[0.04] border border-slate-200 dark:border-white/10 flex items-start justify-between gap-3"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-xs font-semibold text-slate-900 dark:text-white truncate">
-                          {s.name}
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-slate-900 dark:text-white truncate">
+                            {s.name}
+                          </span>
+                          {s.path ? (
+                            <span className="px-1.5 py-0.2 rounded text-[10px] font-mono bg-black/5 dark:bg-white/10 text-slate-500 dark:text-slate-400 shrink-0">
+                              Directory
+                            </span>
+                          ) : (
+                            <span className="px-1.5 py-0.2 rounded text-[10px] bg-blue-500/10 text-blue-600 dark:text-blue-400 font-medium shrink-0">
+                              Custom
+                            </span>
+                          )}
                         </div>
                         {s.description && (
                           <div className="text-[11px] text-slate-400 dark:text-slate-500 mt-0.5 line-clamp-1">

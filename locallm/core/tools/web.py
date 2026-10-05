@@ -25,6 +25,41 @@ def decode_bing_url(u: str) -> str:
         return u
 
 
+def extract_search_query(prompt: str) -> str:
+    """Extract clean search target from user prompt in a language-agnostic, structural manner."""
+    text = prompt.strip()
+    if not text:
+        return ""
+
+    # 1. Direct URL extraction if prompt contains a URL
+    urls = re.findall(r"https?://[^\s\"'<>]+", text)
+    if urls:
+        return urls[0]
+
+    # 2. Quoted phrase extraction (e.g. user specifies "exact term")
+    quoted = re.findall(r"[\"']([^\"']{3,})[\"']", text)
+    if quoted:
+        return quoted[0].strip()
+
+    # 3. Explicit command / tag syntax: @web, /web, /search, web:, search:
+    tag_cleaned = re.sub(r"^(?:@web|/web|/search|web:|search:)\s*", "", text, flags=re.IGNORECASE).strip()
+    if tag_cleaned != text and tag_cleaned:
+        return tag_cleaned.rstrip("?.! ")
+
+    # 4. Strip conversational search-action clauses across languages.
+    # Matches search actions + optional target media (web/internet/google/online),
+    # or prepositional search indicators (e.g. "on the web", "di web", "en la web", "sur internet", "im web").
+    pattern = r"^(?:.*?\b(?:search|browse|googling|look\s*up|find\s+out|cari\s*(?:tau|tahu)?|carikan|temukan)\b(?:\s+(?:the|on|in|at|sur|en|im|di)?\s*(?:web|website|internet|google|online))?|.*?\b(?:in|on|at|di|en|sur|im|pada)\s+(?:the\s+|la\s+)?(?:web|website|internet|google|online)\b)[\s:,\-]*"
+    m = re.match(pattern, text, flags=re.IGNORECASE)
+    if m:
+        candidate = text[m.end():].strip()
+        candidate = re.sub(r"^(?:for|about|tentang|mengenai|soal|de|sobre|para|sur|nach|über|regarding)\s+", "", candidate, flags=re.IGNORECASE).strip()
+        if len(candidate) >= 3:
+            return candidate.rstrip("?.! ")
+
+    return text.rstrip("?.! ")
+
+
 def perform_web_search(
     query: str,
     max_results: int = 5,

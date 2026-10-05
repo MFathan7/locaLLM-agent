@@ -5,6 +5,7 @@ import socket
 import threading
 import time
 import unittest
+from unittest.mock import patch
 from typing import Any, Dict, Generator, List, Optional
 import httpx
 
@@ -242,6 +243,96 @@ class TestOpenAIAPIServer(unittest.TestCase):
                 },
             )
             self.assertEqual(resp.status_code, 200)
+
+    def test_dynamic_backend_resolution_and_config_sync(self) -> None:
+        """Verify POST /api/config hot-syncs in-memory server state without restarts."""
+        from locallm.config import load_config, save_config
+        orig_disk_cfg = load_config()
+        orig_server_cfg = self.server.config
+        orig_server_client = self.server.client
+        orig_server_model = self.server.default_model
+        orig_server_ws = self.server.workspace
+
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                resp = client.post(
+                    f"{self.base_url}/api/config",
+                    json={
+                        "active_backend": "test_backend_custom",
+                        "default_model": "test-sync-model",
+                        "active_workspace": "custom_ws",
+                    },
+                    headers={"Authorization": "Bearer secret-token-123"},
+                )
+                self.assertEqual(resp.status_code, 200)
+                data = resp.json()
+                self.assertTrue(data.get("success"))
+
+                # Verify server in-memory properties updated immediately
+                self.assertEqual(self.server.config.active_backend, "test_backend_custom")
+                self.assertEqual(self.server.default_model, "test-sync-model")
+                self.assertEqual(self.server.workspace, "custom_ws")
+
+                # Check health endpoint reports newly synced backend
+                health_resp = client.get(f"{self.base_url}/health")
+                self.assertEqual(health_resp.status_code, 200)
+                self.assertEqual(health_resp.json().get("backend"), "test_backend_custom")
+                self.assertEqual(health_resp.json().get("active_model"), "test-sync-model")
+        finally:
+            save_config(orig_disk_cfg)
+            from locallm.config import get_config_file_path
+            cfg_p = get_config_file_path()
+            if cfg_p.exists():
+                self.server._config_mtime = cfg_p.stat().st_mtime
+            self.server.config = orig_server_cfg
+            self.server.client = orig_server_client
+            self.server.default_model = orig_server_model
+            self.server.workspace = orig_server_ws
+
+    def test_skills_inspect_and_workspace_isolation(self) -> None:
+        """Verify skill inspection endpoint and strict per-workspace context isolation."""
+        with httpx.Client(base_url=self.base_url, timeout=5.0) as client:
+            # 1. Empty source validation
+            res = client.post(
+                "/api/skills/inspect",
+                headers={"Authorization": f"Bearer {self.config.server_api_key}"},
+                json={"source": ""},
+            )
+            self.assertEqual(res.status_code, 400)
+            self.assertFalse(res.json().get("success"))
+
+            # 2. Mocked inspect response
+            with patch("locallm.core.workspace.inspect_github_skills", return_value=(True, "Found 2 skills", ["recon-tool", "sqli-tester"], b"", None)):
+                res2 = client.post(
+                    "/api/skills/inspect",
+                    headers={"Authorization": f"Bearer {self.config.server_api_key}"},
+                    json={"source": "test/repo"},
+                )
+                self.assertEqual(res2.status_code, 200)
+                data = res2.json()
+                self.assertTrue(data.get("success"))
+                self.assertEqual(data.get("count"), 2)
+                self.assertIn("recon-tool", data.get("skills", []))
+
+        # 3. Dynamic per-workspace context isolation
+        from locallm.core.workspace import load_workspace_context
+        wp_ctx = load_workspace_context("web_pentest")
+        def_ctx = load_workspace_context("default")
+        ca_ctx = load_workspace_context("coding-agent")
+
+        # web_pentest should have comprehensive skills catalogue
+        self.assertIn("Workspace Skills Catalogue", wp_ctx)
+        self.assertIn("skills available in 'web_pentest'", wp_ctx)
+
+        # default should not contain web_pentest's pentest-web skills
+        self.assertNotIn("ad-attacks", def_ctx)
+        self.assertIn("'default'", def_ctx)
+
+        # coding-agent has 0 skills and should not leak web_pentest skills
+        self.assertNotIn("Workspace Skills Catalogue", ca_ctx)
+        self.assertNotIn("ad-attacks", ca_ctx)
+
+
 
 
 class TestBackgroundAPIServerLifecycle(unittest.TestCase):

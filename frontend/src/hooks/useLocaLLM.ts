@@ -1,61 +1,228 @@
-import { useState, useEffect, useCallback } from 'react';
-import type { LocaLLMConfig, ChatSession, Message, Workspace, ModelInfo, SendOptions } from '../types';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import type { LocaLLMConfig, ChatSession, Message, Workspace, ModelInfo, SendOptions, AttachedFile } from '../types';
 import { api } from '../services/api';
-import { extractSourcesFromText, generateSmartTitleFallback } from '../utils/messageProcessor';
+import { extractSourcesFromText, generateSmartTitleFallback, sanitizeChatTitle } from '../utils/messageProcessor';
+
+function getUrlParams(): { session: string | null; workspace: string | null } {
+  try {
+    const params = new URLSearchParams(window.location.search);
+    const session = params.get('c') || params.get('session') || null;
+    const workspace = params.get('w') || params.get('workspace') || null;
+    return { session, workspace };
+  } catch {
+    return { session: null, workspace: null };
+  }
+}
+
+function updateUrlParams(workspace: string, sessionId: string | null) {
+  try {
+    const url = new URL(window.location.href);
+    if (sessionId) {
+      url.searchParams.set('c', sessionId);
+      url.searchParams.delete('session');
+    } else {
+      url.searchParams.delete('c');
+      url.searchParams.delete('session');
+    }
+
+    if (workspace && workspace.trim() && workspace.trim().toLowerCase() !== 'default') {
+      url.searchParams.set('w', workspace.trim());
+      url.searchParams.delete('workspace');
+    } else {
+      url.searchParams.delete('w');
+      url.searchParams.delete('workspace');
+    }
+
+    const newPath = url.pathname + (url.search ? url.search : '') + url.hash;
+    window.history.replaceState(null, '', newPath);
+  } catch {}
+}
 
 export function useLocaLLM() {
+  const initialParams = useRef(getUrlParams()).current;
   const [config, setConfig] = useState<LocaLLMConfig | null>(null);
   const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [activeWorkspace, setActiveWorkspace] = useState<string>('default');
+  const [activeWorkspace, setActiveWorkspace] = useState<string>(() => initialParams.workspace || 'default');
   const [sessions, setSessions] = useState<ChatSession[]>([]);
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(() => initialParams.session);
   const [isConfigSyncing, setIsConfigSyncing] = useState(false);
   const [isTyping, setIsTyping] = useState(false);
   const [models, setModels] = useState<ModelInfo[]>([]);
+  const sessionsCacheRef = useRef<Record<string, ChatSession[]>>({});
+  const isInitialHydratedRef = useRef(false);
+  const initialRequestedSessionIdRef = useRef<string | null>(initialParams.session);
 
-  // Load initial config, workspaces and model catalog
+  // Sync active session and workspace with URL whenever activeSessionId or activeWorkspace changes
+  useEffect(() => {
+    if (isInitialHydratedRef.current) {
+      updateUrlParams(activeWorkspace, activeSessionId);
+    }
+  }, [activeSessionId, activeWorkspace]);
+
+  // Handle browser Back / Forward history navigation
+  useEffect(() => {
+    const handlePopState = () => {
+      const { session, workspace } = getUrlParams();
+      if (workspace && workspace !== activeWorkspace) {
+        setActiveWorkspace(workspace);
+      }
+      setActiveSessionId(session);
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, [activeWorkspace]);
+
+  const refreshWorkspaces = useCallback(async () => {
+    try {
+      const fetched = await api.getWorkspaces();
+      setWorkspaces(fetched);
+      return fetched;
+    } catch (e) {
+      console.warn('Failed to refresh workspaces:', e);
+      return [];
+    }
+  }, []);
+
+  // Load initial config, workspaces and model catalog with smart session and workspace resolution
   useEffect(() => {
     const loadInit = async () => {
-      const [fetchedConfig, fetchedWorkspaces, fetchedModels] = await Promise.all([
-        api.getConfig(),
-        api.getWorkspaces(),
-        api.getModels()
-      ]);
-      setConfig(fetchedConfig);
-      setWorkspaces(fetchedWorkspaces);
-      setModels(fetchedModels);
-      if (fetchedConfig.active_workspace) {
-        setActiveWorkspace(fetchedConfig.active_workspace);
+      try {
+        const [fetchedConfig, fetchedWorkspaces, fetchedModels] = await Promise.all([
+          api.getConfig(),
+          api.getWorkspaces(),
+          api.getModels()
+        ]);
+        setConfig(fetchedConfig);
+        setWorkspaces(fetchedWorkspaces);
+        setModels(fetchedModels);
+
+        const reqSessionId = initialRequestedSessionIdRef.current;
+        const targetWs = initialParams.workspace || fetchedConfig.active_workspace || 'default';
+
+        let foundSessions: ChatSession[] = [];
+        let resolvedWs = targetWs;
+        let sessionMatched = false;
+
+        if (reqSessionId) {
+          // 1. Try target workspace first
+          try {
+            const primarySessions = await api.getSessions(targetWs);
+            if (primarySessions.some(s => s.id === reqSessionId)) {
+              foundSessions = primarySessions;
+              resolvedWs = targetWs;
+              sessionMatched = true;
+            }
+          } catch {}
+
+          // 2. If not found in target workspace, search across other workspaces
+          if (!sessionMatched && fetchedWorkspaces && fetchedWorkspaces.length > 0) {
+            for (const w of fetchedWorkspaces) {
+              if (w.name.toLowerCase() === targetWs.toLowerCase()) continue;
+              try {
+                const wsSessions = await api.getSessions(w.name);
+                if (wsSessions.some(s => s.id === reqSessionId)) {
+                  foundSessions = wsSessions;
+                  resolvedWs = w.name;
+                  sessionMatched = true;
+                  break;
+                }
+              } catch {}
+            }
+          }
+
+          // 3. Fallback: if not found in any other workspace, load target workspace sessions
+          if (!sessionMatched && foundSessions.length === 0) {
+            try {
+              foundSessions = await api.getSessions(targetWs);
+            } catch {}
+          }
+        } else {
+          // Normal load without session query
+          try {
+            foundSessions = await api.getSessions(targetWs);
+          } catch {}
+        }
+
+        const validSessions = foundSessions
+          .filter(s => s.messages && s.messages.length > 0)
+          .map(s => ({ ...s, title: sanitizeChatTitle(s.title) }));
+        sessionsCacheRef.current[resolvedWs] = validSessions;
+        setActiveWorkspace(resolvedWs);
+        setSessions(validSessions);
+
+        if (reqSessionId && sessionMatched && validSessions.some(s => s.id === reqSessionId)) {
+          setActiveSessionId(reqSessionId);
+          updateUrlParams(resolvedWs, reqSessionId);
+        } else {
+          setActiveSessionId(null);
+          updateUrlParams(resolvedWs, null);
+        }
+
+        if (resolvedWs !== fetchedConfig.active_workspace) {
+          const updated = { ...fetchedConfig, active_workspace: resolvedWs };
+          setConfig(updated);
+          api.saveConfig(updated).catch(() => {});
+        }
+      } catch (err) {
+        console.warn('Failed initial app hydration:', err);
+      } finally {
+        isInitialHydratedRef.current = true;
       }
     };
     loadInit();
-  }, []);
+  }, [initialParams]);
 
-  // Load sessions whenever activeWorkspace changes
+  // Keep in-memory cache updated with latest sessions
+  useEffect(() => {
+    if (activeWorkspace) {
+      sessionsCacheRef.current[activeWorkspace] = sessions;
+    }
+  }, [activeWorkspace, sessions]);
+
+  // Load sessions whenever activeWorkspace changes (after initial hydration)
   const loadSessionsForWorkspace = useCallback(async (ws: string) => {
-    const fetchedSessions = await api.getSessions(ws);
-    // Filter out empty sessions so ghost files do not clutter the sidebar
-    const validSessions = fetchedSessions.filter(s => s.messages && s.messages.length > 0);
-    setSessions(validSessions);
-    if (validSessions.length > 0) {
-      setActiveSessionId(validSessions[0].id);
-    } else {
-      setActiveSessionId(null);
+    if (!isInitialHydratedRef.current) return;
+    try {
+      const fetchedSessions = await api.getSessions(ws);
+      const validSessions = fetchedSessions
+        .filter(s => s.messages && s.messages.length > 0)
+        .map(s => ({ ...s, title: sanitizeChatTitle(s.title) }));
+      sessionsCacheRef.current[ws] = validSessions;
+      setSessions(validSessions);
+    } catch (e) {
+      console.warn('Failed to load sessions for workspace:', ws, e);
     }
   }, []);
 
   useEffect(() => {
-    loadSessionsForWorkspace(activeWorkspace);
+    if (isInitialHydratedRef.current) {
+      loadSessionsForWorkspace(activeWorkspace);
+    }
   }, [activeWorkspace, loadSessionsForWorkspace]);
 
-  const selectWorkspace = (wsName: string) => {
+  const selectWorkspace = useCallback((wsName: string) => {
+    if (wsName === activeWorkspace) return;
+
+    // Clear session in URL so switching workspace always lands on clean New Chat
+    setActiveSessionId(null);
+    updateUrlParams(wsName, null);
+
+    // 1. Instant optimistic switch from cache if already loaded
+    const cached = sessionsCacheRef.current[wsName];
+    if (cached) {
+      setSessions(cached);
+    }
+
+    // 2. Set active workspace immediately
     setActiveWorkspace(wsName);
+
+    // 3. Persist config asynchronously in background without blocking UI
     if (config && config.active_workspace !== wsName) {
       const updated = { ...config, active_workspace: wsName };
       setConfig(updated);
-      api.saveConfig(updated);
+      api.saveConfig(updated).catch(e => console.warn('Failed to save active workspace config:', e));
     }
-  };
+  }, [activeWorkspace, config]);
 
   const createWorkspace = async (data: Partial<Workspace> | string, description?: string) => {
     const newWs = await api.createWorkspace(data, description);
@@ -66,20 +233,38 @@ export function useLocaLLM() {
       return [...prev, newWs];
     });
     setActiveWorkspace(newWs.name);
+    setActiveSessionId(null);
+    updateUrlParams(newWs.name, null);
     if (config) {
       const updated = { ...config, active_workspace: newWs.name };
       setConfig(updated);
       api.saveConfig(updated);
     }
+    await refreshWorkspaces();
     return newWs;
   };
 
-  const updateWorkspace = async (name: string, data: Partial<Workspace>) => {
-    const updatedWs = await api.updateWorkspace(name, data);
-    setWorkspaces(prev => prev.map(w => w.name === name ? { ...w, ...updatedWs } : w));
-    if (data.name && data.name !== name && activeWorkspace === name) {
-      setActiveWorkspace(data.name);
+  const updateWorkspace = async (name: string, data: Partial<Workspace> & { oldName?: string }) => {
+    const origName = data.oldName || name;
+    const targetName = data.name || name;
+    const updatedWs = await api.updateWorkspace(origName, data);
+    setWorkspaces(prev => prev.map(w => w.name === origName ? { ...w, ...updatedWs } : w));
+    if (targetName && targetName !== origName) {
+      if (activeWorkspace.toLowerCase() === origName.toLowerCase()) {
+        setActiveWorkspace(targetName);
+        updateUrlParams(targetName, activeSessionId);
+      }
+      if (sessionsCacheRef.current[origName]) {
+        sessionsCacheRef.current[targetName] = sessionsCacheRef.current[origName];
+        delete sessionsCacheRef.current[origName];
+      }
+      if (config) {
+        const updated = { ...config, active_workspace: targetName };
+        setConfig(updated);
+        api.saveConfig(updated).catch(() => {});
+      }
     }
+    await refreshWorkspaces();
     return updatedWs;
   };
 
@@ -90,6 +275,7 @@ export function useLocaLLM() {
     }
     setWorkspaces(prev => prev.filter(w => w.name !== name));
     await api.deleteWorkspace(name);
+    await refreshWorkspaces();
   };
 
   const refreshModels = useCallback(async (backend?: string) => {
@@ -114,15 +300,91 @@ export function useLocaLLM() {
   // Lazy new chat: switch to draft state without creating/saving empty session file
   const createSession = () => {
     setActiveSessionId(null);
+    updateUrlParams(activeWorkspace, null);
   };
 
   const deleteSession = async (id: string) => {
     setSessions(prev => prev.filter(s => s.id !== id));
     if (activeSessionId === id) {
       const remaining = sessions.filter(s => s.id !== id);
-      setActiveSessionId(remaining.length > 0 ? remaining[0].id : null);
+      const nextId = remaining.length > 0 ? remaining[0].id : null;
+      setActiveSessionId(nextId);
+      updateUrlParams(activeWorkspace, nextId);
     }
     await api.deleteSession(id, activeWorkspace);
+  };
+
+  const readAttachedFile = async (file: File): Promise<AttachedFile> => {
+    const isImage = file.type?.startsWith('image/') || /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico|heic|heif|tiff?)$/i.test(file.name);
+
+    if (isImage) {
+      return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          resolve({
+            name: file.name,
+            size: file.size,
+            type: file.type || 'image/png',
+            url: (reader.result as string) || undefined
+          });
+        };
+        reader.onerror = () => {
+          resolve({
+            name: file.name,
+            size: file.size,
+            type: file.type || 'image/png'
+          });
+        };
+        reader.readAsDataURL(file);
+      });
+    }
+
+    const isRichDoc = /\.(docx|docm|dotx|pdf)$/i.test(file.name);
+    if (isRichDoc) {
+      try {
+        const base64Data = await new Promise<string>((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onload = () => resolve(reader.result as string);
+          reader.onerror = () => reject(new Error('Failed to read file'));
+          reader.readAsDataURL(file);
+        });
+
+        const res = await api.parseFile(file.name, base64Data);
+        if (res.success && res.text) {
+          return {
+            name: file.name,
+            size: file.size,
+            type: file.type || (file.name.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'application/vnd.openxmlformats-officedocument.wordprocessingml.document'),
+            content: res.text
+          };
+        }
+      } catch (err) {
+        console.warn('Document parse request failed, falling back:', err);
+      }
+    }
+
+    // Text / code / markdown files: read text contents safely up to 2MB
+    return new Promise((resolve) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        resolve({
+          name: file.name,
+          size: file.size,
+          type: file.type || 'text/plain',
+          content: (reader.result as string) || ''
+        });
+      };
+      reader.onerror = () => {
+        resolve({
+          name: file.name,
+          size: file.size,
+          type: file.type || 'application/octet-stream',
+          content: ''
+        });
+      };
+      const slice = file.slice(0, 2 * 1024 * 1024);
+      reader.readAsText(slice);
+    });
   };
 
   const sendMessage = async (content: string, options: SendOptions = { files: [], webSearch: false, tools: false }) => {
@@ -130,8 +392,36 @@ export function useLocaLLM() {
     const hasFiles = options.files && options.files.length > 0;
     if (!content.trim() && !hasFiles) return;
 
-    const isImageAttached = hasFiles && options.files.some(f => /\.(png|jpe?g|gif|webp|svg|bmp|avif)$/i.test(f.name));
-    const effectiveContent = content.trim() || (hasFiles ? (isImageAttached ? 'Analyze this image.' : 'Review the attached file.') : '');
+    // 1. Process attachments (max 5)
+    const attachedToProcess = (options.files || []).slice(0, 5);
+    const processedFiles: AttachedFile[] = await Promise.all(
+      attachedToProcess.map(readAttachedFile)
+    );
+
+    // 2. Format prompt for the AI including file text contents
+    let promptForAI = content.trim();
+    const textAttachments = processedFiles.filter(f => f.content && f.content.trim().length > 0);
+    const imageAttachments = processedFiles.filter(f => f.url && (f.type.startsWith('image/') || f.url.startsWith('data:image')));
+
+    if (textAttachments.length > 0) {
+      const fileBlocks = textAttachments.map(f => {
+        const ext = f.name.split('.').pop() || 'txt';
+        const sizeKb = (f.size / 1024).toFixed(1);
+        return `[Attached File: ${f.name} (${sizeKb} KB)]\n\`\`\`${ext}\n${f.content}\n\`\`\``;
+      }).join('\n\n');
+
+      if (promptForAI) {
+        promptForAI = `${promptForAI}\n\n${fileBlocks}`;
+      } else {
+        promptForAI = `Please analyze the following attached file(s):\n\n${fileBlocks}`;
+      }
+    } else if (!promptForAI && imageAttachments.length > 0) {
+      promptForAI = 'Please inspect and analyze the attached image.';
+    } else if (!promptForAI && processedFiles.length > 0) {
+      promptForAI = `Attached file(s): ${processedFiles.map(f => f.name).join(', ')}`;
+    }
+
+    const titleSubject = content.trim() || (processedFiles.length > 0 ? processedFiles[0].name : 'Chat');
 
     let currentSessionId = activeSessionId;
     let sessionToUpdate: ChatSession;
@@ -141,7 +431,7 @@ export function useLocaLLM() {
     if (!currentSessionId) {
       isBrandNewSession = true;
       currentSessionId = Date.now().toString();
-      const initialTitle = generateSmartTitleFallback(effectiveContent);
+      const initialTitle = generateSmartTitleFallback(titleSubject);
       sessionToUpdate = {
         id: currentSessionId,
         title: initialTitle,
@@ -161,10 +451,11 @@ export function useLocaLLM() {
     const userMessage: Message = {
       id: Date.now().toString(),
       role: 'user',
-      content: effectiveContent,
+      content: content.trim(),
       timestamp: Date.now(),
+      files: processedFiles.length > 0 ? processedFiles : undefined,
       options: {
-        files: options.files.map(f => f.name),
+        files: processedFiles.map(f => f.name),
         webSearch: options.webSearch,
         tools: options.tools
       }
@@ -172,7 +463,7 @@ export function useLocaLLM() {
 
     let title = sessionToUpdate.title;
     if (sessionToUpdate.messages.length === 0 && !isBrandNewSession) {
-      title = generateSmartTitleFallback(effectiveContent);
+      title = generateSmartTitleFallback(titleSubject);
     }
 
     sessionToUpdate = {
@@ -196,8 +487,63 @@ export function useLocaLLM() {
       };
     }));
 
-    await api.sendMessage(effectiveContent, config, options, (chunk) => {
-      assistantContent += chunk;
+    const imagePayloads = imageAttachments
+      .map(f => {
+        if (!f.url) return '';
+        const commaIdx = f.url.indexOf(',');
+        return commaIdx !== -1 ? f.url.slice(commaIdx + 1) : f.url;
+      })
+      .filter(Boolean);
+
+    // Extract existing session messages before the current turn for full multi-turn context
+    const priorHistory = (sessionToUpdate.messages || [])
+      .filter(m => m.id !== userMessage.id && m.id !== assistantMessageId);
+
+    try {
+      const res = await api.sendMessage(
+        promptForAI,
+        config,
+        options,
+        (chunk) => {
+          assistantContent += chunk;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === assistantMessageId);
+            if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent };
+            return { ...s, messages: msgs };
+          }));
+        },
+        imagePayloads.length > 0 ? imagePayloads : undefined,
+        priorHistory
+      );
+
+      if (!assistantContent.trim() && res && res.trim()) {
+        assistantContent = res.trim();
+        setSessions(prev => prev.map(s => {
+          if (s.id !== currentSessionId) return s;
+          const msgs = [...s.messages];
+          const idx = msgs.findIndex(m => m.id === assistantMessageId);
+          if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent };
+          return { ...s, messages: msgs };
+        }));
+      }
+    } catch (err: any) {
+      const errMsg = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+      assistantContent = errMsg;
+      setSessions(prev => prev.map(s => {
+        if (s.id !== currentSessionId) return s;
+        const msgs = [...s.messages];
+        const idx = msgs.findIndex(m => m.id === assistantMessageId);
+        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: errMsg };
+        return { ...s, messages: msgs };
+      }));
+    } finally {
+      setIsTyping(false);
+    }
+
+    if (!assistantContent.trim()) {
+      assistantContent = 'Tidak ada respon yang diterima dari model. Silakan coba ajukan pertanyaan kembali atau gunakan model lain.';
       setSessions(prev => prev.map(s => {
         if (s.id !== currentSessionId) return s;
         const msgs = [...s.messages];
@@ -205,9 +551,7 @@ export function useLocaLLM() {
         if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent };
         return { ...s, messages: msgs };
       }));
-    });
-
-    setIsTyping(false);
+    }
 
     const sources = extractSourcesFromText(assistantContent);
     const updated: ChatSession = {
@@ -229,9 +573,9 @@ export function useLocaLLM() {
 
     // Asynchronously generate concise, goal-oriented AI chat title in background if first turn
     if (sessionToUpdate.messages.length <= 1) {
-      api.generateTitle(content, config).then(aiTitle => {
-        if (aiTitle && aiTitle.trim().length > 1) {
-          const cleanTitle = aiTitle.trim().replace(/^["'«»“”]+|["'«»“”]+$/g, '').slice(0, 48);
+      api.generateTitle(titleSubject, config).then(aiTitle => {
+        const cleanTitle = sanitizeChatTitle(aiTitle, '');
+        if (cleanTitle && cleanTitle.length > 1) {
           setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, title: cleanTitle } : s));
           api.saveSession({ ...updated, title: cleanTitle });
         }
@@ -283,20 +627,54 @@ export function useLocaLLM() {
       return { ...s, messages: msgs };
     }));
 
-    await api.sendMessage(userPrompt, config, userOptions, (chunk) => {
-      assistantContent += chunk;
-      setSessions(prev => prev.map(s => {
-        if (s.id !== currentSessionId) return s;
-        const msgs = [...s.messages];
-        const idx = msgs.findIndex(m => m.id === assistantMessageId);
-        if (idx !== -1) {
-          msgs[idx] = { ...msgs[idx], content: assistantContent };
-        }
-        return { ...s, messages: msgs };
-      }));
-    });
+    const targetIdx = session.messages.findIndex((m: Message) => m.id === assistantMessageId);
+    const priorHistory = targetIdx > 1
+      ? session.messages.slice(0, targetIdx - 1)
+      : [];
 
-    setIsTyping(false);
+    try {
+      const res = await api.sendMessage(
+        userPrompt,
+        config,
+        userOptions,
+        (chunk) => {
+          assistantContent += chunk;
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === assistantMessageId);
+            if (idx !== -1) {
+              msgs[idx] = { ...msgs[idx], content: assistantContent };
+            }
+            return { ...s, messages: msgs };
+          }));
+        },
+        undefined,
+        priorHistory
+      );
+
+      if (!assistantContent.trim() && res && res.trim()) {
+        assistantContent = res.trim();
+      }
+    } catch (err: any) {
+      assistantContent = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+    } finally {
+      setIsTyping(false);
+    }
+
+    if (!assistantContent.trim()) {
+      assistantContent = 'Tidak ada respon yang diterima dari model. Silakan periksa koneksi atau coba klik kembali.';
+    }
+
+    setSessions(prev => prev.map(s => {
+      if (s.id !== currentSessionId) return s;
+      const msgs = [...s.messages];
+      const idx = msgs.findIndex(m => m.id === assistantMessageId);
+      if (idx !== -1) {
+        msgs[idx] = { ...msgs[idx], content: assistantContent };
+      }
+      return { ...s, messages: msgs };
+    }));
 
     const sources = extractSourcesFromText(assistantContent);
     const updatedMsgs = session.messages.map(m => {
@@ -341,6 +719,7 @@ export function useLocaLLM() {
     sendMessage,
     regenerateMessage,
     isTyping,
-    refreshModels
+    refreshModels,
+    refreshWorkspaces
   };
 }

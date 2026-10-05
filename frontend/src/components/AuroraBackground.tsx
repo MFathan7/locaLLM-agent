@@ -18,10 +18,10 @@ export function AuroraBackground({ intense }: AuroraBackgroundProps) {
         animate={{ opacity: intense ? 1 : 0 }}
         transition={{ duration: 0.6, ease: 'easeInOut' }}
       >
-        <div className="aurora-blob aurora-a -top-[10%] -left-[8%] w-[46vw] h-[46vw] bg-sky-500/55 dark:bg-sky-500/35" />
-        <div className="aurora-blob aurora-b top-[8%] -right-[10%] w-[42vw] h-[42vw] bg-teal-400/50 dark:bg-teal-500/30" />
-        <div className="aurora-blob aurora-c -bottom-[14%] left-[14%] w-[44vw] h-[44vw] bg-emerald-400/40 dark:bg-emerald-500/25" />
-        <div className="aurora-blob aurora-d -bottom-[10%] -right-[6%] w-[36vw] h-[36vw] bg-orange-300/50 dark:bg-orange-400/20" />
+        <div className="aurora-blob aurora-a -top-[6%] -left-[4%] w-[24vw] h-[24vw] bg-sky-500/25 dark:bg-sky-500/18" />
+        <div className="aurora-blob aurora-b top-[6%] -right-[6%] w-[22vw] h-[22vw] bg-teal-400/20 dark:bg-teal-500/15" />
+        <div className="aurora-blob aurora-c -bottom-[8%] left-[10%] w-[24vw] h-[24vw] bg-emerald-400/20 dark:bg-emerald-500/15" />
+        <div className="aurora-blob aurora-d -bottom-[6%] -right-[4%] w-[20vw] h-[20vw] bg-orange-300/20 dark:bg-orange-400/12" />
       </motion.div>
     </div>
   );

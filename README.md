@@ -26,8 +26,8 @@ Run the automated installer script which auto-detects your OS (including Arch Li
 
 ```bash
 # 1. Clone repository & enter directory
-git clone https://github.com/MFathan7/locaLLM-python.git
-cd locaLLM-python
+git clone https://github.com/username/locaLLM.git
+cd locaLLM
 
 # 2. Make installer executable & run
 chmod +x install.sh
@@ -42,8 +42,8 @@ chmod +x install.sh
 #### Manual Installation (Windows, Linux, macOS)
 ```bash
 # Clone the repository
-git clone https://github.com/MFathan7/locaLLM-python.git
-cd locaLLM-python
+git clone https://github.com/username/locaLLM.git
+cd locaLLM
 
 # Create and activate a Python virtual environment
 python -m venv .venv
@@ -140,14 +140,25 @@ locallm models
   - Contextual snippet extraction displaying ~120 characters centered around matches instead of unconstrained text dumps.
   - Smooth asynchronous chat opening with zero main-thread locking.
 - **Centered Floating Scroll-to-Bottom Button**: Dynamic scroll detector displaying a sleek circular icon-only button in the bottom-center of the viewport whenever scrolled up.
-- **Dynamic Model & Platform Picker**:
-  - Model list displays model name on top and platform name (*Ollama*, *OpenAI*, or custom platforms) underneath.
-  - Select active inference platform (native local Ollama or custom remote OpenAI-compatible servers like vLLM / iForte-GPU).
+- **Dynamic Model & Backend Picker**:
+  - Model list displays model name on top and backend name (*Ollama*, *OpenAI*, or custom backends) underneath.
+  - Select active inference backend (native local Ollama or custom remote OpenAI-compatible servers like vLLM or LocalAI).
   - Model dropdowns re-query available models with 60-second in-memory caching and request timeout guards.
-- **Dynamic Plus Action Menu**:
-  - Upload file attachments.
-  - Toggle real-time Web Search on/off for models that support it.
-  - Toggle Autonomous Agent Tools on/off dynamically per prompt.
+- **Multi-File Attachment System (Up to 5 Files)**:
+  - Drag-and-drop or select images, documents (`.pdf`, `.docx`, `.txt`, `.py`, `.json`, etc.) with in-bubble preview chips.
+  - **Multi-Turn Context Retention**: Extracted text content stays in context across all subsequent turns so the model never forgets document contents in follow-up queries.
+- **Interactive Starter Prompts & Dynamic Greetings**:
+  - 3 randomized starter prompt cards on empty sessions for immediate 1-click execution (code review, brainstorming, system architecture, concept breakdown).
+  - Dynamic modern AI web chat greetings (ChatGPT/Claude style) that refresh on each new session.
+- **AI Disclaimer Header**:
+  - Non-intrusive safety and responsibility disclaimer above the chat input box (*"LocaLLM can stumble sometimes. Stay sharp and double-check key info."*).
+- **On-The-Fly Web Search & Agent Tool Toggles**:
+  - Dedicated toggle controls in the chat input bar to selectively enable or disable autonomous tools and real-time web search per prompt.
+- **Real-Time Temporal Grounding**:
+  - Injects live real-world date and time into workspace context so the model always knows current time and date without hallucinations.
+- **Refined Workspace Management**:
+  - Dynamic workspace icon coloring with automatic dark/light theme contrast validation.
+  - Auto-sorted chat sessions by last activity timestamp for effortless history tracking.
 
 ### 🖥️ Real-Time Telemetry Header Banner
 - **Live System & Hardware Cockpit**: The Unicode header banner at the top of every screen automatically displays real-time hardware telemetry:

@@ -183,19 +183,19 @@ class TestAccessControlAndToolGating(unittest.TestCase):
         orig_get_policy = tb_module.get_workspace_security_policy
         try:
             mock_policy = WorkspaceSecurityPolicy()
-            mock_policy.master_telegram_usernames.add("mfathan7")
+            mock_policy.master_telegram_usernames.add("superadmin")
             tb_module.get_workspace_security_policy = lambda name: mock_policy
 
             # Calling with matching username
             is_auth, allowed = _check_telegram_caller_authorization(
-                99999999, "default", config, username="mfathan7"
+                99999999, "default", config, username="superadmin"
             )
             self.assertTrue(is_auth)
             self.assertTrue(allowed)
 
             # Calling with matching username with @ prefix
             is_auth_at, allowed_at = _check_telegram_caller_authorization(
-                99999999, "default", config, username="@mfathan7"
+                99999999, "default", config, username="@superadmin"
             )
             self.assertTrue(is_auth_at)
             self.assertTrue(allowed_at)

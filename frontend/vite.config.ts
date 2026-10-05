@@ -5,6 +5,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import * as os from 'os';
 import * as http from 'http';
+import * as child_process from 'child_process';
 
 function getLocaLLMDir(): string {
   const dir = path.join(os.homedir(), '.locallm');
@@ -58,6 +59,54 @@ function loadConfigOnDisk(): Record<string, any> {
   };
 }
 
+function resolveUserName(cfg: Record<string, any>, activeWs?: string): string | undefined {
+  if (cfg.user_name && typeof cfg.user_name === 'string' && cfg.user_name.trim()) {
+    return cfg.user_name.trim();
+  }
+  // Check active workspace knowledge files for an author or user profile declaration
+  try {
+    const wsRoot = getWorkspacesDir();
+    const ws = activeWs || cfg.active_workspace || 'default';
+    const kDir = path.join(wsRoot, ws, 'knowledge');
+    if (fs.existsSync(kDir)) {
+      const files = fs.readdirSync(kDir);
+      for (const file of files) {
+        if (file.endsWith('.md') || file.endsWith('.txt')) {
+          const content = fs.readFileSync(path.join(kDir, file), 'utf-8');
+          const m = content.match(/(?:user(?:name)?|author|owner|my name is)\s*[:=]?\s*([A-Za-z0-9_-]+)/i);
+          if (m && m[1] && !['the', 'a', 'default', 'an', 'is', 'admin'].includes(m[1].toLowerCase())) {
+            return m[1].charAt(0).toUpperCase() + m[1].slice(1);
+          }
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+  // Try git config user.name
+  try {
+    const gitUser = child_process.execSync('git config user.name', { encoding: 'utf-8' }).trim();
+    if (gitUser && !gitUser.includes('\n')) {
+      const first = gitUser.split(' ')[0].replace(/[^a-zA-Z0-9_-]/g, '');
+      if (first.length > 1 && !['root', 'runner', 'admin', 'user'].includes(first.toLowerCase())) {
+        return first.charAt(0).toUpperCase() + first.slice(1);
+      }
+    }
+  } catch {
+    // ignore
+  }
+  // Try OS username if not a generic daemon/system account
+  try {
+    const rawUser = os.userInfo()?.username;
+    if (rawUser && !['root', 'runner', 'admin', 'node', 'daemon', 'system', 'default'].includes(rawUser.toLowerCase())) {
+      return rawUser.charAt(0).toUpperCase() + rawUser.slice(1);
+    }
+  } catch {
+    // ignore
+  }
+  return undefined;
+}
+
 function saveConfigOnDisk(newConfig: Record<string, any>): void {
   const configPath = getConfigFilePath();
   fs.writeFileSync(configPath, JSON.stringify(newConfig, null, 2), 'utf-8');
@@ -92,6 +141,112 @@ function sendJson(res: http.ServerResponse, statusCode: number, data: any) {
   res.end(payload);
 }
 
+function readSkillsRecursively(baseDir: string): any[] {
+  const IGNORE_DIRS = new Set([
+    '.git', 'node_modules', 'tests', 'test', 'evals', 'benchmarks',
+    'examples', 'dist', 'build', 'target', '.venv', 'venv',
+    '__pycache__', 'cli', 'packages', 'references', 'templates', 'assets', 'scripts'
+  ]);
+  const IGNORE_FILES = new Set([
+    'changelog', 'license', 'contributing', 'code_of_conduct',
+    'security', 'third-party', 'package-lock', 'package', 'background-tasks', 'agents', 'soul'
+  ]);
+
+  const skills: any[] = [];
+  const seenIds = new Set<string>();
+
+  function walk(currentDir: string) {
+    if (!fs.existsSync(currentDir)) return;
+    let entries: fs.Dirent[] = [];
+    try {
+      entries = fs.readdirSync(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      const fullPath = path.join(currentDir, entry.name);
+      if (entry.isDirectory()) {
+        if (!IGNORE_DIRS.has(entry.name.toLowerCase())) {
+          walk(fullPath);
+        }
+      } else if (entry.isFile()) {
+        const ext = path.extname(entry.name).toLowerCase();
+        if (ext !== '.md' && ext !== '.txt') continue;
+        const stem = path.basename(entry.name, ext).toLowerCase();
+        if (IGNORE_FILES.has(stem) || stem.startsWith('license') || stem.startsWith('changelog')) continue;
+
+        let skillId = path.basename(entry.name, ext);
+        const parentName = path.basename(currentDir);
+        const isSkillDoc = entry.name.toLowerCase() === 'skill.md' || entry.name.toLowerCase() === 'readme.md';
+
+        if (isSkillDoc && currentDir !== baseDir) {
+          skillId = parentName;
+        }
+
+        const cleanId = skillId.toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+        if (!cleanId || seenIds.has(cleanId)) continue;
+
+        try {
+          const content = fs.readFileSync(fullPath, 'utf-8');
+          let name = cleanId;
+          let description = '';
+
+          const fmMatch = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
+          if (fmMatch) {
+            const yaml = fmMatch[1];
+            const nameMatch = yaml.match(/(?:^|\n)name:\s*([^\n]+)/);
+            if (nameMatch) name = nameMatch[1].replace(/['"]/g, '').trim();
+            const descMatch = yaml.match(/(?:^|\n)description:\s*([^\n]+)/);
+            if (descMatch) description = descMatch[1].replace(/['"]/g, '').trim();
+          }
+
+          if (name === cleanId) {
+            const lines = content.split('\n');
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (trimmed && !trimmed.startsWith('---')) {
+                name = trimmed.replace(/^[#\s*-]+/, '').replace(/^Skill:\s*/i, '').trim();
+                break;
+              }
+            }
+          }
+
+          if (!description) {
+            const lines = content.split('\n');
+            let foundHeader = false;
+            for (const line of lines) {
+              const trimmed = line.trim();
+              if (!trimmed || trimmed.startsWith('---')) continue;
+              if (trimmed.startsWith('#')) {
+                foundHeader = true;
+                continue;
+              }
+              if (foundHeader && !trimmed.startsWith('#')) {
+                description = trimmed.replace(/^[#\s*-]+/, '').slice(0, 160);
+                break;
+              }
+            }
+          }
+
+          seenIds.add(cleanId);
+          skills.push({
+            id: cleanId,
+            name: name || cleanId,
+            description: description || undefined,
+            content,
+            path: path.relative(baseDir, fullPath).replace(/\\/g, '/'),
+            enabled: true
+          });
+        } catch {}
+      }
+    }
+  }
+
+  walk(baseDir);
+  return skills;
+}
+
 function locallmBridgePlugin(): Plugin {
   return {
     name: 'locallm-bridge-plugin',
@@ -115,7 +270,8 @@ function locallmBridgePlugin(): Plugin {
         if (pathname === '/api/config') {
           if (req.method === 'GET') {
             const cfg = loadConfigOnDisk();
-            // Provide compatibility aliases
+            // Provide compatibility aliases and dynamic user identity (never hardcoded)
+            cfg.user_name = resolveUserName(cfg);
             cfg.model = cfg.default_model || cfg.ollama_model || 'gemma4:12b';
             cfg.provider = cfg.active_backend === 'ollama' ? 'ollama' : 'openai';
             cfg.contextLength = cfg.context_window;
@@ -139,6 +295,24 @@ function locallmBridgePlugin(): Plugin {
                 merged.context_window = body.contextLength;
               }
               saveConfigOnDisk(merged);
+
+              // Hot-sync to locaLLM Python API server if running
+              const serverPort = merged.server_port || 8080;
+              const apiKey = merged.server_api_key || '';
+              try {
+                await fetch(`http://127.0.0.1:${serverPort}/api/config`, {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+                  },
+                  body: JSON.stringify(merged),
+                  signal: AbortSignal.timeout(1500)
+                });
+              } catch {
+                // Background server may not be running or reachable, ignore
+              }
+
               sendJson(res, 200, { success: true, config: merged });
             } catch (err: any) {
               sendJson(res, 500, { error: err.message });
@@ -176,26 +350,9 @@ function locallmBridgePlugin(): Plugin {
                   } catch {}
                 }
 
-                // Read skills files
-                const skills: any[] = [];
+                // Read skills files recursively
                 const skillDir = path.join(wsPath, 'skills');
-                if (fs.existsSync(skillDir)) {
-                  try {
-                    const sFiles = fs.readdirSync(skillDir).filter(f => f.endsWith('.md') || f.endsWith('.txt'));
-                    for (const sf of sFiles) {
-                      const sContent = fs.readFileSync(path.join(skillDir, sf), 'utf-8');
-                      const sId = sf.replace(/\.(md|txt)$/, '');
-                      const firstLine = sContent.split('\n')[0] || '';
-                      const sName = firstLine.replace(/^[#\s*]+/, '').replace(/^Skill:\s*/i, '').trim() || sId;
-                      skills.push({
-                        id: sId,
-                        name: sName,
-                        content: sContent,
-                        enabled: true
-                      });
-                    }
-                  } catch {}
-                }
+                const skills = readSkillsRecursively(skillDir);
 
                 workspaces.push({
                   name: entry.name,
@@ -233,7 +390,7 @@ function locallmBridgePlugin(): Plugin {
           if (req.method === 'POST') {
             try {
               const body = await parseJsonBody(req);
-              const cleanName = (body.name || '').trim().replace(/[^a-zA-Z0-9_\-]/g, '-').toLowerCase();
+              const cleanName = (body.name || '').trim().replace(/[^a-zA-Z0-9_\- ]/g, '-').trim();
               if (!cleanName) {
                 sendJson(res, 400, { error: 'Invalid workspace name' });
                 return;
@@ -306,27 +463,56 @@ function locallmBridgePlugin(): Plugin {
           if (req.method === 'PUT') {
             try {
               const body = await parseJsonBody(req);
-              const cleanName = (body.name || '').trim().toLowerCase();
-              if (!cleanName) {
+              const origName = (body.oldName || body.old_name || body.name || '').trim();
+              const targetName = (body.newName || body.name || origName).trim().replace(/[^a-zA-Z0-9_\- ]/g, '-').trim();
+              if (!origName && !targetName) {
                 sendJson(res, 400, { error: 'Workspace name is required' });
                 return;
               }
 
-              let currentWsDir = path.join(wsDir, cleanName);
+              // Locate existing workspace directory (exact or case-insensitive)
+              let currentWsDir = path.join(wsDir, origName);
               if (!fs.existsSync(currentWsDir)) {
-                sendJson(res, 404, { error: `Workspace '${cleanName}' not found` });
-                return;
+                try {
+                  const entries = fs.readdirSync(wsDir, { withFileTypes: true });
+                  const matched = entries.find(e => e.isDirectory() && e.name.toLowerCase() === origName.toLowerCase());
+                  if (matched) {
+                    currentWsDir = path.join(wsDir, matched.name);
+                  } else if (targetName && fs.existsSync(path.join(wsDir, targetName))) {
+                    currentWsDir = path.join(wsDir, targetName);
+                  } else {
+                    sendJson(res, 404, { error: `Workspace '${origName}' not found` });
+                    return;
+                  }
+                } catch {
+                  sendJson(res, 404, { error: `Workspace '${origName}' not found` });
+                  return;
+                }
               }
 
-              // Handle rename if newName specified and different
-              let finalName = cleanName;
-              if (body.newName && body.newName.trim().toLowerCase() !== cleanName && cleanName !== 'default') {
-                const cleanNewName = body.newName.trim().replace(/[^a-zA-Z0-9_\-]/g, '-').toLowerCase();
-                const newWsDir = path.join(wsDir, cleanNewName);
-                if (!fs.existsSync(newWsDir)) {
+              const currentActualName = path.basename(currentWsDir);
+              let finalName = currentActualName;
+
+              // Handle rename if targetName specified and differs from current directory name
+              if (targetName && targetName !== currentActualName && currentActualName.toLowerCase() !== 'default') {
+                const newWsDir = path.join(wsDir, targetName);
+                if (newWsDir !== currentWsDir) {
+                  if (fs.existsSync(newWsDir)) {
+                    sendJson(res, 400, { error: `Workspace '${targetName}' already exists` });
+                    return;
+                  }
                   fs.renameSync(currentWsDir, newWsDir);
                   currentWsDir = newWsDir;
-                  finalName = cleanNewName;
+                  finalName = targetName;
+
+                  // Keep active_workspace in config.json synced
+                  try {
+                    const cfg = loadConfigOnDisk();
+                    if (cfg.active_workspace && cfg.active_workspace.toLowerCase() === currentActualName.toLowerCase()) {
+                      cfg.active_workspace = targetName;
+                      saveConfigOnDisk(cfg);
+                    }
+                  } catch {}
                 }
               }
 
@@ -366,23 +552,30 @@ function locallmBridgePlugin(): Plugin {
                 const existingFiles = fs.readdirSync(skillDir).filter(f => f.endsWith('.md') || f.endsWith('.txt'));
                 const newFileNames = new Set(body.skills.map((s: any) => `${(s.id || s.name).toLowerCase().replace(/[^a-z0-9_-]/g, '-')}.md`));
 
-                // Remove deleted skills
+                // Remove deleted top-level files
                 for (const ef of existingFiles) {
                   if (!newFileNames.has(ef)) {
                     try { fs.unlinkSync(path.join(skillDir, ef)); } catch {}
                   }
                 }
 
-                // Write active skills
+                // Write/update skills safely
                 for (const s of body.skills) {
                   const sId = (s.id || s.name || 'skill').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
-                  fs.writeFileSync(
-                    path.join(skillDir, `${sId}.md`),
-                    s.content || `# Skill: ${s.name}\n${s.description || ''}\n`,
-                    'utf-8'
-                  );
+                  const targetFile = s.path ? path.join(skillDir, s.path) : path.join(skillDir, `${sId}.md`);
+                  try {
+                    const dirOfFile = path.dirname(targetFile);
+                    if (!fs.existsSync(dirOfFile)) fs.mkdirSync(dirOfFile, { recursive: true });
+                    fs.writeFileSync(
+                      targetFile,
+                      s.content || `# Skill: ${s.name}\n${s.description || ''}\n`,
+                      'utf-8'
+                    );
+                  } catch {}
                 }
               }
+
+              const updatedSkills = readSkillsRecursively(path.join(currentWsDir, 'skills'));
 
               sendJson(res, 200, {
                 name: finalName,
@@ -390,8 +583,8 @@ function locallmBridgePlugin(): Plugin {
                 icon: meta.icon || 'Folder',
                 color: meta.color || '#3B82F6',
                 custom_instructions: meta.custom_instructions || '',
-                skills: body.skills || [],
-                skillsCount: Array.isArray(body.skills) ? body.skills.length : 0
+                skills: updatedSkills,
+                skillsCount: updatedSkills.length
               });
             } catch (err: any) {
               sendJson(res, 500, { error: err.message });
@@ -433,9 +626,19 @@ function locallmBridgePlugin(): Plugin {
               const files = fs.readdirSync(sessionsDir).filter(f => f.endsWith('.json'));
               const sessionsList: any[] = [];
 
+              const sessionParseCache: Record<string, { mtimeMs: number; session: any }> = (global as any).__sessionParseCache || {};
+              (global as any).__sessionParseCache = sessionParseCache;
+
               for (const file of files) {
                 try {
                   const filePath = path.join(sessionsDir, file);
+                  const stats = fs.statSync(filePath);
+
+                  if (sessionParseCache[filePath] && sessionParseCache[filePath].mtimeMs === stats.mtimeMs) {
+                    sessionsList.push(sessionParseCache[filePath].session);
+                    continue;
+                  }
+
                   const content = JSON.parse(fs.readFileSync(filePath, 'utf-8'));
                   const meta = content.metadata || {};
                   const history = content.history || [];
@@ -509,7 +712,9 @@ function locallmBridgePlugin(): Plugin {
                         id: `${fileId}-${cleanMessages.length}`,
                         role: 'user',
                         content: msgContent,
-                        timestamp: Date.now() - (history.length - i) * 1000
+                        timestamp: Date.now() - (history.length - i) * 1000,
+                        files: msg.files || undefined,
+                        options: msg.options || undefined
                       });
                       turnSources = [];
                       seenUrls.clear();
@@ -578,23 +783,33 @@ function locallmBridgePlugin(): Plugin {
                   const messages = cleanMessages;
 
                   let title = meta.title;
+                  if (title) {
+                    title = title
+                      .replace(/<(?:think|thought)>[\s\S]*?(?:<\/(?:think|thought)>|$)/gi, '')
+                      .replace(/^["'«»“”\s*#`_-]+|["'«»“”\s*#`_-]+$/g, '')
+                      .trim();
+                  }
                   if (!title && messages.length > 0) {
                     const firstUserMsg = messages.find((m: any) => m.role === 'user');
-                    if (firstUserMsg) {
-                      title = firstUserMsg.content.slice(0, 32) + (firstUserMsg.content.length > 32 ? '...' : '');
+                    if (firstUserMsg && firstUserMsg.content) {
+                      const cleanFirst = firstUserMsg.content
+                        .replace(/<(?:think|thought)>[\s\S]*?(?:<\/(?:think|thought)>|$)/gi, '')
+                        .trim();
+                      title = cleanFirst.slice(0, 32) + (cleanFirst.length > 32 ? '...' : '');
                     }
                   }
 
-                  const stats = fs.statSync(filePath);
                   const updatedAt = meta.updated_at ? new Date(meta.updated_at).getTime() : stats.mtimeMs;
 
-                  sessionsList.push({
+                  const sessionObj = {
                     id: meta.session_id || file.replace('.json', ''),
                     title: title || 'New Chat',
                     workspace: targetWs,
                     updatedAt,
                     messages
-                  });
+                  };
+                  sessionParseCache[filePath] = { mtimeMs: stats.mtimeMs, session: sessionObj };
+                  sessionsList.push(sessionObj);
                 } catch {}
               }
 
@@ -612,10 +827,16 @@ function locallmBridgePlugin(): Plugin {
               const sessionId = (body.id || Date.now().toString()).replace(/[^a-zA-Z0-9_\-]/g, '_');
               const sessionPath = path.join(sessionsDir, `${sessionId}.json`);
 
+              let cleanTitle = (body.title || 'New Chat')
+                .replace(/<(?:think|thought)>[\s\S]*?(?:<\/(?:think|thought)>|$)/gi, '')
+                .replace(/^["'«»“”\s*#`_-]+|["'«»“”\s*#`_-]+$/g, '')
+                .trim();
+              if (!cleanTitle) cleanTitle = 'New Chat';
+
               const payload = {
                 metadata: {
                   session_id: sessionId,
-                  title: body.title || 'New Chat',
+                  title: cleanTitle,
                   workspace: targetWs,
                   updated_at: new Date().toISOString(),
                   message_count: (body.messages || []).length
@@ -623,7 +844,9 @@ function locallmBridgePlugin(): Plugin {
                 history: (body.messages || []).map((m: any) => ({
                   role: m.role,
                   content: m.content,
-                  ...(m.sources ? { sources: m.sources } : {})
+                  ...(m.sources ? { sources: m.sources } : {}),
+                  ...(m.files ? { files: m.files } : {}),
+                  ...(m.options ? { options: m.options } : {})
                 }))
               };
 
@@ -650,6 +873,42 @@ function locallmBridgePlugin(): Plugin {
             }
             return;
           }
+        }
+
+        // 3.5 POST /api/parse-file - Parse document attachments (.docx, .pdf, txt) into clean readable text
+        if (pathname === '/api/parse-file' && req.method === 'POST') {
+          try {
+            const body = await parseJsonBody(req);
+            const filename = body.filename || 'document.txt';
+            const rawB64 = (body.data || '').includes(',') ? body.data.split(',')[1] : (body.data || '');
+            const buffer = Buffer.from(rawB64, 'base64');
+
+            const tmpFile = path.join(os.tmpdir(), `locallm_${Date.now()}_${path.basename(filename)}`);
+            fs.writeFileSync(tmpFile, buffer);
+            try {
+              const pyScript = [
+                'import sys, json',
+                'from locallm.core.file_parser import parse_attachment_file',
+                'with open(sys.argv[1], "rb") as f: b = f.read()',
+                'ok, txt, err = parse_attachment_file(sys.argv[2], b)',
+                'print(json.dumps({"success": ok, "text": txt, "error": err}))'
+              ].join('\n');
+
+              const pyBin = path.resolve(process.cwd(), '..', '.venv', 'bin', 'python');
+              const pyResult = child_process.execFileSync(
+                pyBin,
+                ['-c', pyScript, tmpFile, filename],
+                { encoding: 'utf-8', timeout: 15000 }
+              );
+              const parsed = JSON.parse(pyResult.trim());
+              sendJson(res, parsed.success ? 200 : 400, parsed);
+            } finally {
+              try { fs.unlinkSync(tmpFile); } catch {}
+            }
+          } catch (err: any) {
+            sendJson(res, 500, { success: false, error: err.message, text: '' });
+          }
+          return;
         }
 
         // 4. GET /api/models - Dynamically queries the requested or active service platform
@@ -702,7 +961,7 @@ function locallmBridgePlugin(): Plugin {
               console.warn('Failed to fetch from Ollama directly:', e);
             }
           } else {
-            // Case B: targetBackend is a custom platform (e.g. iForte-GPU, vLLM, etc.)
+            // Case B: targetBackend is a custom platform (e.g. vLLM, LocalAI, etc.)
             const platform = (cfg.custom_platforms || []).find((p: any) => p.name.toLowerCase() === targetBackend.toLowerCase());
             if (platform && platform.api_base) {
               try {
@@ -794,7 +1053,15 @@ function locallmBridgePlugin(): Plugin {
 
             const payload = {
               model: targetModel,
-              messages: body.messages || [{ role: 'user', content: body.message }],
+              backend: body.backend || body.platform || body.provider || cfg.active_backend || 'ollama',
+              provider: body.provider || cfg.active_backend || 'ollama',
+              messages: body.messages || [
+                {
+                  role: 'user',
+                  content: body.message,
+                  ...(Array.isArray(body.images) && body.images.length > 0 ? { images: body.images } : {})
+                }
+              ],
               stream: true,
               temperature: typeof body.temperature === 'number' ? body.temperature : cfg.temperature,
               options: body.options || {}
@@ -805,7 +1072,8 @@ function locallmBridgePlugin(): Plugin {
               headers: {
                 'Content-Type': 'application/json',
                 ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
-                'X-Workspace': workspace
+                'X-Workspace': workspace,
+                'X-Backend': String(payload.backend)
               },
               body: JSON.stringify(payload)
             });
@@ -835,6 +1103,128 @@ function locallmBridgePlugin(): Plugin {
             sendJson(res, 500, { error: `Failed to connect to locaLLM API server: ${err.message}` });
             return;
           }
+        }
+
+        // 6. POST /api/skills/inspect
+        if (pathname === '/api/skills/inspect' && req.method === 'POST') {
+          try {
+            const body = await parseJsonBody(req);
+            const source = (body.source || '').trim();
+            if (!source) {
+              sendJson(res, 400, { success: false, error: 'Source repository or URL is required.' });
+              return;
+            }
+
+            const cfg = loadConfigOnDisk();
+            const serverPort = cfg.server_port || 8080;
+            let result: any = null;
+
+            // Try Python gateway server first
+            try {
+              const gwRes = await fetch(`http://127.0.0.1:${serverPort}/api/skills/inspect`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source }),
+                signal: AbortSignal.timeout(30000)
+              });
+              if (gwRes.ok) {
+                result = await gwRes.json();
+              }
+            } catch {}
+
+            // Fallback to local python invocation if gateway offline
+            if (!result) {
+              const baseDir = import.meta.dirname || path.resolve('.');
+              const pythonBin = path.resolve(baseDir, '../.venv/bin/python');
+              const pyScript = `
+import json, sys
+from locallm.core.workspace import inspect_github_skills
+ok, msg, skills, _, _ = inspect_github_skills(sys.argv[1])
+print(json.dumps({"success": ok, "message": msg, "skills": skills, "count": len(skills)}))
+`;
+              const cpRes = child_process.spawnSync(pythonBin, ['-c', pyScript, source], {
+                encoding: 'utf-8',
+                cwd: path.resolve(baseDir, '..'),
+                timeout: 60000
+              });
+              if (cpRes.stdout) {
+                try { result = JSON.parse(cpRes.stdout.trim()); } catch {}
+              }
+            }
+
+            if (result) {
+              sendJson(res, result.success ? 200 : 400, result);
+            } else {
+              sendJson(res, 500, { success: false, error: 'Inspection failed to return output.' });
+            }
+          } catch (err: any) {
+            sendJson(res, 500, { success: false, error: err.message });
+          }
+          return;
+        }
+
+        // 7. POST /api/skills/install
+        if (pathname === '/api/skills/install' && req.method === 'POST') {
+          try {
+            const body = await parseJsonBody(req);
+            const source = (body.source || '').trim();
+            const workspace = (body.workspace || '').trim() || 'default';
+            const skills = body.skills;
+
+            if (!source) {
+              sendJson(res, 400, { success: false, error: 'Source repository or URL is required.' });
+              return;
+            }
+
+            const cfg = loadConfigOnDisk();
+            const serverPort = cfg.server_port || 8080;
+            let result: any = null;
+
+            // Try Python gateway server first
+            try {
+              const gwRes = await fetch(`http://127.0.0.1:${serverPort}/api/skills/install`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ source, workspace, skills }),
+                signal: AbortSignal.timeout(60000)
+              });
+              if (gwRes.ok) {
+                result = await gwRes.json();
+              }
+            } catch {}
+
+            // Fallback to local python invocation if gateway offline
+            if (!result) {
+              const baseDir = import.meta.dirname || path.resolve('.');
+              const pythonBin = path.resolve(baseDir, '../.venv/bin/python');
+              const pyScript = `
+import json, sys
+from locallm.core.workspace import install_skill_from_source
+source = sys.argv[1]
+ws = sys.argv[2]
+selected = json.loads(sys.argv[3]) if len(sys.argv) > 3 and sys.argv[3] else None
+ok, msg, installed = install_skill_from_source(ws, source, selected)
+print(json.dumps({"success": ok, "message": msg, "installed": installed, "count": len(installed)}))
+`;
+              const cpRes = child_process.spawnSync(pythonBin, ['-c', pyScript, source, workspace, JSON.stringify(skills || null)], {
+                encoding: 'utf-8',
+                cwd: path.resolve(baseDir, '..'),
+                timeout: 90000
+              });
+              if (cpRes.stdout) {
+                try { result = JSON.parse(cpRes.stdout.trim()); } catch {}
+              }
+            }
+
+            if (result) {
+              sendJson(res, result.success ? 200 : 400, result);
+            } else {
+              sendJson(res, 500, { success: false, error: 'Installation failed to execute.' });
+            }
+          } catch (err: any) {
+            sendJson(res, 500, { success: false, error: err.message });
+          }
+          return;
         }
 
         next();

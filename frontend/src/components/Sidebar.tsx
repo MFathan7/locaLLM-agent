@@ -1,6 +1,5 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useMemo } from 'react';
 import {
-  MessageSquare,
   Plus,
   Settings,
   Trash2,
@@ -57,17 +56,33 @@ export function Sidebar({
   const [menuOpenWs, setMenuOpenWs] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
+  const validSortedSessions = useMemo(() => {
+    return sessions
+      .filter(s => s.messages && s.messages.length > 0)
+      .sort((a, b) => {
+        const timeA = a.updatedAt || a.messages?.[a.messages.length - 1]?.timestamp || 0;
+        const timeB = b.updatedAt || b.messages?.[b.messages.length - 1]?.timestamp || 0;
+        return timeB - timeA;
+      });
+  }, [sessions]);
+
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
+    if (!menuOpenWs) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setMenuOpenWs(null);
+      }
+    };
+    const handlePointerDownOutside = (e: MouseEvent | TouchEvent) => {
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         setMenuOpenWs(null);
       }
     };
-    if (menuOpenWs) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
+    window.addEventListener('keydown', handleKeyDown);
+    document.addEventListener('pointerdown', handlePointerDownOutside);
     return () => {
-      document.removeEventListener('mousedown', handleClickOutside);
+      window.removeEventListener('keydown', handleKeyDown);
+      document.removeEventListener('pointerdown', handlePointerDownOutside);
     };
   }, [menuOpenWs]);
 
@@ -88,7 +103,7 @@ export function Sidebar({
   };
 
   return (
-    <div className="w-60 h-[calc(100dvh-1rem)] m-2 rounded-[28px] liquid-glass flex flex-col select-none">
+    <div className="w-60 h-[calc(100dvh-1rem)] m-2 rounded-[28px] liquid-glass flex flex-col select-none relative z-20">
       {/* Header */}
       <div className="h-12 pl-4 pr-2.5 flex items-center justify-between">
         <div className="flex items-center gap-2">
@@ -177,7 +192,7 @@ export function Sidebar({
                     setMenuOpenWs(ws.name);
                   }}
                   className={clsx(
-                    'group relative w-full flex items-center justify-between px-2.5 py-1.5 rounded-2xl text-[13px] text-left cursor-pointer transition-colors',
+                    'group relative w-full h-9 flex items-center justify-between px-3 rounded-2xl text-[13px] text-left cursor-pointer transition-colors',
                     isMenuOpen ? 'z-40' : 'z-0',
                     isActive
                       ? 'text-slate-900 dark:text-white font-medium'
@@ -200,38 +215,19 @@ export function Sidebar({
                         onEditWorkspace?.(ws);
                       }}
                       className="shrink-0 cursor-pointer hover:scale-110 active:scale-95 transition-transform"
-                      title="Edit workspace"
+                      title="Edit workspace icon & color"
                     >
                       <WorkspaceIcon
                         icon={ws.icon || 'Folder'}
                         color={ws.color || '#3B82F6'}
-                        withContainer
-                        containerClassName="w-5.5 h-5.5 rounded-lg flex items-center justify-center shrink-0 shadow-xs"
-                        className="w-3 h-3"
+                        className="w-4.5 h-4.5"
                       />
                     </div>
-                    <span className="truncate flex-1 font-medium">{ws.name}</span>
+                    <span className="truncate flex-1 text-[13px] font-bold text-slate-800 dark:text-slate-100">{ws.name}</span>
                   </div>
 
-                  {/* Right: Quick Edit & Options Menu */}
-                  <div className="relative flex items-center gap-0.5 shrink-0">
-                    {/* Hover Quick Edit Icon */}
-                    <button
-                      type="button"
-                      onMouseDown={(e) => e.stopPropagation()}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        setMenuOpenWs(null);
-                        onEditWorkspace?.(ws);
-                      }}
-                      className="opacity-0 group-hover:opacity-100 p-1.5 rounded-xl transition-all cursor-pointer text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-black/10 dark:hover:bg-white/10 shrink-0"
-                      title="Edit workspace"
-                      aria-label="Edit workspace"
-                    >
-                      <Edit3 className="w-3.5 h-3.5" />
-                    </button>
-
-                    {/* Three Dots Menu Button */}
+                  {/* Right: Options Menu (Three Dots) */}
+                  <div className="relative flex items-center shrink-0">
                     <button
                       type="button"
                       onMouseDown={(e) => e.stopPropagation()}
@@ -240,7 +236,7 @@ export function Sidebar({
                         setMenuOpenWs(prev => prev === ws.name ? null : ws.name);
                       }}
                       className={clsx(
-                        'relative p-1.5 rounded-xl transition-all cursor-pointer text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10 shrink-0',
+                        'relative p-1 rounded-xl transition-all cursor-pointer text-slate-400 hover:text-slate-900 dark:hover:text-white hover:bg-black/10 dark:hover:bg-white/10 shrink-0',
                         isMenuOpen ? 'opacity-100 bg-black/10 dark:bg-white/10 text-slate-900 dark:text-white' : 'opacity-40 group-hover:opacity-100'
                       )}
                       title="Workspace options"
@@ -319,47 +315,49 @@ export function Sidebar({
           </div>
 
           <div className="mt-0.5 space-y-0.5">
-            {sessions.filter(s => s.messages && s.messages.length > 0).length === 0 ? (
-              <div className="px-3 py-3 text-center text-xs text-slate-500 dark:text-slate-400">
-                No chats in this workspace.
+            {validSortedSessions.length === 0 ? (
+              <div className="mx-1 my-2.5 px-3 py-4 text-center rounded-2xl bg-black/[0.03] dark:bg-white/[0.04] border border-dashed border-slate-300/80 dark:border-slate-700/80 select-none">
+                <p className="text-[13px] font-semibold text-slate-700 dark:text-slate-200">
+                  No chats in this workspace
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-0.5">
+                  Click + New above to begin
+                </p>
               </div>
             ) : (
-              sessions
-                .filter(s => s.messages && s.messages.length > 0)
-                .map((session) => {
-                  const isActive = activeSessionId === session.id;
-                  return (
-                    <div
-                      key={session.id}
-                      onClick={() => onSelectSession(session.id)}
-                      className={clsx(
-                        'group relative flex items-center gap-2 px-3 py-2 rounded-2xl cursor-pointer transition-colors text-[13px]',
-                        isActive
-                          ? 'text-slate-900 dark:text-white font-medium'
-                          : 'text-slate-700 dark:text-slate-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
-                      )}
+              validSortedSessions.map((session) => {
+                const isActive = activeSessionId === session.id;
+                return (
+                  <div
+                    key={session.id}
+                    onClick={() => onSelectSession(session.id)}
+                    className={clsx(
+                      'group relative w-full h-9 flex items-center justify-between px-3 rounded-2xl cursor-pointer transition-colors text-[13px]',
+                      isActive
+                        ? 'text-slate-900 dark:text-white font-medium'
+                        : 'text-slate-700 dark:text-slate-300 hover:bg-black/[0.04] dark:hover:bg-white/[0.06]'
+                    )}
+                  >
+                    {isActive && (
+                      <motion.span
+                        layoutId={`chat-droplet-${activeWorkspace}`}
+                        transition={liquidSpring}
+                        className="absolute inset-0 rounded-2xl liquid-pill"
+                      />
+                    )}
+                    <span className="relative truncate flex-1 pr-2">{session.title}</span>
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id, session.title); }}
+                      className="relative opacity-0 group-hover:opacity-100 p-1 rounded-full hover:text-red-600 dark:hover:text-red-400 text-slate-500 transition-opacity cursor-pointer shrink-0"
+                      title="Delete chat"
+                      aria-label="Delete chat"
                     >
-                      {isActive && (
-                        <motion.span
-                          layoutId="chat-droplet"
-                          transition={liquidSpring}
-                          className="absolute inset-0 rounded-2xl liquid-pill"
-                        />
-                      )}
-                      <MessageSquare className="relative w-3.5 h-3.5 shrink-0 opacity-70" />
-                      <span className="relative truncate flex-1">{session.title}</span>
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id, session.title); }}
-                        className="relative opacity-0 group-hover:opacity-100 p-1 rounded-full hover:text-red-600 dark:hover:text-red-400 text-slate-500 transition-opacity cursor-pointer"
-                        title="Delete chat"
-                        aria-label="Delete chat"
-                      >
-                        <Trash2 className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  );
-                })
+                      <Trash2 className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </section>

@@ -87,13 +87,21 @@ class TestAssistantMultiStepAgent(unittest.TestCase):
             self.assertTrue(any("All project files and directories" in m.get("content", "") for m in msgs))
 
     def test_workspace_project_context_and_skills_discovery(self):
-        ctx = load_workspace_context("default")
-        # In current repo root, AGENTS.md exists
-        self.assertIn("Project Architecture & Rules", ctx)
-        self.assertIn("locaLLM", ctx)
+        rule_path = Path.cwd() / "AGENTS.md"
+        created = False
+        if not rule_path.is_file():
+            rule_path.write_text("# locaLLM\nProject Architecture & Rules\n", encoding="utf-8")
+            created = True
+        try:
+            ctx = load_workspace_context("default")
+            self.assertIn("Project Architecture & Rules", ctx)
+            self.assertIn("locaLLM", ctx)
 
-        skills = get_all_available_skills("default")
-        self.assertIsInstance(skills, list)
+            skills = get_all_available_skills("default")
+            self.assertIsInstance(skills, list)
+        finally:
+            if created and rule_path.is_file():
+                rule_path.unlink()
 
     def test_ignorance_refusal_interceptor_triggers_search_web(self):
         config = LocaLLMConfig()

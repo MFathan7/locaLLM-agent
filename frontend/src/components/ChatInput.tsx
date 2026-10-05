@@ -22,7 +22,7 @@ interface ChatInputProps {
   activePlatform?: string;
 }
 
-const NO_CAPS = { files: true, webSearch: false, tools: false };
+const DEFAULT_CAPS = { files: true, webSearch: true, tools: true };
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -106,11 +106,17 @@ export function ChatInput({
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!disabled && textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  }, [disabled]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const capabilities = models.find(m => m.id === currentModelId)?.capabilities ?? NO_CAPS;
-  const webSearch = webSearchPref && capabilities.webSearch;
-  const tools = toolsPref && capabilities.tools;
+  const capabilities = models.find(m => m.id === currentModelId)?.capabilities ?? DEFAULT_CAPS;
+  const webSearch = webSearchPref && (capabilities.webSearch ?? true);
+  const tools = toolsPref && (capabilities.tools ?? true);
 
   useEffect(() => {
     const el = textareaRef.current;
@@ -118,6 +124,14 @@ export function ChatInput({
     el.style.height = 'auto';
     el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
   }, [input]);
+
+  const appendFiles = (newFiles: File[]) => {
+    setFiles(prev => {
+      const remainingSlots = Math.max(0, 5 - prev.length);
+      if (remainingSlots <= 0) return prev;
+      return [...prev, ...newFiles.slice(0, remainingSlots)];
+    });
+  };
 
   // Window-level drag and drop so user can drop files anywhere
   useEffect(() => {
@@ -152,7 +166,7 @@ export function ChatInput({
       setIsDragging(false);
       const dropped = extractFilesFromDataTransfer(e.dataTransfer);
       if (dropped.length > 0) {
-        setFiles(prev => [...prev, ...dropped]);
+        appendFiles(dropped);
       }
     };
 
@@ -176,7 +190,7 @@ export function ChatInput({
     setIsDragging(false);
     const dropped = extractFilesFromDataTransfer(e.dataTransfer);
     if (dropped.length > 0) {
-      setFiles(prev => [...prev, ...dropped]);
+      appendFiles(dropped);
     }
   };
 
@@ -206,7 +220,13 @@ export function ChatInput({
 
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []).map(normalizeFile);
-    if (picked.length) setFiles(prev => [...prev, ...picked]);
+    if (picked.length) {
+      setFiles(prev => {
+        const remainingSlots = Math.max(0, 5 - prev.length);
+        if (remainingSlots <= 0) return prev;
+        return [...prev, ...picked.slice(0, remainingSlots)];
+      });
+    }
     e.target.value = '';
   };
 
@@ -217,6 +237,11 @@ export function ChatInput({
   return (
     <div className="px-4 pb-4 pt-1">
       <div className="max-w-3xl mx-auto">
+        {/* Slang disclaimer info above chat input box */}
+        <div className="flex items-center justify-center gap-1.5 pb-1.5 select-none text-xs font-medium text-slate-500/80 dark:text-slate-400/80">
+          <span>LocaLLM can trip. Stay sharp.</span>
+        </div>
+
         <div
           onDragEnter={(e) => {
             e.preventDefault();
@@ -278,6 +303,11 @@ export function ChatInput({
                       onRemove={() => setFiles(prev => prev.filter(item => item !== f))}
                     />
                   ))}
+                  {files.length >= 5 && (
+                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-300 select-none">
+                      Max 5 files
+                    </span>
+                  )}
                   {webSearch && (
                     <Chip
                       icon={<Globe className="w-3 h-3 text-emerald-500" />}

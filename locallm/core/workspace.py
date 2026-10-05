@@ -231,13 +231,13 @@ def create_workspace(
     custom_instructions: str = "",
 ) -> Tuple[bool, str]:
     """Create a new isolated workspace with scaffolded directories."""
-    clean_name = name.strip().lower()
+    clean_name = name.strip()
     if not clean_name:
         return False, "Workspace name cannot be empty."
 
-    # Validate name format: alphanumeric, hyphens, and underscores only
-    if not re.match(r"^[a-zA-Z0-9_\-]+$", clean_name):
-        return False, "Workspace name must contain only letters, numbers, hyphens, or underscores."
+    # Validate name format: alphanumeric, spaces, hyphens, and underscores only
+    if not re.match(r"^[a-zA-Z0-9_ -]+$", clean_name):
+        return False, "Workspace name must contain only letters, numbers, spaces, hyphens, or underscores."
 
     ws_path = get_workspace_path(clean_name)
     if ws_path.exists():
@@ -276,7 +276,7 @@ def create_workspace(
 
 def delete_workspace(name: str, active_workspace: str) -> Tuple[bool, str]:
     """Delete a workspace directory, preventing deletion of default or active workspace."""
-    clean_name = name.strip().lower()
+    clean_name = name.strip()
     if clean_name == "default":
         return False, "The 'default' workspace cannot be deleted."
 
@@ -292,6 +292,74 @@ def delete_workspace(name: str, active_workspace: str) -> Tuple[bool, str]:
         return True, f"Workspace '{clean_name}' deleted successfully."
     except Exception as exc:
         return False, f"Failed to delete workspace '{clean_name}': {exc}"
+
+
+def rename_workspace(old_name: str, new_name: str, active_workspace: Optional[str] = None) -> Tuple[bool, str]:
+    """Rename an existing workspace directory and update its internal metadata."""
+    clean_old = old_name.strip()
+    clean_new = new_name.strip()
+
+    if not clean_old:
+        return False, "Current workspace name cannot be empty."
+    if not clean_new:
+        return False, "New workspace name cannot be empty."
+
+    if clean_old.lower() == "default":
+        return False, "The 'default' workspace cannot be renamed."
+    if clean_new.lower() == "default":
+        return False, "Cannot rename a workspace to 'default'."
+
+    if clean_old == clean_new:
+        return True, f"Workspace name is already '{clean_new}'."
+
+    # Validate name format: alphanumeric, spaces, hyphens, and underscores only
+    if not re.match(r"^[a-zA-Z0-9_ -]+$", clean_new):
+        return False, "Workspace name must contain only letters, numbers, spaces, hyphens, or underscores."
+
+    old_path = get_workspace_path(clean_old)
+    if not old_path.exists() or not old_path.is_dir():
+        return False, f"Workspace '{clean_old}' does not exist."
+
+    new_path = get_workspace_path(clean_new)
+    if new_path.exists() and new_path != old_path:
+        return False, f"Workspace '{clean_new}' already exists."
+
+    try:
+        old_path.rename(new_path)
+
+        # Update metadata in workspace.json if present
+        meta_file = new_path / "workspace.json"
+        if meta_file.exists():
+            try:
+                meta = json.loads(meta_file.read_text(encoding="utf-8"))
+                meta["name"] = clean_new
+                meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            except Exception:
+                pass
+
+        # Update AGENTS.md header if present
+        agents_file = get_workspace_agents_path(clean_new)
+        if agents_file.exists():
+            try:
+                content = agents_file.read_text(encoding="utf-8")
+                content = content.replace(f"# Workspace Instructions: {clean_old}", f"# Workspace Instructions: {clean_new}")
+                agents_file.write_text(content, encoding="utf-8")
+            except Exception:
+                pass
+
+        # Update config if active workspace was renamed
+        try:
+            from locallm.config import load_config, save_config
+            cfg = load_config()
+            if cfg.active_workspace and cfg.active_workspace.strip().lower() == clean_old.lower():
+                cfg.active_workspace = clean_new
+                save_config(cfg)
+        except Exception:
+            pass
+
+        return True, f"Workspace '{clean_old}' renamed to '{clean_new}'."
+    except Exception as exc:
+        return False, f"Failed to rename workspace '{clean_old}' to '{clean_new}': {exc}"
 
 
 def load_workspace_context(name: str) -> str:
@@ -418,43 +486,94 @@ def load_workspace_context(name: str) -> str:
             stem_lower = file.stem.lower()
             if any(stem_lower.startswith(bf) for bf in IGNORE_SKILL_FILES) or "third-party" in stem_lower:
                 continue
+            if stem_lower in ("agents", "soul", "changelog", "license"):
+                continue
             if file.suffix.lower() == ".txt" and file.name.lower() != "skill.txt":
                 continue
             if any(ref in parts[:-1] for ref in ("references", "templates", "assets", "scripts")):
                 continue
             s_files.append(file)
 
+        parsed_skills: List[Dict[str, Any]] = []
+        seen_skill_ids: set = set()
+
         for file in s_files:
             try:
                 content = file.read_text(encoding="utf-8", errors="replace").strip()
-                if content:
-                    rel_name = str(file.relative_to(skills_dir)).replace("\\", "/")
-                    abs_path = str(file.resolve())
-                    skill_id = file.stem if file.name.lower() in ("skill.md", "readme.md") else file.name
-                    if file.parent != skills_dir and file.name.lower() in ("skill.md", "readme.md"):
-                        skill_id = file.parent.name
-                    if skill_id.lower().endswith(".md"):
-                        skill_id = skill_id[:-3]
+                if not content:
+                    continue
+                rel_name = str(file.relative_to(skills_dir)).replace("\\", "/")
+                abs_path = str(file.resolve())
+                skill_id = file.stem if file.name.lower() in ("skill.md", "readme.md") else file.name
+                if file.parent != skills_dir and file.name.lower() in ("skill.md", "readme.md"):
+                    skill_id = file.parent.name
+                if skill_id.lower().endswith(".md"):
+                    skill_id = skill_id[:-3]
 
+                clean_id = skill_id.strip()
+                if clean_id.lower() in seen_skill_ids:
+                    continue
+                seen_skill_ids.add(clean_id.lower())
+
+                # Extract concise 1-line description
+                desc = ""
+                if content.startswith("---"):
+                    end_idx = content.find("---", 3)
+                    if end_idx != -1:
+                        fm = content[3:end_idx]
+                        for line in fm.splitlines():
+                            line_s = line.strip()
+                            if line_s.startswith("description:"):
+                                desc = line_s.split("description:", 1)[1].strip().strip("'\"")
+                                break
+                if not desc:
+                    for line in content.splitlines():
+                        l_clean = line.strip().lstrip("#- *").strip()
+                        if l_clean and not line.strip().startswith("---") and not l_clean.lower().startswith("skill:"):
+                            desc = l_clean[:140]
+                            break
+                if not desc:
+                    desc = "Specialized agent skill"
+
+                parsed_skills.append({
+                    "id": clean_id,
+                    "desc": desc,
+                    "rel": rel_name,
+                    "path": abs_path,
+                    "content": content,
+                })
+            except Exception:
+                continue
+
+        if parsed_skills:
+            if len(parsed_skills) <= 15:
+                # Small skill set: provide both direct snippets and invocation hints
+                s_entries = []
+                for s in parsed_skills:
                     snippet = (
-                        content
-                        if len(content) <= 350
+                        s["content"]
+                        if len(s["content"]) <= 350
                         else (
-                            content[:350]
-                            + f"\n... [Use read_skill('{skill_id}') or read_file('{abs_path}') for full skill instructions]"
+                            s["content"][:350]
+                            + f"\n... [Use read_skill('{s['id']}') or read_file('{s['path']}') for full skill instructions]"
                         )
                     )
                     s_entries.append(
-                        f"--- Skill: {rel_name} ---\n"
-                        f"Skill ID: {skill_id}\n"
-                        f"Path: {abs_path}\n"
+                        f"--- Skill: {s['rel']} ---\n"
+                        f"Skill ID: {s['id']}\n"
+                        f"Path: {s['path']}\n"
                         f"{snippet}"
                     )
-            except Exception:
-                continue
-        if s_entries:
-            combined_s = "\n\n".join(s_entries)
-            sections.append(f"[Workspace Skills]\n{combined_s[:6000]}")
+                sections.append(f"[Workspace Skills ({len(parsed_skills)} available in '{clean_name}')]\n" + "\n\n".join(s_entries))
+            else:
+                # Large skill set (e.g. 100+ skills): provide comprehensive structured Catalogue Index
+                cat_lines = [
+                    f"[Workspace Skills Catalogue ({len(parsed_skills)} skills available in '{clean_name}')]",
+                    f"The active workspace '{clean_name}' contains the following {len(parsed_skills)} specialized agent skills. When solving tasks, analyze this catalogue to choose the best methodology and tools. To inspect the full detailed instructions, commands, and rules of any skill, call the tool `read_skill(skill_name='<skill_id>')` or use `read_file`:",
+                ]
+                for s in parsed_skills:
+                    cat_lines.append(f"- {s['id']}: {s['desc']} (Path: {s['rel']})")
+                sections.append("\n".join(cat_lines))
 
     # 5. Project Rules & Context from Current Working Directory (CWD)
     cwd = Path.cwd()
@@ -518,7 +637,11 @@ def load_workspace_context(name: str) -> str:
     ws_skills_res = str((ws_path / "skills").resolve())
     ws_know_res = str((ws_path / "knowledge").resolve())
 
+    now_dt = datetime.now()
+    now_str = now_dt.strftime("%A, %Y-%m-%d %H:%M:%S")
+
     header = (
+        f"Current Real-World Date & Time: {now_str}\n"
         f"Active Workspace: '{clean_name}'\n"
         f"Workspace Directory: {ws_dir_res}\n"
         f"Workspace Files Directory: {ws_files_res}\n"
@@ -787,7 +910,7 @@ def get_workspace_security_policy(workspace_name: Optional[str] = "default") -> 
             # 2. Telegram @usernames
             for un in re.findall(r"@([a-zA-Z0-9_]{3,})", raw_val):
                 policy.master_telegram_usernames.add(un.strip().lower())
-            # 3. Quoted identifiers (e.g. ["fathan", "655038084"])
+            # 3. Quoted identifiers (e.g. ["name", "user_id"])
             for q in re.findall(r"['\"]([^'\"]+)['\"]", raw_val):
                 clean_q = q.strip().lstrip("@").lower()
                 if clean_q.isdigit():
@@ -890,7 +1013,7 @@ def sanitize_workspace_content(text: str) -> str:
 
 def update_workspace_instructions(name: str, new_instructions: str) -> Tuple[bool, str]:
     """Update custom_instructions in workspace.json for the specified workspace."""
-    clean_name = name.strip().lower()
+    clean_name = name.strip()
     ws_path = get_workspace_path(clean_name)
     if not ws_path.exists() or not ws_path.is_dir():
         return False, f"Workspace '{clean_name}' does not exist."
@@ -1354,6 +1477,14 @@ def save_workspace_session(
     if metadata:
         meta.update(metadata)
 
+    if "title" in meta and isinstance(meta["title"], str):
+        cleaned_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", meta["title"], flags=re.IGNORECASE).strip()
+        cleaned_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", cleaned_title).strip()
+        cleaned_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", cleaned_title, flags=re.IGNORECASE).strip()
+        if cleaned_title and "\n" in cleaned_title:
+            cleaned_title = cleaned_title.split("\n")[0].strip()
+        meta["title"] = cleaned_title or "New Chat"
+
     if hasattr(memory, "save_to_json"):
         memory.save_to_json(dest, metadata=meta)
     else:
@@ -1460,7 +1591,21 @@ def list_workspace_sessions(
             if history:
                 last_msg = history[-1]
                 content = last_msg.get("content", "")
-                last_snippet = (content[:80] + "...") if len(content) > 80 else content
+                clean_snippet = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", content, flags=re.IGNORECASE).strip()
+                if not clean_snippet:
+                    for m in reversed(history):
+                        c = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", m.get("content", ""), flags=re.IGNORECASE).strip()
+                        if c:
+                            clean_snippet = c
+                            break
+                last_snippet = (clean_snippet[:80] + "...") if len(clean_snippet) > 80 else clean_snippet
+
+            raw_title = meta.get("title", "")
+            clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
+            clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+            clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+            if clean_title and "\n" in clean_title:
+                clean_title = clean_title.split("\n")[0].strip()
 
             session_id = meta.get("session_id", file_path.stem)
             stype = _classify_session_type(meta, file_path.stem, session_id)
@@ -1475,6 +1620,7 @@ def list_workspace_sessions(
                 "file_path": str(file_path),
                 "type": stype,
                 "model": meta.get("model", "-"),
+                "title": clean_title,
                 "message_count": len(history),
                 "last_snippet": last_snippet,
                 "updated_at": updated_at,

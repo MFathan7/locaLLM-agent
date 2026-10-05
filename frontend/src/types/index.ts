@@ -8,12 +8,21 @@ export interface SourceItem {
   favicon?: string;
 }
 
+export interface AttachedFile {
+  name: string;
+  size: number;
+  type: string;
+  url?: string; // base64 data url for images/preview
+  content?: string; // text content for code/document files
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: number;
   sources?: SourceItem[];
+  files?: AttachedFile[];
   options?: {
     files?: string[];
     webSearch?: boolean;
@@ -46,6 +55,7 @@ export interface WorkspaceSkill {
   name: string;
   description?: string;
   content: string;
+  path?: string;
   enabled?: boolean;
 }
 
@@ -99,6 +109,7 @@ export interface LocaLLMConfig {
   server_host: string;
   server_port: number;
   server_api_key?: string;
+  user_name?: string;
 
   // Compatibility aliases
   model?: string;

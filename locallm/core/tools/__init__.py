@@ -11,7 +11,7 @@ from locallm.core.tools.parser import extract_fallback_tool_calls
 import locallm.core.tools.system  # noqa: F401
 from locallm.core.tools.ui import describe_tool_action, format_live_tool_report
 import locallm.core.tools.web  # noqa: F401
-from locallm.core.tools.web import decode_bing_url, perform_web_search
+from locallm.core.tools.web import decode_bing_url, extract_search_query, perform_web_search
 
 # Backward-compatible global schemas
 ASSISTANT_TOOLS: List[Dict[str, Any]] = registry.get_schemas("assistant")
@@ -246,6 +246,7 @@ __all__ = [
     "get_caller_tools",
     "execute_tool",
     "resolve_smart_path",
+    "extract_search_query",
     "perform_web_search",
     "decode_bing_url",
     "describe_tool_action",

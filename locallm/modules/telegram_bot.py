@@ -356,7 +356,7 @@ def _check_telegram_caller_authorization(
     if user_id in combined_authorized:
         return True, True
 
-    # 2. Match Telegram Username (e.g. @mfathan7 or mfathan7)
+    # 2. Match Telegram Username (e.g. @username or username)
     clean_username = username.lower().lstrip("@") if username else ""
     if clean_username and clean_username in policy.master_telegram_usernames:
         return True, True

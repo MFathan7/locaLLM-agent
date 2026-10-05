@@ -7,6 +7,7 @@ from locallm.core.tools import (
     ASSISTANT_TOOLS,
     decode_bing_url,
     describe_tool_action,
+    extract_search_query,
     format_live_tool_report,
     perform_web_search,
 )
@@ -102,6 +103,68 @@ class TestWebSearch(unittest.TestCase):
         rep = format_live_tool_report("search_web", {"query": "python asyncio"}, "Results...")
         self.assertIn("Searched web:", rep)
         self.assertIn("python asyncio", rep)
+
+    def test_universal_extract_search_query(self):
+        """Verify language-agnostic search query extraction across various languages and structures."""
+        # Indonesian conversational prompt
+        self.assertEqual(
+            extract_search_query("cari tahu di web siapa presiden ri sekarang"),
+            "siapa presiden ri sekarang",
+        )
+        self.assertEqual(
+            extract_search_query("coba kamu googling perkembangan ai terbaru"),
+            "perkembangan ai terbaru",
+        )
+        self.assertEqual(
+            extract_search_query("cari tau info gemini terbaru"),
+            "info gemini terbaru",
+        )
+        self.assertEqual(
+            extract_search_query("tolong carikan tentang react 19"),
+            "react 19",
+        )
+
+        # English conversational prompt
+        self.assertEqual(
+            extract_search_query("search the web for who is the president of france"),
+            "who is the president of france",
+        )
+        self.assertEqual(
+            extract_search_query("please search online about quantum computing 2026"),
+            "quantum computing 2026",
+        )
+
+        # French & German conversational prompts
+        self.assertEqual(
+            extract_search_query("cherche sur internet: qui est le président de la république"),
+            "qui est le président de la république",
+        )
+        self.assertEqual(
+            extract_search_query("suche im web nach neue python features"),
+            "neue python features",
+        )
+
+        # Domain terms preservation (web development, deep web)
+        self.assertEqual(
+            extract_search_query("web development best practices 2026"),
+            "web development best practices 2026",
+        )
+        self.assertEqual(
+            extract_search_query("deep web security and privacy"),
+            "deep web security and privacy",
+        )
+
+        # Tag-based syntax
+        self.assertEqual(
+            extract_search_query("@web rust memory safety"),
+            "rust memory safety",
+        )
+
+        # URL extraction
+        self.assertEqual(
+            extract_search_query('Coba kamu fullscan website ini "http://itsecgames.com/"'),
+            "http://itsecgames.com/",
+        )
 
 
 if __name__ == "__main__":

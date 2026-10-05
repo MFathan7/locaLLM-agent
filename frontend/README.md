@@ -50,14 +50,17 @@ Built with **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Motion (`mot
 
 ### 🎛️ Settings & Model Picker
 - **Model Picker with Platform Subtitle**: Displays model name on top and platform name (*Ollama*, *OpenAI*, or custom platforms) underneath.
-- **Dynamic Platform Switcher**: Switch between native local Ollama and custom OpenAI-compatible platforms (e.g. vLLM, iForte-GPU, LocalAI).
+- **Dynamic Platform Switcher**: Switch between native local Ollama and custom OpenAI-compatible platforms (e.g. vLLM, LocalAI).
 - **Dynamic Model Dropdown**: Automatically re-queries available models on the active platform with a 60-second in-memory cache and connection timeout guards.
 - **Inference & Policy Controls**: Adjust sampling temperature, context window limits, system prompts, agent autonomy policies (`ask`, `always_allow`, `deny`), and OpenAI gateway settings.
 
-### ➕ Dynamic Chat Input Plus Menu
-- **Attachment Upload**: Attach files directly into the prompt context.
-- **Web Search Toggle**: Enable real-time web research per message for supported models.
-- **Autonomous Tools Toggle**: Toggle agent tool execution dynamically.
+### ➕ Dynamic Chat Input, Attachments & Starters
+- **Multi-File Attachments (up to 5 files)**: Drag-and-drop or upload images, PDFs, Word documents (`.docx`), and text/code files directly into the prompt context with interactive preview chips.
+- **Multi-Turn Document Context Retention**: File content is automatically maintained across subsequent conversation turns so the model retains full document awareness during follow-up questions.
+- **Interactive Starter Prompts**: 3 randomized starter suggestion cards on empty sessions to jumpstart coding, debugging, or brainstorming tasks in one click.
+- **Dynamic Web Chat Greetings**: Randomized modern AI greetings (ChatGPT/Claude style) that refresh on every new chat.
+- **AI Disclaimer Header**: Subtle, sleek disclaimer header above the chat input box (*"LocaLLM can stumble sometimes. Stay sharp and double-check key info."*).
+- **Web Search & Agent Tool Toggles**: Direct toggle buttons to enable or disable autonomous tools or real-time web research on a per-prompt basis.
 
 ---
 

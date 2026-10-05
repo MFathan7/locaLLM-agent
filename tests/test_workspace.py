@@ -501,6 +501,33 @@ class TestWorkspaceEngine(unittest.TestCase):
         self.assertIsNotNone(content3)
         self.assertIn("Quick Check", content3)
 
+    def test_rename_workspace(self) -> None:
+        from locallm.core.workspace import rename_workspace, create_workspace, get_workspace_path, get_workspace_info
+
+        # Create original workspace
+        ok_create, _ = create_workspace("Original Project", description="Testing rename")
+        self.assertTrue(ok_create)
+        self.assertTrue(get_workspace_path("Original Project").exists())
+
+        # Rename to new name with spaces and capitals
+        ok_rename, msg = rename_workspace("Original Project", "Renamed Project")
+        self.assertTrue(ok_rename)
+        self.assertFalse(get_workspace_path("Original Project").exists())
+        self.assertTrue(get_workspace_path("Renamed Project").exists())
+
+        info = get_workspace_info("Renamed Project")
+        self.assertIsNotNone(info)
+        self.assertEqual(info["name"], "Renamed Project")
+
+        # Attempt to rename default (must fail)
+        ok_def, msg_def = rename_workspace("default", "custom_def")
+        self.assertFalse(ok_def)
+
+        # Attempt to rename to an existing workspace (must fail)
+        create_workspace("Existing Workspace")
+        ok_dup, msg_dup = rename_workspace("Renamed Project", "Existing Workspace")
+        self.assertFalse(ok_dup)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -38,7 +38,8 @@ function App() {
     sendMessage,
     regenerateMessage,
     isTyping,
-    refreshModels
+    refreshModels,
+    refreshWorkspaces
   } = useLocaLLM();
 
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -285,11 +286,11 @@ function App() {
 
             {/* Current conversation title glass pill */}
             <div className="h-9 px-3.5 rounded-full liquid-glass flex items-center gap-2 min-w-0">
-              <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-medium text-blue-700 dark:text-blue-300">
+              <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
                 <WorkspaceIcon
                   icon={workspaces.find(w => w.name === activeWorkspace)?.icon || 'Folder'}
                   color={workspaces.find(w => w.name === activeWorkspace)?.color || '#3B82F6'}
-                  className="w-3.5 h-3.5"
+                  className="w-4 h-4"
                 />
                 <span>{activeWorkspace}</span>
               </span>
@@ -343,7 +344,12 @@ function App() {
           <div className="flex-1 flex min-h-0 overflow-hidden relative">
             <div className={clsx('flex-1 flex flex-col min-h-0', isEmptyChat && 'justify-center pb-10')}>
               {isEmptyChat ? (
-                <EmptyState workspace={activeWorkspace} />
+                <EmptyState
+                  key={activeSession?.id || `new-${activeWorkspace}`}
+                  workspace={activeWorkspace}
+                  userName={config?.user_name}
+                  onSelectPrompt={(prompt) => sendMessage(prompt)}
+                />
               ) : (
                 <ChatContainer
                   messages={activeSession?.messages || []}
@@ -413,6 +419,7 @@ function App() {
         workspace={workspaceModalState.workspace}
         onSave={handleSaveWorkspaceModal}
         onClose={() => setWorkspaceModalState(prev => ({ ...prev, isOpen: false }))}
+        onReload={refreshWorkspaces}
       />
     </div>
   );

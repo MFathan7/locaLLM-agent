@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
-import type { Message, SourceItem } from '../types';
+import type { Message, SourceItem, AttachedFile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Copy, Check, ArrowDown, FileDown, Compass, Sparkles, RotateCcw } from 'lucide-react';
+import { Copy, Check, ArrowDown, FileDown, Compass, Sparkles, RotateCcw, FileText, Image as ImageIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { cleanAssistantContent, extractSourcesFromText, isOnlyThinking } from '../utils/messageProcessor';
+import { cleanAssistantContent, extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking } from '../utils/messageProcessor';
 import { exportResponseToDoc } from '../utils/docExport';
 
 interface ChatContainerProps {
@@ -91,7 +91,7 @@ export function ChatContainer({
                 onRegenerate={onRegenerate}
               />
             ))}
-            {isTyping && (
+            {isTyping && (!visibleMessages.length || visibleMessages[visibleMessages.length - 1].role === 'user') && (
               <motion.div
                 initial={{ opacity: 0, y: 6 }}
                 animate={{ opacity: 1, y: 0 }}
@@ -141,6 +141,13 @@ interface ChatBubbleProps {
   onRegenerate?: (message: Message) => void;
 }
 
+function formatFileSize(bytes: number): string {
+  if (!bytes || bytes <= 0) return '0 B';
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
 const ChatBubble = ({
   message,
   isTyping,
@@ -152,6 +159,35 @@ const ChatBubble = ({
   const isUser = message.role === 'user';
   const [copied, setCopied] = useState(false);
 
+  // Attached files and images
+  const attachedFiles: AttachedFile[] = useMemo(() => {
+    if (message.files && message.files.length > 0) {
+      return message.files;
+    }
+    if (message.options?.files && message.options.files.length > 0) {
+      return message.options.files.map(name => ({
+        name,
+        size: 0,
+        type: 'application/octet-stream',
+        url: undefined,
+        content: undefined
+      }));
+    }
+    return [];
+  }, [message.files, message.options?.files]);
+
+  const imageFiles = useMemo(() => {
+    return attachedFiles.filter(f =>
+      Boolean(f.url) ||
+      f.type?.startsWith('image/') ||
+      /\.(png|jpe?g|gif|webp|svg|bmp|avif|ico|heic|heif|tiff?)$/i.test(f.name)
+    );
+  }, [attachedFiles]);
+
+  const docFiles = useMemo(() => {
+    return attachedFiles.filter(f => !imageFiles.includes(f));
+  }, [attachedFiles, imageFiles]);
+
   // Clean intermediate thinking/search trace from the final rendered output
   const cleanedContent = useMemo(() => {
     return isUser ? message.content : cleanAssistantContent(message.content);
@@ -161,6 +197,11 @@ const ChatBubble = ({
   const currentlyThinking = useMemo(() => {
     return !isUser && isTyping && isOnlyThinking(message.content);
   }, [isUser, isTyping, message.content]);
+
+  // Extract active dynamic reasoning or tool step
+  const currentThinkingStep = useMemo(() => {
+    return extractCurrentThinkingStep(message.content);
+  }, [message.content]);
 
   // Calculate sources attached or extract from content
   const sources = useMemo<SourceItem[]>(() => {
@@ -186,36 +227,106 @@ const ChatBubble = ({
   return (
     <div className={`w-full flex ${isUser ? 'justify-end' : 'justify-start'}`}>
       {isUser ? (
-        /* User message: clean rounded rectangle bubble with copy button on its left */
-        <div className="relative group flex items-end justify-end gap-1.5 max-w-[90%] sm:max-w-[80%]">
-          <div className="opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity pb-0.5 shrink-0">
-            <ActionIconButton
-              icon={copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-              tooltip={copied ? 'Copied to clipboard' : 'Copy message text'}
-              onClick={handleCopy}
-              ariaLabel="Copy message text"
-            />
-          </div>
+        /* User message: attached files & image previews rendered above the bubble */
+        <div className="relative group flex flex-col items-end gap-1.5 max-w-[90%] sm:max-w-[80%]">
+          {/* 1. Image Previews */}
+          {imageFiles.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-2 max-w-full">
+              {imageFiles.map((img, idx) => (
+                <div
+                  key={`${img.name}-${idx}`}
+                  className="group/img relative rounded-2xl overflow-hidden border border-slate-200/80 dark:border-white/15 bg-black/5 dark:bg-black/30 shadow-sm max-w-xs transition-transform hover:scale-[1.01]"
+                >
+                  {img.url ? (
+                    <img
+                      src={img.url}
+                      alt={img.name}
+                      className="max-h-56 max-w-full object-cover rounded-2xl block"
+                    />
+                  ) : (
+                    <div className="px-3 py-2 flex items-center gap-2 bg-slate-100 dark:bg-slate-800 text-xs text-slate-700 dark:text-slate-300">
+                      <ImageIcon className="w-4 h-4 text-sky-500 shrink-0" />
+                      <span className="truncate max-w-[160px] font-medium">{img.name}</span>
+                    </div>
+                  )}
+                  <div className="absolute inset-x-0 bottom-0 px-2.5 py-1 bg-gradient-to-t from-black/80 via-black/40 to-transparent text-[11px] text-white/95 truncate opacity-0 group-hover/img:opacity-100 transition-opacity">
+                    {img.name}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
 
-          <div className="px-4.5 py-3 text-[15px]/relaxed md:text-[16px]/relaxed bg-blue-600 text-white rounded-[20px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.35),0_8px_20px_-8px_rgba(37,99,235,0.5)]">
-            <div className="whitespace-pre-wrap selection:bg-white/30">{message.content}</div>
-          </div>
+          {/* 2. Document & Code File Cards */}
+          {docFiles.length > 0 && (
+            <div className="flex flex-wrap justify-end gap-1.5 max-w-full">
+              {docFiles.map((file, idx) => (
+                <div
+                  key={`${file.name}-${idx}`}
+                  className="inline-flex items-center gap-2 px-3 py-1.5 rounded-2xl bg-white/90 dark:bg-[#151c28]/90 border border-slate-200/80 dark:border-white/15 shadow-xs text-xs text-slate-800 dark:text-slate-200 backdrop-blur-md"
+                >
+                  <div className="w-6 h-6 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+                    <FileText className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="min-w-0 max-w-[190px]">
+                    <div className="font-medium truncate text-slate-800 dark:text-slate-100">{file.name}</div>
+                    {file.size > 0 && (
+                      <div className="text-[10px] text-slate-500 dark:text-slate-400">
+                        {formatFileSize(file.size)}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* 3. Text Message Bubble */}
+          {(message.content && message.content.trim().length > 0) && (
+            <div className="flex items-end justify-end gap-1.5 w-full">
+              <div className="opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity pb-0.5 shrink-0">
+                <ActionIconButton
+                  icon={copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  tooltip={copied ? 'Copied to clipboard' : 'Copy message text'}
+                  onClick={handleCopy}
+                  ariaLabel="Copy message text"
+                />
+              </div>
+
+              <div className="px-4.5 py-3 text-[15px]/relaxed md:text-[16px]/relaxed bg-blue-600 text-white rounded-[20px] shadow-[inset_0_1px_1px_rgba(255,255,255,0.35),0_8px_20px_-8px_rgba(37,99,235,0.5)]">
+                <div className="whitespace-pre-wrap selection:bg-white/30">{message.content}</div>
+              </div>
+            </div>
+          )}
         </div>
       ) : (
         /* AI Assistant response: rich Markdown rendering without background container */
         <div className="relative group w-full py-1 text-slate-800 dark:text-slate-100">
           {currentlyThinking ? (
-            /* Subtle thinking indicator while reasoning is underway */
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse">
-              <Sparkles className="w-3.5 h-3.5 animate-spin" />
-              <span>Thinking and reasoning...</span>
+            /* Dynamic animated thinking indicator showing the active reasoning / tool step */
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse border border-blue-500/20">
+              <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+              <span>{currentThinkingStep}</span>
+            </div>
+          ) : isTyping && !cleanedContent && !message.content ? (
+            /* Active stream connection / initial response loading */
+            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse border border-blue-500/20">
+              <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
+              <span>Refining user inquiry...</span>
+            </div>
+          ) : (!cleanedContent && !message.content) ? (
+            /* Friendly fallback if response is empty */
+            <div className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs font-medium">
+              <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
+              <span>Model tidak memberikan respon teks. Anda dapat mengklik tombol <strong>Re-answer</strong> di bawah untuk mencoba kembali.</span>
             </div>
           ) : (
             <MarkdownRenderer content={cleanedContent || message.content} />
           )}
 
           {/* Action icon buttons row: icon-only with animated hover tooltips */}
-          <div className="mt-3 flex items-center gap-1.5 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
+          {(!isTyping || message.content) && (
+            <div className="mt-3 flex items-center gap-1.5 opacity-90 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
             {/* Copy button */}
             <ActionIconButton
               icon={copied ? <Check className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
@@ -251,6 +362,7 @@ const ChatBubble = ({
               ariaLabel="View sources"
             />
           </div>
+          )}
         </div>
       )}
     </div>
