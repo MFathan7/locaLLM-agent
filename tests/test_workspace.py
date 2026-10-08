@@ -528,6 +528,51 @@ class TestWorkspaceEngine(unittest.TestCase):
         ok_dup, msg_dup = rename_workspace("Renamed Project", "Existing Workspace")
         self.assertFalse(ok_dup)
 
+    def test_case_insensitive_workspace_lookup_and_skill_extraction(self) -> None:
+        """Verify that workspaces with mixed case like 'My Space' can be resolved and extracted into via 'my space'."""
+        from locallm.core.workspace import get_workspace_path
+        ok_create, _ = create_workspace("My Space")
+        self.assertTrue(ok_create)
+
+        # Lookup with lowercase must resolve to existing directory
+        ws_path_lower = get_workspace_path("my space")
+        self.assertTrue(ws_path_lower.exists())
+        self.assertEqual(ws_path_lower.name, "My Space")
+
+        # Test extraction using lowercase workspace name
+        zip_buf = io.BytesIO()
+        with zipfile.ZipFile(zip_buf, "w") as zf:
+            zf.writestr("repo-main/skills/sample-skill/SKILL.md", "---\nname: Sample Skill\ndescription: Test\n---\nBody")
+        zip_bytes = zip_buf.getvalue()
+
+        ok, msg = extract_selected_skills("my space", zip_bytes, selected_skills=["sample-skill"])
+        self.assertTrue(ok)
+        self.assertIn("My Space", msg)
+
+        # Verify extracted file exists in My Space
+        extracted = self.workspaces_root / "My Space" / "skills" / "sample-skill" / "SKILL.md"
+        self.assertTrue(extracted.exists())
+
+    def test_read_workspace_skills_in_list(self) -> None:
+        """Verify read_workspace_skills returns full parsed skills list with metadata."""
+        from locallm.core.workspace import read_workspace_skills, list_workspaces
+        create_workspace("Skills WS")
+        skills_dir = self.workspaces_root / "Skills WS" / "skills"
+        skills_dir.mkdir(parents=True, exist_ok=True)
+        (skills_dir / "my-tool.md").write_text("# Skill: My Tool\nUseful tool description\nDetails here", encoding="utf-8")
+
+        parsed = read_workspace_skills(self.workspaces_root / "Skills WS")
+        self.assertEqual(len(parsed), 1)
+        self.assertEqual(parsed[0]["id"], "my-tool")
+        self.assertEqual(parsed[0]["name"], "My Tool")
+        self.assertIn("Useful tool description", parsed[0]["description"])
+
+        # Also check list_workspaces includes skills
+        all_ws = list_workspaces()
+        matched = next(w for w in all_ws if w["name"] == "Skills WS")
+        self.assertEqual(matched["skills_count"], 1)
+        self.assertEqual(len(matched["skills"]), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

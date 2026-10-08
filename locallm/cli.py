@@ -376,8 +376,8 @@ def main(argv: Optional[List[str]] = None) -> None:
 
     atexit.register(_auto_cleanup_on_exit)
 
-    # Auto-start background API server gateway if enabled in Settings
-    if getattr(config, "server_enabled", False):
+    # Auto-start background API server gateway if enabled in Settings (unless running serve command directly)
+    if getattr(config, "server_enabled", False) and (not args.command or args.command.lower() != "serve"):
         try:
             from locallm.modules.api_server import start_background_api_server
             start_background_api_server(config, quiet=True)

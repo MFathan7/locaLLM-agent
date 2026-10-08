@@ -84,9 +84,20 @@ def get_workspaces_dir() -> Path:
 
 
 def get_workspace_path(name: str) -> Path:
-    """Return path to a specific workspace directory."""
+    """Return path to a specific workspace directory with case-insensitive resolution."""
     clean_name = name.strip()
-    return get_workspaces_dir() / clean_name
+    base = get_workspaces_dir()
+    direct = base / clean_name
+    if direct.is_dir():
+        return direct
+    clean_lower = clean_name.lower()
+    try:
+        for child in base.iterdir():
+            if child.is_dir() and child.name.lower() == clean_lower:
+                return child
+    except Exception:
+        pass
+    return direct
 
 
 # Alias for convenience
@@ -153,6 +164,106 @@ def ensure_default_workspace() -> Path:
     return default_dir
 
 
+def read_workspace_skills(ws_path: Path) -> List[Dict[str, Any]]:
+    """Return all configured skills in a workspace with their metadata."""
+    skills_dir = ws_path / "skills"
+    if not skills_dir.exists() or not skills_dir.is_dir():
+        return []
+
+    ignore_dirs = {
+        ".git", "node_modules", "tests", "test", "evals", "benchmarks",
+        "examples", "dist", "build", "target", ".venv", "venv",
+        "__pycache__", "cli", "packages", "command", "commands",
+    }
+    ignore_files = {
+        "changelog", "license", "contributing", "code_of_conduct",
+        "security", "third-party", "package-lock", "package", "background-tasks",
+    }
+
+    s_files = []
+    for file in sorted(skills_dir.rglob("*"), key=lambda p: str(p.relative_to(skills_dir)).lower()):
+        if not file.is_file() or file.suffix.lower() not in (".md", ".txt"):
+            continue
+        parts = [part.lower() for part in file.relative_to(skills_dir).parts]
+        if any(bd in parts for bd in ignore_dirs):
+            continue
+        stem_lower = file.stem.lower()
+        if any(stem_lower.startswith(bf) for bf in ignore_files) or "third-party" in stem_lower:
+            continue
+        if stem_lower in ("agents", "soul", "changelog", "license"):
+            continue
+        if file.suffix.lower() == ".txt" and file.name.lower() != "skill.txt":
+            continue
+        if any(ref in parts[:-1] for ref in ("references", "templates", "assets", "scripts")):
+            continue
+        s_files.append(file)
+
+    parsed_skills: List[Dict[str, Any]] = []
+    seen_skill_ids: set = set()
+
+    for file in s_files:
+        try:
+            content = file.read_text(encoding="utf-8", errors="replace").strip()
+            if not content:
+                continue
+            rel_name = str(file.relative_to(skills_dir)).replace("\\", "/")
+            skill_id = file.stem if file.name.lower() in ("skill.md", "readme.md") else file.name
+            if file.parent != skills_dir and file.name.lower() in ("skill.md", "readme.md"):
+                skill_id = file.parent.name
+            if skill_id.lower().endswith(".md"):
+                skill_id = skill_id[:-3]
+
+            clean_id = skill_id.strip()
+            if clean_id.lower() in seen_skill_ids:
+                continue
+            seen_skill_ids.add(clean_id.lower())
+
+            name = clean_id
+            desc = ""
+            if content.startswith("---"):
+                end_idx = content.find("---", 3)
+                if end_idx != -1:
+                    fm = content[3:end_idx]
+                    for line in fm.splitlines():
+                        line_s = line.strip()
+                        if line_s.startswith("name:"):
+                            name = line_s.split("name:", 1)[1].strip().strip("'\"")
+                        elif line_s.startswith("description:"):
+                            desc = line_s.split("description:", 1)[1].strip().strip("'\"")
+
+            if name == clean_id:
+                for line in content.splitlines():
+                    trimmed = line.strip().lstrip("#- *").strip()
+                    if trimmed and not line.strip().startswith("---"):
+                        if trimmed.lower().startswith("skill:"):
+                            trimmed = trimmed[6:].strip()
+                        if trimmed:
+                            name = trimmed
+                            break
+
+            if not desc:
+                for line in content.splitlines():
+                    l_clean = line.strip().lstrip("#- *").strip()
+                    if l_clean.lower().startswith("skill:"):
+                        l_clean = l_clean[6:].strip()
+                    if l_clean and not line.strip().startswith("---") and l_clean != name:
+                        desc = l_clean[:140]
+                        break
+
+            parsed_skills.append({
+                "id": clean_id.lower().replace(" ", "-"),
+                "name": name or clean_id,
+                "description": desc or None,
+                "content": content,
+                "path": rel_name,
+                "enabled": True,
+            })
+        except Exception:
+            continue
+
+    return parsed_skills
+
+
 def list_workspaces() -> List[Dict[str, Any]]:
     """List all available workspaces with metadata and file counts."""
     ensure_default_workspace()
@@ -177,16 +288,18 @@ def list_workspaces() -> List[Dict[str, Any]]:
         knowledge_dir = entry / "knowledge"
         knowledge_count = len([f for f in knowledge_dir.rglob("*") if f.is_file() and f.suffix.lower() in (".md", ".txt")]) if knowledge_dir.exists() else 0
 
-        skills_dir = entry / "skills"
-        skills_count = len([f for f in skills_dir.rglob("*") if f.is_file() and f.suffix.lower() in (".md", ".txt")]) if skills_dir.exists() else 0
+        skills = read_workspace_skills(entry)
+        skills_count = len(skills)
 
         results.append({
             "name": entry.name,
             "description": meta.get("description", ""),
             "custom_instructions": meta.get("custom_instructions", ""),
+            "auto_memory": bool(meta.get("auto_memory", True)),
             "created_at": meta.get("created_at", ""),
             "knowledge_count": knowledge_count,
             "skills_count": skills_count,
+            "skills": skills,
             "path": str(entry.resolve()),
         })
 
@@ -213,14 +326,17 @@ def get_workspace_info(name: str) -> Optional[Dict[str, Any]]:
 
     skills_dir = ws_path / "skills"
     s_files = [str(f.relative_to(skills_dir)).replace("\\", "/") for f in skills_dir.rglob("*") if f.is_file() and f.suffix.lower() in (".md", ".txt")] if skills_dir.exists() else []
+    skills = read_workspace_skills(ws_path)
 
     return {
         "name": ws_path.name,
         "description": meta.get("description", ""),
         "custom_instructions": meta.get("custom_instructions", ""),
+        "auto_memory": bool(meta.get("auto_memory", True)),
         "created_at": meta.get("created_at", ""),
         "knowledge_files": k_files,
         "skill_files": s_files,
+        "skills": skills,
         "path": str(ws_path.resolve()),
     }
 
@@ -229,6 +345,7 @@ def create_workspace(
     name: str,
     description: str = "",
     custom_instructions: str = "",
+    auto_memory: bool = True,
 ) -> Tuple[bool, str]:
     """Create a new isolated workspace with scaffolded directories."""
     clean_name = name.strip()
@@ -256,6 +373,7 @@ def create_workspace(
             "description": description.strip(),
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "custom_instructions": custom_instructions.strip(),
+            "auto_memory": bool(auto_memory),
         }
         with open(ws_path / "workspace.json", "w", encoding="utf-8") as f:
             json.dump(meta, f, indent=2)
@@ -639,6 +757,15 @@ def load_workspace_context(name: str) -> str:
 
     now_dt = datetime.now()
     now_str = now_dt.strftime("%A, %Y-%m-%d %H:%M:%S")
+
+    # 6. Workspace Long-Term Memory & Episodic Facts
+    try:
+        from locallm.core.workspace_memory import WorkspaceMemoryManager
+        ws_mem = WorkspaceMemoryManager(clean_name).build_workspace_memory_context()
+        if ws_mem:
+            sections.append(ws_mem)
+    except Exception:
+        pass
 
     header = (
         f"Current Real-World Date & Time: {now_str}\n"
@@ -1306,10 +1433,11 @@ def extract_selected_skills(
 
     Strictly filters out repository bloat (.git, .github, tests, images, non-md/txt files).
     """
-    clean_ws = workspace_name.strip().lower()
-    ws_path = get_workspace_path(clean_ws)
+    clean_name = workspace_name.strip()
+    ws_path = get_workspace_path(clean_name)
     if not ws_path.exists() or not ws_path.is_dir():
-        return False, f"Workspace '{clean_ws}' does not exist."
+        return False, f"Workspace '{clean_name}' does not exist."
+    clean_ws = ws_path.name
 
     if not selected_skills:
         return False, "No skills selected for extraction."

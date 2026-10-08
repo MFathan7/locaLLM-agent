@@ -360,6 +360,7 @@ function locallmBridgePlugin(): Plugin {
                   icon: meta.icon || 'Folder',
                   color: meta.color || '#3B82F6',
                   custom_instructions: meta.custom_instructions || '',
+                  auto_memory: meta.auto_memory !== undefined ? !!meta.auto_memory : true,
                   skills,
                   knowledgeCount,
                   skillsCount: skills.length
@@ -374,6 +375,7 @@ function locallmBridgePlugin(): Plugin {
                   icon: 'Folder',
                   color: '#3B82F6',
                   custom_instructions: '',
+                  auto_memory: true,
                   skills: [],
                   knowledgeCount: 0,
                   skillsCount: 0
@@ -412,6 +414,7 @@ function locallmBridgePlugin(): Plugin {
                 icon: body.icon || 'Folder',
                 color: body.color || '#3B82F6',
                 custom_instructions: body.custom_instructions || '',
+                auto_memory: body.auto_memory !== undefined ? !!body.auto_memory : true,
                 created_at: new Date().toISOString()
               };
 
@@ -450,6 +453,7 @@ function locallmBridgePlugin(): Plugin {
                 icon: meta.icon,
                 color: meta.color,
                 custom_instructions: meta.custom_instructions,
+                auto_memory: meta.auto_memory,
                 skills: body.skills || [],
                 knowledgeCount: 0,
                 skillsCount: (body.skills || []).length
@@ -530,6 +534,7 @@ function locallmBridgePlugin(): Plugin {
               if (body.icon !== undefined) meta.icon = body.icon;
               if (body.color !== undefined) meta.color = body.color;
               if (body.custom_instructions !== undefined) meta.custom_instructions = body.custom_instructions;
+              if (body.auto_memory !== undefined) meta.auto_memory = !!body.auto_memory;
               meta.updated_at = new Date().toISOString();
 
               fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2), 'utf-8');
@@ -544,33 +549,38 @@ function locallmBridgePlugin(): Plugin {
                 );
               }
 
-              // Sync skills
+              // Handle explicitly removed skills safely
+              if (Array.isArray(body.deletedSkills)) {
+                const skillDir = path.join(currentWsDir, 'skills');
+                for (const ds of body.deletedSkills) {
+                  const dsId = (ds.id || ds.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
+                  const targetFile = ds.path ? path.join(skillDir, ds.path) : (dsId ? path.join(skillDir, `${dsId}.md`) : null);
+                  if (targetFile && fs.existsSync(targetFile)) {
+                    try { fs.unlinkSync(targetFile); } catch {}
+                  }
+                }
+              }
+
+              // Sync skills safely without deleting existing files
               if (Array.isArray(body.skills)) {
                 const skillDir = path.join(currentWsDir, 'skills');
                 if (!fs.existsSync(skillDir)) fs.mkdirSync(skillDir, { recursive: true });
 
-                const existingFiles = fs.readdirSync(skillDir).filter(f => f.endsWith('.md') || f.endsWith('.txt'));
-                const newFileNames = new Set(body.skills.map((s: any) => `${(s.id || s.name).toLowerCase().replace(/[^a-z0-9_-]/g, '-')}.md`));
-
-                // Remove deleted top-level files
-                for (const ef of existingFiles) {
-                  if (!newFileNames.has(ef)) {
-                    try { fs.unlinkSync(path.join(skillDir, ef)); } catch {}
-                  }
-                }
-
-                // Write/update skills safely
                 for (const s of body.skills) {
                   const sId = (s.id || s.name || 'skill').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
                   const targetFile = s.path ? path.join(skillDir, s.path) : path.join(skillDir, `${sId}.md`);
                   try {
                     const dirOfFile = path.dirname(targetFile);
                     if (!fs.existsSync(dirOfFile)) fs.mkdirSync(dirOfFile, { recursive: true });
-                    fs.writeFileSync(
-                      targetFile,
-                      s.content || `# Skill: ${s.name}\n${s.description || ''}\n`,
-                      'utf-8'
-                    );
+                    if (s.content) {
+                      fs.writeFileSync(targetFile, s.content, 'utf-8');
+                    } else if (!fs.existsSync(targetFile)) {
+                      fs.writeFileSync(
+                        targetFile,
+                        `# Skill: ${s.name}\n${s.description || ''}\n`,
+                        'utf-8'
+                      );
+                    }
                   } catch {}
                 }
               }
@@ -583,6 +593,7 @@ function locallmBridgePlugin(): Plugin {
                 icon: meta.icon || 'Folder',
                 color: meta.color || '#3B82F6',
                 custom_instructions: meta.custom_instructions || '',
+                auto_memory: meta.auto_memory !== undefined ? !!meta.auto_memory : true,
                 skills: updatedSkills,
                 skillsCount: updatedSkills.length
               });
@@ -604,6 +615,91 @@ function locallmBridgePlugin(): Plugin {
                 fs.rmSync(targetDir, { recursive: true, force: true });
               }
               sendJson(res, 200, { success: true });
+            } catch (err: any) {
+              sendJson(res, 500, { error: err.message });
+            }
+            return;
+          }
+        }
+
+        // 2b. GET, PUT, DELETE /api/workspaces/:name/memory or /api/workspaces/memory
+        if (
+          pathname === '/api/workspaces/memory' ||
+          (pathname.startsWith('/api/workspaces/') && pathname.endsWith('/memory'))
+        ) {
+          const wsDir = getWorkspacesDir();
+          let wsName = (urlObj.searchParams.get('workspace') || urlObj.searchParams.get('name') || '').trim();
+          if (!wsName && pathname.startsWith('/api/workspaces/')) {
+            const parts = pathname.split('/');
+            if (parts.length >= 4 && parts[parts.length - 1] === 'memory') {
+              wsName = decodeURIComponent(parts[parts.length - 2]);
+            }
+          }
+          wsName = wsName || 'default';
+          const targetDir = path.join(wsDir, wsName);
+          const memFile = path.join(targetDir, 'memory.json');
+          const metaFile = path.join(targetDir, 'workspace.json');
+
+          let meta: any = {};
+          if (fs.existsSync(metaFile)) {
+            try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8')); } catch {}
+          }
+
+          let memData: { facts: Record<string, string> } = { facts: {} };
+          if (fs.existsSync(memFile)) {
+            try { memData = JSON.parse(fs.readFileSync(memFile, 'utf-8')); } catch {}
+          }
+          if (!memData.facts || typeof memData.facts !== 'object') {
+            memData.facts = {};
+          }
+
+          if (req.method === 'GET') {
+            sendJson(res, 200, {
+              workspace: wsName,
+              auto_memory: meta.auto_memory !== undefined ? !!meta.auto_memory : true,
+              facts: memData.facts
+            });
+            return;
+          }
+
+          if (req.method === 'DELETE') {
+            try {
+              const key = (urlObj.searchParams.get('key') || '').trim();
+              if (key) {
+                delete memData.facts[key];
+              } else {
+                memData.facts = {};
+              }
+              if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+              fs.writeFileSync(memFile, JSON.stringify(memData, null, 2), 'utf-8');
+              sendJson(res, 200, { success: true, message: key ? `Fact '${key}' deleted` : 'Memory cleared' });
+            } catch (err: any) {
+              sendJson(res, 500, { error: err.message });
+            }
+            return;
+          }
+
+          if (req.method === 'PUT') {
+            try {
+              const body = await parseJsonBody(req);
+              if (body.auto_memory !== undefined) {
+                meta.auto_memory = !!body.auto_memory;
+                fs.writeFileSync(metaFile, JSON.stringify(meta, null, 2), 'utf-8');
+              }
+              const factVal = body.value !== undefined ? body.value : body.fact;
+              if (body.key && factVal !== undefined) {
+                memData.facts[String(body.key).trim()] = String(factVal).trim();
+              }
+              if (body.facts && typeof body.facts === 'object') {
+                Object.assign(memData.facts, body.facts);
+              }
+              if (!fs.existsSync(targetDir)) fs.mkdirSync(targetDir, { recursive: true });
+              fs.writeFileSync(memFile, JSON.stringify(memData, null, 2), 'utf-8');
+              sendJson(res, 200, {
+                workspace: wsName,
+                auto_memory: meta.auto_memory !== undefined ? !!meta.auto_memory : true,
+                facts: memData.facts
+              });
             } catch (err: any) {
               sendJson(res, 500, { error: err.message });
             }
@@ -1117,13 +1213,17 @@ function locallmBridgePlugin(): Plugin {
 
             const cfg = loadConfigOnDisk();
             const serverPort = cfg.server_port || 8080;
+            const apiKey = cfg.server_api_key || '';
             let result: any = null;
 
             // Try Python gateway server first
             try {
               const gwRes = await fetch(`http://127.0.0.1:${serverPort}/api/skills/inspect`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+                },
                 body: JSON.stringify({ source }),
                 signal: AbortSignal.timeout(30000)
               });
@@ -1178,13 +1278,17 @@ print(json.dumps({"success": ok, "message": msg, "skills": skills, "count": len(
 
             const cfg = loadConfigOnDisk();
             const serverPort = cfg.server_port || 8080;
+            const apiKey = cfg.server_api_key || '';
             let result: any = null;
 
             // Try Python gateway server first
             try {
               const gwRes = await fetch(`http://127.0.0.1:${serverPort}/api/skills/install`, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: {
+                  'Content-Type': 'application/json',
+                  ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+                },
                 body: JSON.stringify({ source, workspace, skills }),
                 signal: AbortSignal.timeout(60000)
               });

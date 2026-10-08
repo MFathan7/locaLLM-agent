@@ -89,7 +89,9 @@ function App() {
     icon: string;
     color: string;
     custom_instructions: string;
+    auto_memory?: boolean;
     skills: WorkspaceSkill[];
+    deletedSkills?: WorkspaceSkill[];
   }) => {
     if (workspaceModalState.mode === 'create') {
       await createWorkspace(data);

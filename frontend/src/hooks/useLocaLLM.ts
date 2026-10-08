@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { LocaLLMConfig, ChatSession, Message, Workspace, ModelInfo, SendOptions, AttachedFile } from '../types';
+import type { LocaLLMConfig, ChatSession, Message, Workspace, WorkspaceSkill, ModelInfo, SendOptions, AttachedFile, ExecutionState } from '../types';
 import { api } from '../services/api';
 import { extractSourcesFromText, generateSmartTitleFallback, sanitizeChatTitle } from '../utils/messageProcessor';
 
@@ -244,7 +244,7 @@ export function useLocaLLM() {
     return newWs;
   };
 
-  const updateWorkspace = async (name: string, data: Partial<Workspace> & { oldName?: string }) => {
+  const updateWorkspace = async (name: string, data: Partial<Workspace> & { oldName?: string; deletedSkills?: WorkspaceSkill[] }) => {
     const origName = data.oldName || name;
     const targetName = data.name || name;
     const updatedWs = await api.updateWorkspace(origName, data);
@@ -483,7 +483,17 @@ export function useLocaLLM() {
       if (s.id !== currentSessionId) return s;
       return {
         ...s,
-        messages: [...s.messages, { id: assistantMessageId, role: 'assistant', content: '', timestamp: Date.now() }]
+        messages: [
+          ...s.messages,
+          {
+            id: assistantMessageId,
+            role: 'assistant',
+            content: '',
+            timestamp: Date.now(),
+            executionState: 'routing',
+            statusLabel: ''
+          }
+        ]
       };
     }));
 
@@ -510,12 +520,83 @@ export function useLocaLLM() {
             if (s.id !== currentSessionId) return s;
             const msgs = [...s.messages];
             const idx = msgs.findIndex(m => m.id === assistantMessageId);
-            if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent };
+            if (idx !== -1) {
+              msgs[idx] = {
+                ...msgs[idx],
+                content: assistantContent,
+                executionState: 'generating',
+                statusLabel: 'Generating...'
+              };
+            }
             return { ...s, messages: msgs };
           }));
         },
         imagePayloads.length > 0 ? imagePayloads : undefined,
-        priorHistory
+        priorHistory,
+        (evt) => {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === assistantMessageId);
+            if (idx === -1) return s;
+
+            let nextState: ExecutionState = msgs[idx].executionState || 'idle';
+            let nextLabel: string | undefined = msgs[idx].statusLabel;
+
+            switch (evt.event) {
+              case 'routing':
+                nextState = 'routing';
+                nextLabel = '';
+                break;
+              case 'thinking_start':
+                nextState = 'thinking';
+                nextLabel = 'Thinking...';
+                break;
+              case 'thinking_end':
+                if (nextState === 'thinking') {
+                  nextState = 'generating';
+                  nextLabel = 'Generating...';
+                }
+                break;
+              case 'tool_start': {
+                nextState = 'tool';
+                const toolName = (evt.data?.tool || '').toLowerCase();
+                if (toolName === 'web_search') {
+                  nextLabel = 'Searching...';
+                } else if (toolName.includes('python') || toolName.includes('code') || toolName.includes('terminal')) {
+                  nextLabel = 'Running Python...';
+                } else if (evt.data?.label) {
+                  nextLabel = evt.data.label;
+                } else {
+                  nextLabel = `Running ${evt.data?.tool || 'tool'}...`;
+                }
+                break;
+              }
+              case 'tool_end':
+                break;
+              case 'response_start':
+              case 'response_token':
+                nextState = 'generating';
+                nextLabel = 'Generating...';
+                break;
+              case 'done':
+                nextState = 'done';
+                nextLabel = undefined;
+                break;
+              case 'error':
+                nextState = 'error';
+                nextLabel = evt.data?.message || 'Error';
+                break;
+            }
+
+            msgs[idx] = {
+              ...msgs[idx],
+              executionState: nextState,
+              statusLabel: nextLabel
+            };
+            return { ...s, messages: msgs };
+          }));
+        }
       );
 
       if (!assistantContent.trim() && res && res.trim()) {
@@ -535,7 +616,7 @@ export function useLocaLLM() {
         if (s.id !== currentSessionId) return s;
         const msgs = [...s.messages];
         const idx = msgs.findIndex(m => m.id === assistantMessageId);
-        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: errMsg };
+        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: errMsg, executionState: 'error', statusLabel: errMsg };
         return { ...s, messages: msgs };
       }));
     } finally {
@@ -548,7 +629,7 @@ export function useLocaLLM() {
         if (s.id !== currentSessionId) return s;
         const msgs = [...s.messages];
         const idx = msgs.findIndex(m => m.id === assistantMessageId);
-        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent };
+        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: assistantContent, executionState: 'done' };
         return { ...s, messages: msgs };
       }));
     }
@@ -563,6 +644,8 @@ export function useLocaLLM() {
           role: 'assistant',
           content: assistantContent,
           timestamp: Date.now(),
+          executionState: 'done',
+          statusLabel: undefined,
           sources: sources.length > 0 ? sources : undefined
         }
       ],
@@ -650,7 +733,71 @@ export function useLocaLLM() {
           }));
         },
         undefined,
-        priorHistory
+        priorHistory,
+        (evt) => {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === assistantMessageId);
+            if (idx === -1) return s;
+
+            let nextState: ExecutionState = msgs[idx].executionState || 'idle';
+            let nextLabel: string | undefined = msgs[idx].statusLabel;
+
+            switch (evt.event) {
+              case 'routing':
+                nextState = 'routing';
+                nextLabel = '';
+                break;
+              case 'thinking_start':
+                nextState = 'thinking';
+                nextLabel = 'Thinking...';
+                break;
+              case 'thinking_end':
+                if (nextState === 'thinking') {
+                  nextState = 'generating';
+                  nextLabel = 'Generating...';
+                }
+                break;
+              case 'tool_start': {
+                nextState = 'tool';
+                const toolName = (evt.data?.tool || '').toLowerCase();
+                if (toolName === 'web_search') {
+                  nextLabel = 'Searching...';
+                } else if (toolName.includes('python') || toolName.includes('code') || toolName.includes('terminal')) {
+                  nextLabel = 'Running Python...';
+                } else if (evt.data?.label) {
+                  nextLabel = evt.data.label;
+                } else {
+                  nextLabel = `Running ${evt.data?.tool || 'tool'}...`;
+                }
+                break;
+              }
+              case 'tool_end':
+                break;
+              case 'response_start':
+              case 'response_token':
+                nextState = 'generating';
+                nextLabel = 'Generating...';
+                break;
+              case 'done':
+                nextState = 'done';
+                nextLabel = undefined;
+                break;
+              case 'error':
+                nextState = 'error';
+                nextLabel = evt.data?.message || 'Error';
+                break;
+            }
+
+            msgs[idx] = {
+              ...msgs[idx],
+              executionState: nextState,
+              statusLabel: nextLabel
+            };
+            return { ...s, messages: msgs };
+          }));
+        }
       );
 
       if (!assistantContent.trim() && res && res.trim()) {

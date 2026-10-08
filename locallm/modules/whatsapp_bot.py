@@ -386,6 +386,14 @@ def process_whatsapp_message(
         "and send images, documents, or stickers using WhatsApp native function calling.\n"
         "Keep responses friendly, helpful, and formatted cleanly using WhatsApp Markdown (*bold*, _italic_, ```code```)."
     )
+    try:
+        from locallm.core.global_memory import GlobalMemoryManager
+        global_mem = GlobalMemoryManager().build_system_context()
+        if global_mem:
+            system_prompt += f"\n\n{global_mem}"
+    except Exception:
+        pass
+
     ws_context = load_workspace_context(active_ws)
     if ws_context:
         system_prompt += f"\n\n{ws_context}"

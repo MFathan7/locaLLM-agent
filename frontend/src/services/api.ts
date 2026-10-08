@@ -1,4 +1,4 @@
-import type { LocaLLMConfig, ChatSession, Workspace, ModelInfo, SendOptions, Message, AttachedFile } from '../types';
+import type { LocaLLMConfig, ChatSession, Workspace, WorkspaceSkill, WorkspaceMemory, ModelInfo, SendOptions, Message, AttachedFile, StreamEvent } from '../types';
 import { sanitizeChatTitle } from '../utils/messageProcessor';
 
 const API_BASE = '/api';
@@ -44,7 +44,7 @@ export const api = {
     };
   },
 
-  updateWorkspace: async (name: string, data: Partial<Workspace> & { oldName?: string }): Promise<Workspace> => {
+  updateWorkspace: async (name: string, data: Partial<Workspace> & { oldName?: string; deletedSkills?: WorkspaceSkill[] }): Promise<Workspace> => {
     const origName = data.oldName || name;
     const targetName = data.name || name;
     try {
@@ -78,6 +78,50 @@ export const api = {
       return res.ok;
     } catch (e) {
       console.warn('Failed to delete workspace on backend:', e);
+      return false;
+    }
+  },
+
+  getWorkspaceMemory: async (name: string): Promise<WorkspaceMemory> => {
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${encodeURIComponent(name)}/memory`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch workspace memory:', e);
+    }
+    return { workspace: name, auto_memory: true, facts: {} };
+  },
+
+  updateWorkspaceMemory: async (
+    name: string,
+    data: { auto_memory?: boolean; key?: string; value?: string; facts?: Record<string, string> }
+  ): Promise<WorkspaceMemory> => {
+    try {
+      const res = await fetch(`${API_BASE}/workspaces/${encodeURIComponent(name)}/memory`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data)
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to update workspace memory:', e);
+    }
+    return { workspace: name, auto_memory: data.auto_memory ?? true, facts: data.facts || {} };
+  },
+
+  deleteWorkspaceMemoryFact: async (name: string, key?: string): Promise<boolean> => {
+    try {
+      const url = key
+        ? `${API_BASE}/workspaces/${encodeURIComponent(name)}/memory?key=${encodeURIComponent(key)}`
+        : `${API_BASE}/workspaces/${encodeURIComponent(name)}/memory`;
+      const res = await fetch(url, { method: 'DELETE' });
+      return res.ok;
+    } catch (e) {
+      console.warn('Failed to delete workspace memory fact:', e);
       return false;
     }
   },
@@ -248,7 +292,8 @@ export const api = {
     options: SendOptions,
     onChunk: (chunk: string) => void,
     images?: string[],
-    history?: Message[]
+    history?: Message[],
+    onEvent?: (event: StreamEvent) => void
   ): Promise<string> => {
     const targetModel = config.default_model || config.model || 'nemotron3-super';
     const workspace = config.active_workspace || 'default';
@@ -325,6 +370,7 @@ export const api = {
       if (!res.ok) {
         const errorData = await res.json().catch(() => ({ error: res.statusText }));
         const errMsg = errorData.error || 'Chat request failed';
+        onEvent?.({ event: 'error', data: { message: errMsg } });
         onChunk(`[Error: ${errMsg}]`);
         return errMsg;
       }
@@ -339,7 +385,6 @@ export const api = {
       const decoder = new TextDecoder();
       let fullResponse = '';
       let buffer = '';
-      let inReasoningChannel = false;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -355,30 +400,34 @@ export const api = {
 
           if (trimmed.startsWith('data: ')) {
             const dataStr = trimmed.slice(6);
-            if (dataStr === '[DONE]') continue;
+            if (dataStr === '[DONE]') {
+              onEvent?.({ event: 'done' });
+              continue;
+            }
 
             try {
               const parsed = JSON.parse(dataStr);
-              const delta = parsed.choices?.[0]?.delta;
-              let content = '';
 
-              if (delta?.reasoning_content) {
-                if (!inReasoningChannel) {
-                  content += '<think>\n';
-                  inReasoningChannel = true;
+              // 1. Process modern high-level execution events
+              if (parsed.event) {
+                onEvent?.(parsed as StreamEvent);
+                if (parsed.event === 'response_token' && typeof parsed.data === 'string') {
+                  fullResponse += parsed.data;
+                  onChunk(parsed.data);
+                } else if (parsed.event === 'error') {
+                  const errDetail = parsed.data?.message || 'Error occurred';
+                  const errText = `\n[Gagal memproses respon: ${errDetail}]`;
+                  fullResponse += errText;
+                  onChunk(errText);
                 }
-                content += delta.reasoning_content;
-              } else if (delta?.content) {
-                if (inReasoningChannel) {
-                  content += '\n</think>\n\n';
-                  inReasoningChannel = false;
-                }
-                content += delta.content;
+                continue;
               }
 
-              if (content) {
-                fullResponse += content;
-                onChunk(content);
+              // 2. Compatibility fallback for standard OpenAI streaming chunk format
+              const delta = parsed.choices?.[0]?.delta;
+              if (delta?.content) {
+                fullResponse += delta.content;
+                onChunk(delta.content);
               }
             } catch {
               // Raw text chunk fallback
@@ -395,20 +444,23 @@ export const api = {
         }
       }
 
-      if (inReasoningChannel) {
-        fullResponse += '\n</think>\n\n';
-        onChunk('\n</think>\n\n');
-      }
-
       if (buffer.trim()) {
         try {
           const dataStr = buffer.trim().replace(/^data:\s*/, '');
           if (dataStr && dataStr !== '[DONE]') {
             const parsed = JSON.parse(dataStr);
-            const content = parsed.choices?.[0]?.delta?.content || '';
-            if (content) {
-              fullResponse += content;
-              onChunk(content);
+            if (parsed.event) {
+              onEvent?.(parsed as StreamEvent);
+              if (parsed.event === 'response_token' && typeof parsed.data === 'string') {
+                fullResponse += parsed.data;
+                onChunk(parsed.data);
+              }
+            } else {
+              const content = parsed.choices?.[0]?.delta?.content || '';
+              if (content) {
+                fullResponse += content;
+                onChunk(content);
+              }
             }
           }
         } catch {

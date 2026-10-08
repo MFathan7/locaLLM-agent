@@ -74,6 +74,9 @@ TOOL_PATTERNS = [
     r"\b(weather|temperature|forecast|suhu|cuaca|sqlite_query|sqlite_schema)\b",
     r"\b(query|cek|inspeksi|isi|select|update|delete|insert)\b.*?\b(database|tabel|sqlite|db)\b",
     r"\b(tool call|function calling|schema json|json schema|trigger_\w+|execute tool)\b",
+    # Memory and persistent preference directives
+    r"\b(remember|ingat|simpan\s+ke\s+memory|catat\s+ke\s+memory|forget\s+that|lupakan\s+bahwa)\b",
+    r"\b(remember\s+that|ingat\s+bahwa|keep\s+in\s+mind\s+that|update_user_memory)\b",
 ]
 
 # Fast / Direct factual signals

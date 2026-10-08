@@ -16,11 +16,36 @@ export interface AttachedFile {
   content?: string; // text content for code/document files
 }
 
+export type ExecutionState =
+  | 'idle'
+  | 'routing'
+  | 'thinking'
+  | 'tool'
+  | 'generating'
+  | 'done'
+  | 'error';
+
+export interface StreamEvent {
+  event:
+    | 'routing'
+    | 'thinking_start'
+    | 'thinking_end'
+    | 'tool_start'
+    | 'tool_end'
+    | 'response_start'
+    | 'response_token'
+    | 'done'
+    | 'error';
+  data?: any;
+}
+
 export interface Message {
   id: string;
   role: 'user' | 'assistant' | 'system' | 'tool';
   content: string;
   timestamp: number;
+  executionState?: ExecutionState;
+  statusLabel?: string;
   sources?: SourceItem[];
   files?: AttachedFile[];
   options?: {
@@ -65,9 +90,16 @@ export interface Workspace {
   icon?: string;
   color?: string;
   custom_instructions?: string;
+  auto_memory?: boolean;
   knowledgeCount?: number;
   skillsCount?: number;
   skills?: WorkspaceSkill[];
+}
+
+export interface WorkspaceMemory {
+  workspace: string;
+  auto_memory: boolean;
+  facts: Record<string, string>;
 }
 
 export interface ChatSession {

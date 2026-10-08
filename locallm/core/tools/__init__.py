@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Set
 from locallm.core.tools.base import BaseTool, FunctionTool, ToolRegistry, registry, tool
 import locallm.core.tools.filesystem  # noqa: F401
 from locallm.core.tools.filesystem import resolve_smart_path
+import locallm.core.tools.memory  # noqa: F401
 import locallm.core.tools.messaging  # noqa: F401
 from locallm.core.tools.parser import extract_fallback_tool_calls
 import locallm.core.tools.system  # noqa: F401

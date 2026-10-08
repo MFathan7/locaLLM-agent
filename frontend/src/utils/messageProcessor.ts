@@ -68,72 +68,6 @@ export function getSiteName(domain: string, title?: string): string {
 }
 
 /**
- * Known action verbs mapped to active present participle (gerund) for clean status badges.
- */
-const VERB_TO_GERUND: Record<string, string> = {
-  analyze: 'Analyzing',
-  evaluat: 'Evaluating',
-  evaluate: 'Evaluating',
-  check: 'Checking',
-  examin: 'Examining',
-  examine: 'Examining',
-  verify: 'Verifying',
-  investigat: 'Investigating',
-  investigate: 'Investigating',
-  review: 'Reviewing',
-  formulat: 'Formulating',
-  formulate: 'Formulating',
-  synthesiz: 'Synthesizing',
-  synthesize: 'Synthesizing',
-  compar: 'Comparing',
-  compare: 'Comparing',
-  calculat: 'Calculating',
-  calculate: 'Calculating',
-  search: 'Searching',
-  pars: 'Parsing',
-  parse: 'Parsing',
-  identify: 'Identifying',
-  inspect: 'Inspecting',
-  determin: 'Determining',
-  determine: 'Determining',
-  understand: 'Understanding',
-  consider: 'Considering',
-  resolv: 'Resolving',
-  resolve: 'Resolving',
-  validat: 'Validating',
-  validate: 'Validating',
-  refin: 'Refining',
-  refine: 'Refining',
-  process: 'Processing',
-  optim: 'Optimizing',
-  optimize: 'Optimizing',
-};
-
-function toActiveGerund(word: string): string {
-  const low = word.toLowerCase();
-  if (VERB_TO_GERUND[low]) return VERB_TO_GERUND[low];
-  return word.charAt(0).toUpperCase() + word.slice(1);
-}
-
-function formatStepBadge(text: string): string {
-  let cleaned = text.trim().replace(/^[:\-–—\s#*•]+|[:\-–—\s]+$/g, '');
-  if (!cleaned) return 'Refining user inquiry...';
-
-  // Clean trailing punctuation before adding ellipsis
-  cleaned = cleaned.replace(/\.+$/, '');
-  cleaned = cleaned.charAt(0).toUpperCase() + cleaned.slice(1);
-
-  if (cleaned.length > 55) {
-    const cut = cleaned.slice(0, 52);
-    const lastSpace = cut.lastIndexOf(' ');
-    cleaned = (lastSpace > 30 ? cut.slice(0, lastSpace) : cut) + '...';
-  } else if (!cleaned.endsWith('...')) {
-    cleaned += '...';
-  }
-  return cleaned;
-}
-
-/**
  * Remove thinking blocks, intermediate tool calls, search queries, and agent steps from displayed content.
  */
 export function cleanAssistantContent(rawText: string): string {
@@ -181,74 +115,27 @@ export function isOnlyThinking(rawText: string): boolean {
 
 /**
  * Extract active thinking step, reasoning status, or search status from intermediate stream.
- * Employs Chain-of-Thought (CoT) parsing with priority for headings, bold labels, and active action verbs.
+ * Returns clean generic statuses without leaking internal CoT text.
  */
 export function extractCurrentThinkingStep(rawText: string): string {
-  if (!rawText) return 'Refining user inquiry...';
+  if (!rawText) return 'Generating...';
 
   // 1. Tool execution & search progress indicators
-  const searchMatch = rawText.match(/Searching (?:the )?web for ['"]([^'"]+)['"]/i)
-    || rawText.match(/"query"\s*:\s*"([^"]+)"/i);
-  if (searchMatch) {
-    return formatStepBadge(`Searching web for '${searchMatch[1]}'`);
+  if (/Searching (?:the )?web/i.test(rawText) || /"query"\s*:/i.test(rawText)) {
+    return 'Searching...';
   }
 
-  const toolExecMatch = rawText.match(/Executing tool ['"]([^'"]+)['"]/i);
-  if (toolExecMatch) {
-    return formatStepBadge(`Executing tool '${toolExecMatch[1]}'`);
+  if (/Executing tool|Running (?:tool|python|bash|script)/i.test(rawText)) {
+    if (/python/i.test(rawText)) return 'Running Python...';
+    return 'Running tool...';
   }
 
-  const synthMatch = rawText.match(/(?:Synthesizing|Formulating) (?:verified )?(?:findings|response)/i);
-  if (synthMatch) {
-    return formatStepBadge(synthMatch[0]);
+  // 2. CoT reasoning tags
+  if (/<(?:think|thought)>/i.test(rawText)) {
+    return 'Thinking...';
   }
 
-  // 2. Extract Chain-of-Thought reasoning block from <think> or <thought>
-  const thinkMatches = Array.from(rawText.matchAll(/<(?:think|thought)>([\s\S]*?)(?:<\/(?:think|thought)>|$)/gi));
-  if (thinkMatches.length > 0) {
-    for (let i = thinkMatches.length - 1; i >= 0; i--) {
-      const block = thinkMatches[i][1].trim();
-      if (!block) continue;
-
-      const lines = block.split(/[\r\n]+/).map(l => l.trim()).filter(Boolean);
-      if (lines.length === 0) continue;
-
-      // Pass 1: Scan recent lines bottom-up for markdown headings (### ...) or bold labels (**...:**)
-      const recentHeadingLines = lines.slice(Math.max(0, lines.length - 6));
-      for (let j = recentHeadingLines.length - 1; j >= 0; j--) {
-        const line = recentHeadingLines[j];
-        // Markdown heading: ### 1. Problem Breakdown
-        const headingMatch = line.match(/^#{1,4}\s*(?:\d+[\.\)]\s*)?([^\n#]+)/);
-        if (headingMatch && headingMatch[1].trim().length >= 3) {
-          return formatStepBadge(headingMatch[1]);
-        }
-        // Bold label: **Analyzing edge cases:** or * Evaluating constraints:
-        const boldMatch = line.match(/^[*•\-]?\s*\*\*([^*]+)\*\*:?/);
-        if (boldMatch && boldMatch[1].trim().length >= 3) {
-          return formatStepBadge(boldMatch[1]);
-        }
-      }
-
-      // Pass 2: Scan recent lines bottom-up for actionable reasoning sentences
-      const recentActionLines = lines.slice(Math.max(0, lines.length - 4));
-      for (let j = recentActionLines.length - 1; j >= 0; j--) {
-        let line = recentActionLines[j].replace(/^[-*#•\s\d\.\)]+/, '').trim();
-        if (!line) continue;
-
-        // Strip conversational filler prefixes
-        line = line.replace(/^(?:(?:okay|ok|well|now|first|then|so|let's\s+see|let us|let's)\s*[,:]?\s*)*(?:i\s+(?:need\s+to|should|will|must|want\s+to|have\s+to)|we\s+(?:need\s+to|should|can)|let\s+me)\s+/i, '');
-
-        // Convert leading action verb to active Gerund
-        line = line.replace(/^([a-zA-Z]+)\b/, (_m, verb) => toActiveGerund(verb));
-
-        if (line.length >= 4) {
-          return formatStepBadge(line);
-        }
-      }
-    }
-  }
-
-  return 'Refining user inquiry...';
+  return 'Generating...';
 }
 
 /**

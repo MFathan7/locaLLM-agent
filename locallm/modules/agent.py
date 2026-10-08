@@ -72,6 +72,15 @@ class ReActAgent:
             "6. Linguistic & Intent Disambiguation: If the task is translation, phrasing, or grammar advice, provide the translation directly. Do NOT execute web searches or technical commands on the text to be translated.\n"
             "7. Workspace Storage Organization: Save generated documents and scripts inside the workspace 'files/' directory (e.g. files/output.txt), and visual assets or diagrams in 'images/' (e.g. images/chart.png). Always look inside these directories when retrieving previously created files or images."
         )
+        # Supplementary Global User Memory
+        try:
+            from locallm.core.global_memory import GlobalMemoryManager
+            global_mem_context = GlobalMemoryManager().build_system_context()
+            if global_mem_context:
+                system_content += f"\n\n{global_mem_context}"
+        except Exception:
+            pass
+
         if ws_context:
             system_content += f"\n\n{ws_context}"
 

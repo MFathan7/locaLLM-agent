@@ -116,6 +116,14 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
         f"{config.system_prompt}\n"
         f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}. Active Workspace: '{active_ws}' ({ws_dir})."
     )
+    try:
+        from locallm.core.global_memory import GlobalMemoryManager
+        global_mem = GlobalMemoryManager().build_system_context()
+        if global_mem:
+            enhanced_prompt += f"\n\n{global_mem}"
+    except Exception:
+        pass
+
     if ws_context:
         enhanced_prompt += f"\n\n{ws_context}"
 

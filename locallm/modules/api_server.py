@@ -337,6 +337,35 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json_response(500, {"error": str(exc)})
             return
 
+        if path in ("/api/workspaces/memory", "/v1/workspaces/memory") or (
+            (path.startswith("/api/workspaces/") or path.startswith("/v1/workspaces/")) and path.endswith("/memory")
+        ):
+            try:
+                from urllib.parse import parse_qs, urlparse, unquote
+                from locallm.core.workspace_memory import WorkspaceMemoryManager
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("workspace", [""])[0] or params.get("name", [""])[0]
+                if not target_ws:
+                    p_clean = path.split("?")[0].rstrip("/")
+                    parts = p_clean.split("/")
+                    if len(parts) >= 4 and parts[-1] == "memory":
+                        target_ws = unquote(parts[-2])
+                target_ws = target_ws or getattr(self.server, "workspace", None) or "default"
+                key = params.get("key", [""])[0]
+                mgr = WorkspaceMemoryManager(target_ws)
+                if key:
+                    ok = mgr.delete_fact(key)
+                    msg = f"Fact '{key}' deleted" if ok else f"Fact '{key}' not found"
+                else:
+                    ok = mgr.clear_memory()
+                    msg = f"Workspace '{target_ws}' memory cleared"
+                self._send_json_response(200, {"success": ok, "message": msg})
+                self._log_request_event("DELETE", path, 200, detail=f"{msg} for {target_ws}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
         self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
         self._log_request_event("DELETE", path, 404)
 
@@ -393,17 +422,39 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     meta["custom_instructions"] = body["custom_instructions"]
                     agents_file = get_workspace_agents_path(ws_name)
                     agents_file.write_text(f"# Workspace Instructions: {ws_name}\n\n{body['custom_instructions']}\n", encoding="utf-8")
+                if "auto_memory" in body:
+                    meta["auto_memory"] = bool(body["auto_memory"])
 
                 meta_file.write_text(json.dumps(meta, indent=2), encoding="utf-8")
 
+                from locallm.core.workspace import read_workspace_skills
+                skills_dir = ws_path / "skills"
+                skills_dir.mkdir(exist_ok=True)
+
+                if "deletedSkills" in body and isinstance(body["deletedSkills"], list):
+                    for ds in body["deletedSkills"]:
+                        ds_id = (ds.get("id") or ds.get("name", "")).lower().replace(" ", "-")
+                        ds_path = ds.get("path")
+                        target_file = (skills_dir / ds_path) if ds_path else (skills_dir / f"{ds_id}.md" if ds_id else None)
+                        if target_file and target_file.exists() and target_file.is_file():
+                            try:
+                                target_file.unlink()
+                            except Exception:
+                                pass
+
                 if "skills" in body and isinstance(body["skills"], list):
-                    skills_dir = ws_path / "skills"
-                    skills_dir.mkdir(exist_ok=True)
                     for s in body["skills"]:
                         s_id = (s.get("id") or s.get("name", "skill")).lower().replace(" ", "-")
-                        s_file = skills_dir / f"{s_id}.md"
-                        s_content = s.get("content") or f"# Skill: {s.get('name')}\n{s.get('description', '')}\n"
-                        s_file.write_text(s_content, encoding="utf-8")
+                        s_path = s.get("path")
+                        target_file = skills_dir / s_path if s_path else skills_dir / f"{s_id}.md"
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+                        s_content = s.get("content")
+                        if s_content:
+                            target_file.write_text(s_content, encoding="utf-8")
+                        elif not target_file.exists():
+                            target_file.write_text(f"# Skill: {s.get('name')}\n{s.get('description', '')}\n", encoding="utf-8")
+
+                updated_skills = read_workspace_skills(ws_path)
 
                 self._send_json_response(200, {
                     "name": ws_name,
@@ -411,9 +462,50 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     "icon": meta.get("icon", "Folder"),
                     "color": meta.get("color", "#3B82F6"),
                     "custom_instructions": meta.get("custom_instructions", ""),
-                    "skills": body.get("skills", []),
+                    "auto_memory": bool(meta.get("auto_memory", True)),
+                    "skills": updated_skills,
+                    "skillsCount": len(updated_skills),
                 })
                 self._log_request_event("PUT", path, 200, detail=f"Updated workspace {ws_name}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        if path in ("/api/workspaces/memory", "/v1/workspaces/memory") or (
+            (path.startswith("/api/workspaces/") or path.startswith("/v1/workspaces/")) and path.endswith("/memory")
+        ):
+            try:
+                import json
+                from urllib.parse import parse_qs, urlparse, unquote
+                from locallm.core.workspace_memory import WorkspaceMemoryManager
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("workspace", [""])[0] or params.get("name", [""])[0]
+                if not target_ws:
+                    p_clean = path.split("?")[0].rstrip("/")
+                    parts = p_clean.split("/")
+                    if len(parts) >= 4 and parts[-1] == "memory":
+                        target_ws = unquote(parts[-2])
+                target_ws = target_ws or getattr(self.server, "workspace", None) or "default"
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length)
+                body = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
+                mgr = WorkspaceMemoryManager(target_ws)
+                if "auto_memory" in body:
+                    mgr.set_auto_memory_enabled(bool(body["auto_memory"]))
+                fact_val = body.get("value") if "value" in body else body.get("fact")
+                if "key" in body and fact_val is not None:
+                    mgr.set_fact(str(body["key"]).strip(), str(fact_val).strip())
+                if "facts" in body and isinstance(body["facts"], dict):
+                    data = mgr.load()
+                    data["facts"].update(body["facts"])
+                    mgr.save(data)
+                self._send_json_response(200, {
+                    "workspace": target_ws,
+                    "auto_memory": mgr.is_auto_memory_enabled(),
+                    "facts": mgr.list_facts(),
+                })
+                self._log_request_event("PUT", path, 200, detail=f"Updated memory for {target_ws}")
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
             return
@@ -467,6 +559,32 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._log_request_event("GET", path, 200, detail=f"{len(workspaces)} workspaces")
             except Exception as exc:
                 self._send_openai_error(500, f"Failed to retrieve workspaces: {exc}")
+            return
+
+        if path in ("/api/workspaces/memory", "/v1/workspaces/memory") or (
+            (path.startswith("/api/workspaces/") or path.startswith("/v1/workspaces/")) and path.endswith("/memory")
+        ):
+            try:
+                from urllib.parse import parse_qs, urlparse, unquote
+                from locallm.core.workspace_memory import WorkspaceMemoryManager
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_ws = params.get("workspace", [""])[0] or params.get("name", [""])[0]
+                if not target_ws:
+                    p_clean = path.split("?")[0].rstrip("/")
+                    parts = p_clean.split("/")
+                    if len(parts) >= 4 and parts[-1] == "memory":
+                        target_ws = unquote(parts[-2])
+                target_ws = target_ws or getattr(self.server, "workspace", None) or "default"
+                mgr = WorkspaceMemoryManager(target_ws)
+                self._send_json_response(200, {
+                    "workspace": target_ws,
+                    "auto_memory": mgr.is_auto_memory_enabled(),
+                    "facts": mgr.list_facts(),
+                })
+                self._log_request_event("GET", path, 200, detail=f"Retrieved memory for {target_ws}")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve workspace memory: {exc}")
             return
 
         if path in ("/api/sessions", "/v1/sessions"):
@@ -621,14 +739,24 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 content_length = int(self.headers.get("Content-Length", 0))
                 body_bytes = self.rfile.read(content_length)
                 payload = json.loads(body_bytes.decode("utf-8")) if content_length > 0 else {}
-                from locallm.core.workspace import create_workspace
+                from locallm.core.workspace import create_workspace, get_workspace_path
                 name = str(payload.get("name", "")).strip()
                 desc = str(payload.get("description", "")).strip()
+                auto_mem = bool(payload.get("auto_memory", True))
                 if not name:
                     self._send_json_response(400, {"error": "Workspace name is required"})
                     return
-                ws_path = create_workspace(name, description=desc)
-                self._send_json_response(200, {"name": name, "description": desc, "path": str(ws_path)})
+                ok, msg = create_workspace(name, description=desc, auto_memory=auto_mem)
+                if not ok:
+                    self._send_json_response(400, {"error": msg})
+                    return
+                ws_path = get_workspace_path(name)
+                self._send_json_response(200, {
+                    "name": name,
+                    "description": desc,
+                    "auto_memory": auto_mem,
+                    "path": str(ws_path),
+                })
                 self._log_request_event("POST", path, 200, detail=f"Created workspace {name}")
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
@@ -792,6 +920,16 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 last_prompt = str(m.get("content", ""))
                 break
 
+        # Dynamically enable tools if intent indicates tool calling or memory updating
+        if not tools_enabled and last_prompt:
+            try:
+                from locallm.core.router import classify_prompt, TaskType
+                t_type, _, _ = classify_prompt(last_prompt)
+                if t_type == TaskType.TOOLS:
+                    tools_enabled = True
+            except Exception:
+                pass
+
         # Check universal web search invocation: UI options flag, command tags, or URL targets
         is_explicit_search = bool(
             re.match(r"^(?:@web|/web|/search|web:|search:)\b", last_prompt.strip(), re.IGNORECASE)
@@ -829,6 +967,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
         # Intelligent Router resolution
         target_model = model_req
+        route_info: Optional[Dict[str, Any]] = None
         if model_req.lower() in ("auto", "locallm-agent", ""):
             last_prompt_route = ""
             for m in reversed(messages):
@@ -839,8 +978,17 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             if last_prompt_route:
                 route_res = route_prompt(last_prompt_route, self.server.config, temp_client)
                 target_model = route_res.selected_model
+                route_info = {
+                    "model": target_model,
+                    "task_type": route_res.task_type.value if hasattr(route_res.task_type, "value") else str(route_res.task_type),
+                    "tier": route_res.tier.value if hasattr(route_res.tier, "value") else str(route_res.tier),
+                    "reason": route_res.reason,
+                }
             else:
                 target_model = self.server.default_model
+                route_info = {"model": target_model}
+        else:
+            route_info = {"model": target_model}
 
         inference_client = self.server.get_client_for_request(model=target_model, backend=backend_req)
 
@@ -857,6 +1005,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 tools_enabled=tools_enabled,
                 last_prompt=last_prompt,
                 workspace_name=req_ws,
+                route_info=route_info,
             )
         else:
             self._handle_non_streaming_completion(
@@ -878,8 +1027,14 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         messages: List[Dict[str, Any]],
         ws_context: str,
     ) -> List[Dict[str, Any]]:
-        """Inject workspace context and environment directives into conversation messages."""
-        if not ws_context:
+        """Inject workspace context, global user memory, and environment directives into conversation messages."""
+        try:
+            from locallm.core.global_memory import GlobalMemoryManager
+            global_mem_context = GlobalMemoryManager().build_system_context()
+        except Exception:
+            global_mem_context = ""
+
+        if not ws_context and not global_mem_context:
             return list(messages)
 
         result: List[Dict[str, Any]] = []
@@ -888,16 +1043,26 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         for msg in messages:
             if msg.get("role") == "system" and not has_system:
                 existing = str(msg.get("content", ""))
-                combined = f"{existing}\n\n{ws_context}"
+                parts: List[str] = [existing]
+                if global_mem_context and global_mem_context not in existing:
+                    parts.append(global_mem_context)
+                if ws_context and ws_context not in existing:
+                    parts.append(ws_context)
+                combined = "\n\n".join(parts)
                 result.append({"role": "system", "content": combined})
                 has_system = True
             else:
                 result.append(dict(msg))
 
         if not has_system:
+            parts = [self.server.config.system_prompt]
+            if global_mem_context:
+                parts.append(global_mem_context)
+            if ws_context:
+                parts.append(ws_context)
             result.insert(0, {
                 "role": "system",
-                "content": f"{self.server.config.system_prompt}\n\n{ws_context}",
+                "content": "\n\n".join(parts),
             })
 
         return result
@@ -992,6 +1157,8 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             content = ""
             if turn_msg and isinstance(turn_msg, dict):
                 content = turn_msg.get("content", "")
+                if content:
+                    content = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", content, flags=re.IGNORECASE).strip()
 
             prompt_tokens = stats.get("prompt_eval_count") or len(str(messages)) // 4
             completion_tokens = stats.get("eval_count") or len(content) // 4
@@ -1030,6 +1197,20 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 200,
                 detail=f"model={target_model} tokens={total_tokens} ({duration}s)",
             )
+
+            # Asynchronous background auto-memory extraction for this workspace turn
+            if last_prompt and content:
+                try:
+                    from locallm.core.auto_memory import extract_workspace_memory_async
+                    extract_workspace_memory_async(
+                        workspace_name=workspace_name,
+                        client=active_client,
+                        model=target_model,
+                        user_prompt=last_prompt,
+                        assistant_response=content,
+                    )
+                except Exception:
+                    pass
         except Exception as exc:
             self._send_openai_error(500, f"Inference execution failed: {exc}", error_type="api_error")
             self._log_request_event("POST", path, 500, detail=str(exc))
@@ -1047,8 +1228,9 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         tools_enabled: bool = False,
         last_prompt: str = "",
         workspace_name: str = "default",
+        route_info: Optional[Dict[str, Any]] = None,
     ) -> None:
-        """Stream completion tokens via Server-Sent Events (SSE) with dynamic thought progress."""
+        """Stream completion tokens via Server-Sent Events (SSE) with typed reasoning execution events."""
         active_client = client or self.server.client
         cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:16]}"
         created_ts = int(time.time())
@@ -1067,27 +1249,50 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(chunk_header + payload_bytes + b"\r\n")
             self.wfile.flush()
 
-        def _send_delta(content_str: str) -> None:
-            if not content_str:
-                return
-            delta_chunk = {
+        def _send_event(event_name: str, data: Any = None) -> None:
+            event_obj: Dict[str, Any] = {
                 "id": cmpl_id,
+                "event": event_name,
+                "data": data,
                 "object": "chat.completion.chunk",
                 "created": created_ts,
                 "model": target_model,
-                "choices": [
+            }
+            if event_name == "response_token" and isinstance(data, str):
+                event_obj["choices"] = [
                     {
                         "index": 0,
-                        "delta": {"content": content_str},
+                        "delta": {"content": data},
                         "finish_reason": None,
                     }
-                ],
-            }
-            _send_chunk(f"data: {json.dumps(delta_chunk)}\n\n".encode("utf-8"))
+                ]
+            elif event_name == "done":
+                event_obj["choices"] = [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ]
+            elif event_name == "error":
+                err_detail = data.get("message", "Unknown error") if isinstance(data, dict) else str(data)
+                event_obj["choices"] = [
+                    {
+                        "index": 0,
+                        "delta": {"content": f"\n\n[Gagal memproses respon: {err_detail}]"},
+                        "finish_reason": "error",
+                    }
+                ]
+            _send_chunk(f"data: {json.dumps(event_obj)}\n\n".encode("utf-8"))
+
+        def _send_delta(content_str: str) -> None:
+            if not content_str:
+                return
+            _send_event("response_token", content_str)
 
         token_count = 0
         try:
-            # Emit initial empty role chunk
+            # Emit initial empty role chunk for OpenAI SSE client compatibility
             initial_chunk = {
                 "id": cmpl_id,
                 "object": "chat.completion.chunk",
@@ -1103,17 +1308,22 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             }
             _send_chunk(f"data: {json.dumps(initial_chunk)}\n\n".encode("utf-8"))
 
-            # Dynamic live progress: Stream thought step tokens before model inference
+            # Emit routing event to client
+            if route_info:
+                _send_event("routing", route_info)
+            else:
+                _send_event("routing", {"model": target_model})
+
+            # Handle web search tool execution
             if should_search_web and last_prompt:
-                _send_delta("<think>\nRefining user inquiry...\n")
                 search_directive = ""
                 try:
                     from locallm.core.tools.web import extract_search_query, perform_web_search
                     clean_query = extract_search_query(last_prompt) or last_prompt.strip()
-                    _send_delta(f"Searching web for '{clean_query}'...\n")
+                    _send_event("tool_start", {"tool": "web_search", "label": f"Searching web for '{clean_query}'..."})
 
                     search_res = perform_web_search(clean_query, max_results=5)
-                    _send_delta("Synthesizing verified findings...\n</think>\n\n")
+                    _send_event("tool_end", {"tool": "web_search"})
 
                     if search_res and not search_res.startswith("Error:"):
                         search_directive = (
@@ -1132,7 +1342,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         )
                 except Exception as exc:
                     self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
-                    _send_delta("Synthesizing response...\n</think>\n\n")
+                    _send_event("tool_end", {"tool": "web_search", "error": str(exc)})
                     search_directive = (
                         f"\n\n[Web Search Notice]: Gagal menghubungi penyedia pencarian web ({exc}). "
                         "Jawab pertanyaan user sebaik mungkin menggunakan basis pengetahuan Anda dan sebutkan bahwa pencarian web sedang mengalami kendala jaringan. "
@@ -1140,8 +1350,8 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     )
                 messages = self._inject_search_context(messages, search_directive)
 
+            # Handle workspace agent tools execution
             elif tools_enabled:
-                _send_delta("<think>\nEvaluating workspace skills & tools...\n")
                 try:
                     from locallm.core.tools import get_all_assistant_tools, execute_tool
                     available_tools = get_all_assistant_tools(workspace_name)
@@ -1164,58 +1374,146 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                                         fn_args = json.loads(fn_args)
                                     except Exception:
                                         fn_args = {}
-                                _send_delta(f"Executing tool '{fn_name}'...\n")
+                                _send_event("tool_start", {"tool": fn_name, "label": f"Running {fn_name}..."})
                                 tool_res = execute_tool(fn_name, fn_args, workspace_name=workspace_name)
+                                _send_event("tool_end", {"tool": fn_name})
                                 messages.append({
                                     "role": "tool",
                                     "name": fn_name,
                                     "content": str(tool_res),
                                 })
-                            _send_delta("Synthesizing findings...\n</think>\n\n")
-                        else:
-                            _send_delta("Formulating response...\n</think>\n\n")
-                    else:
-                        _send_delta("Formulating response...\n</think>\n\n")
                 except Exception as tool_exc:
                     self._log_request_event("WARN", path, 500, detail=f"Tool evaluation error: {tool_exc}")
-                    _send_delta("Formulating response...\n</think>\n\n")
-            else:
-                # Immediate initial thought chunk so user sees instant feedback during model prefill
-                _send_delta("<think>\nRefining user inquiry...\n</think>\n\n")
 
-            # Stream generated tokens
+            # Stream generated tokens with internal reasoning absorption
+            in_thinking = False
+            response_started = False
+            stream_buf = ""
+            accumulated_content: List[str] = []
+
+            def _flush_content(text: str) -> None:
+                nonlocal response_started, token_count
+                if not text:
+                    return
+                accumulated_content.append(text)
+                if not response_started:
+                    _send_event("response_start")
+                    response_started = True
+                token_count += 1
+                _send_delta(text)
+
             if hasattr(active_client, "chat_stream"):
-                for token in active_client.chat_stream(
+                for raw_token in active_client.chat_stream(
                     model=target_model,
                     messages=messages,
                     temperature=temperature,
                     num_ctx=context_window,
                 ):
-                    if not token:
+                    if not raw_token:
                         continue
-                    token_count += 1
-                    _send_delta(token)
+                    stream_buf += raw_token
+
+                    # Process buffer iteratively
+                    while stream_buf:
+                        if not in_thinking:
+                            # Check for opening thinking tags
+                            lower_buf = stream_buf.lower()
+                            think_idx = -1
+                            tag_len = 0
+                            for start_tag in ("<think>", "<thought>"):
+                                pos = lower_buf.find(start_tag)
+                                if pos != -1 and (think_idx == -1 or pos < think_idx):
+                                    think_idx = pos
+                                    tag_len = len(start_tag)
+
+                            if think_idx != -1:
+                                # Flush any content prior to <think>
+                                before_text = stream_buf[:think_idx]
+                                if before_text.strip():
+                                    _flush_content(before_text)
+                                in_thinking = True
+                                _send_event("thinking_start")
+                                stream_buf = stream_buf[think_idx + tag_len:]
+                                continue
+
+                            # Check if buffer ends with a potential opening tag prefix
+                            possible_prefix = False
+                            for prefix in ("<thought", "<thou", "<tho", "<think", "<thin", "<thi", "<th", "<t", "<"):
+                                if lower_buf.endswith(prefix) and len(stream_buf) <= 15:
+                                    possible_prefix = True
+                                    break
+                            if possible_prefix:
+                                break
+
+                            # Not thinking and not an ambiguous prefix: flush content
+                            _flush_content(stream_buf)
+                            stream_buf = ""
+                        else:
+                            # Currently inside internal thinking block: swallow internal reasoning tokens
+                            lower_buf = stream_buf.lower()
+                            end_idx = -1
+                            end_tag_len = 0
+                            for end_tag in ("</think>", "</thought>"):
+                                pos = lower_buf.find(end_tag)
+                                if pos != -1 and (end_idx == -1 or pos < end_idx):
+                                    end_idx = pos
+                                    end_tag_len = len(end_tag)
+
+                            if end_idx != -1:
+                                in_thinking = False
+                                _send_event("thinking_end")
+                                # Retain content after closing tag and strip leading line breaks
+                                remaining = stream_buf[end_idx + end_tag_len:].lstrip("\r\n")
+                                stream_buf = remaining
+                                continue
+
+                            # Keep only suffix if it could be start of closing tag
+                            matched_prefix_len = 0
+                            for prefix in ("</thought", "</thou", "</tho", "</think", "</thin", "</thi", "</th", "</t", "</", "<"):
+                                if lower_buf.endswith(prefix):
+                                    matched_prefix_len = len(prefix)
+                                    break
+
+                            if matched_prefix_len > 0:
+                                stream_buf = stream_buf[-matched_prefix_len:]
+                            else:
+                                stream_buf = ""
+                            break
+
+            # Flush after stream finishes
+            if in_thinking:
+                _send_event("thinking_end")
+                in_thinking = False
+
+            if stream_buf:
+                _flush_content(stream_buf)
+
+            if not response_started:
+                _send_event("response_start")
+                response_started = True
 
             # Emit final finish chunk
-            finish_chunk = {
-                "id": cmpl_id,
-                "object": "chat.completion.chunk",
-                "created": created_ts,
-                "model": target_model,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
-            _send_chunk(f"data: {json.dumps(finish_chunk)}\n\n".encode("utf-8"))
+            _send_event("done")
             _send_chunk(b"data: [DONE]\n\n")
 
             # Terminate HTTP chunked stream
             self.wfile.write(b"0\r\n\r\n")
             self.wfile.flush()
+
+            # Asynchronous background auto-memory extraction for this workspace turn
+            if last_prompt and accumulated_content:
+                try:
+                    from locallm.core.auto_memory import extract_workspace_memory_async
+                    full_resp = "".join(accumulated_content)
+                    extract_workspace_memory_async(
+                        workspace_name=workspace_name,
+                        client=active_client,
+                        model=target_model,
+                        user_prompt=last_prompt,
+                        assistant_response=full_resp,
+                    )
+                except Exception:
+                    pass
 
             duration = round(time.time() - start_time, 2)
             self._log_request_event(
@@ -1237,20 +1535,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     m = re.search(r"'message':\s*'([^']+)'", err_msg)
                     if m:
                         err_msg = m.group(1).split("\n")[0]
-                err_chunk = {
-                    "id": cmpl_id,
-                    "object": "chat.completion.chunk",
-                    "created": created_ts,
-                    "model": target_model,
-                    "choices": [
-                        {
-                            "index": 0,
-                            "delta": {"content": f"\n\n[Gagal memproses respon: {err_msg}]"},
-                            "finish_reason": "error",
-                        }
-                    ],
-                }
-                _send_chunk(f"data: {json.dumps(err_chunk)}\n\n".encode("utf-8"))
+                _send_event("error", {"message": err_msg})
                 _send_chunk(b"data: [DONE]\n\n")
                 self.wfile.write(b"0\r\n\r\n")
                 self.wfile.flush()

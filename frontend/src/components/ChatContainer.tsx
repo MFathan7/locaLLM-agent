@@ -193,15 +193,34 @@ const ChatBubble = ({
     return isUser ? message.content : cleanAssistantContent(message.content);
   }, [isUser, message.content]);
 
-  // Check if model is actively thinking and hasn't produced final text yet
-  const currentlyThinking = useMemo(() => {
-    return !isUser && isTyping && isOnlyThinking(message.content);
-  }, [isUser, isTyping, message.content]);
+  // Resolve active high-level execution state or generic status badge
+  const activeStatusLabel = useMemo(() => {
+    if (isUser) return null;
+    if (cleanedContent && cleanedContent.trim().length > 0) return null;
+    if (!isTyping) return null;
 
-  // Extract active dynamic reasoning or tool step
-  const currentThinkingStep = useMemo(() => {
-    return extractCurrentThinkingStep(message.content);
-  }, [message.content]);
+    if (message.statusLabel) {
+      return message.statusLabel;
+    }
+
+    if (message.executionState === 'thinking') {
+      return 'Thinking...';
+    }
+    if (message.executionState === 'tool') {
+      return 'Running tool...';
+    }
+    if (message.executionState === 'generating') {
+      return 'Generating...';
+    }
+
+    // Legacy fallback if old message has think tags
+    if (isOnlyThinking(message.content)) {
+      return extractCurrentThinkingStep(message.content);
+    }
+
+    // Default neutral status while waiting for stream start (non-reasoning models)
+    return 'Generating...';
+  }, [isUser, isTyping, cleanedContent, message.content, message.statusLabel, message.executionState]);
 
   // Calculate sources attached or extract from content
   const sources = useMemo<SourceItem[]>(() => {
@@ -302,26 +321,20 @@ const ChatBubble = ({
       ) : (
         /* AI Assistant response: rich Markdown rendering without background container */
         <div className="relative group w-full py-1 text-slate-800 dark:text-slate-100">
-          {currentlyThinking ? (
-            /* Dynamic animated thinking indicator showing the active reasoning / tool step */
+          {activeStatusLabel ? (
+            /* Modern clean animated execution status badge */
             <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse border border-blue-500/20">
               <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
-              <span>{currentThinkingStep}</span>
+              <span>{activeStatusLabel}</span>
             </div>
-          ) : isTyping && !cleanedContent && !message.content ? (
-            /* Active stream connection / initial response loading */
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse border border-blue-500/20">
-              <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
-              <span>Refining user inquiry...</span>
-            </div>
-          ) : (!cleanedContent && !message.content) ? (
+          ) : !cleanedContent ? (
             /* Friendly fallback if response is empty */
             <div className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span>Model tidak memberikan respon teks. Anda dapat mengklik tombol <strong>Re-answer</strong> di bawah untuk mencoba kembali.</span>
             </div>
           ) : (
-            <MarkdownRenderer content={cleanedContent || message.content} />
+            <MarkdownRenderer content={cleanedContent} />
           )}
 
           {/* Action icon buttons row: icon-only with animated hover tooltips */}

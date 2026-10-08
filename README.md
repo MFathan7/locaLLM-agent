@@ -8,7 +8,7 @@
 
 > **Developer-first autonomous local AI platform, interactive terminal cockpit, and modern Liquid Glass Web UI powered by Ollama and OpenAI-compatible inference backends (vLLM, LocalAI, text-generation-webui).**
 
-`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant**, a **Modern Liquid Glass Web UI**, a **Multi-Step ReAct Coding Agent**, **24/7 Telegram & WhatsApp Bots**, **Isolated Project Workspaces**, and a **Hardware-Aware Model Manager**.
+`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant**, a **Modern Liquid Glass Web UI**, a **Dual-Tier Long-Term Memory Engine**, a **Multi-Step ReAct Coding Agent**, **24/7 Telegram & WhatsApp Bots**, **Zero-Bleed Project Workspaces**, and a **Hardware-Aware Model Manager**.
 
 ---
 
@@ -119,7 +119,9 @@ locallm models
 - **Apple Liquid Glass Aesthetic**: Inspired by modern macOS and iOS glass design, featuring translucent glassmorphism surfaces (`backdrop-filter: blur(24px)`), gradient specular highlights, soft sheen curves, and an animated blurred Aurora mesh background.
 - **Direct 1:1 Synchronization with CLI**: The Web UI communicates through a native local bridge with zero data silos. System prompts, sampling temperature, active model, custom OpenAI platforms, agent policies, and workspace chat histories are shared bidirectionally with the CLI in real time (`~/.locallm/config.json` and `~/.locallm/workspaces/`).
 - **Dual-Theme Architecture**: Sleek dark mode and crisp high-contrast light mode with deep slate typography (`text-slate-950 font-bold`), ensuring zero text wash-out and complete legibility across all surfaces.
-- **Clean Reasoning & Trace Filtering**: Strips intermediate `<think>...</think>` tokens, raw tool JSON dumps, and search queries from final responses while displaying a pulsing `Thinking and reasoning...` indicator while reasoning is underway.
+- **Event-Driven Reasoning States & Zero-Leak CoT**: High-level execution state streaming (`routing`, `thinking_start`, `thinking_end`, `tool_start`, `tool_end`, `response_start`, `response_token`, `done`). Internal reasoning is kept strictly internal to the engine, displaying clean generic status indicators (*"Thinking..."*, *"Searching..."*, *"Running Python..."*, *"Generating..."*) without leaking raw thoughts or fake reasoning tokens.
+- **Clean Reasoning & Trace Filtering**: Strips intermediate `<think>...</think>` and `<thought>...</thought>` blocks from final response bubbles and chat titles, keeping the output clean and uncluttered.
+- **Zero-Delay Streaming Web Search**: Connects instantly via SSE and emits real-time status chunks while executing web queries, synthesizing verified findings with markdown citations (`[Source Title](URL)`) and auto-populating the sources side panel.
 - **Collapsible Sources Side Panel**: Automatically extracts external web citations and search references into branded source cards with domain favicons, accessible via a right-hand sliding panel.
 - **One-Click Document Export (`.doc`)**: Export any assistant response directly into a styled Microsoft Word document with headings, tables, code blocks, and citation appendices.
 - **Refined Tables & Hover Copy Icon**:
@@ -129,7 +131,7 @@ locallm models
 - **Lazy "New Chat" Creation**: Clicking New Chat enters an empty draft state without creating empty session files on disk until the first message is sent.
 - **Intelligent Auto Chat Title Generation**:
   - Instant heuristic title extraction stripping conversational filler words (*"tolong buatkan"*, *"can you help me"*, etc.).
-  - Non-blocking asynchronous AI title synthesis running in the background to name conversations by user goal.
+  - Thought-aware asynchronous AI title synthesis running in the background that waits for reasoning blocks to finish before naming conversations by user goal, ensuring zero leaked `<think>` tags in session titles.
 - **Adaptive Header Navigation**: Top header search icon hides when the sidebar is visible and animates in when collapsed, maintaining smooth spring transitions with zero animation gaps.
 - **Rich Markdown, Code Highlighting & Image Lightbox**:
   - Syntax-highlighted code blocks with language tags and one-click copy.
@@ -156,9 +158,13 @@ locallm models
   - Dedicated toggle controls in the chat input bar to selectively enable or disable autonomous tools and real-time web search per prompt.
 - **Real-Time Temporal Grounding**:
   - Injects live real-world date and time into workspace context so the model always knows current time and date without hallucinations.
-- **Refined Workspace Management**:
-  - Dynamic workspace icon coloring with automatic dark/light theme contrast validation.
+- **Refined Workspace Management Modal**:
+  - Apple Liquid Glass modal architecture with fluid tab navigation (General & Skills).
+  - Dynamic workspace icon picker with automatic theme-aware contrast validation.
+  - Native toggle switch for **Workspace Auto-Memory Extraction**, allowing granular control over per-project episodic memory learning.
   - Auto-sorted chat sessions by last activity timestamp for effortless history tracking.
+- **Resilient React Error Boundary**:
+  - Built-in crash protection wrapping the application root with a Liquid Glass recovery screen, diagnostic details, and one-click session restore, completely eliminating white-screen state collapses.
 
 ### 🖥️ Real-Time Telemetry Header Banner
 - **Live System & Hardware Cockpit**: The Unicode header banner at the top of every screen automatically displays real-time hardware telemetry:
@@ -195,6 +201,20 @@ locallm models
 - **WhatsApp Bot (`locallm whatsapp`)**: Terminal QR code pairing via Baileys bridge, multi-user memory, phone whitelist, group chat support, and automatic 15-digit LID resolution.
 - **Cross-Channel Parity**: Uniform context telemetry (`• Context: 2,681/8,192 (32.7%) • Speed: 37.8 tok/s`) and slash commands (`/stats`, `/model`, `/clear`, `/sessions`, `/help`) across CLI, Telegram, and WhatsApp.
 
+### 🧠 Dual-Tier Long-Term Memory System (Global & Workspace-Scoped)
+- **Tier 1: Cross-Workspace Global User Memory (`~/.locallm/global_memory.json`)**:
+  - Persists overarching user profile, communication rules, persona directives, and durable facts across all workspaces.
+  - Autonomous memory maintenance tool (`update_user_memory`) enables the assistant to save, update, or remove preferences when instructed.
+  - Injected automatically into system instructions across CLI, Web UI, Telegram, and WhatsApp (`[Global User Memory & Profile]`).
+  - Strict security guard: sanitizes API keys, secrets, passwords, and raw Chain-of-Thought `<think>` tokens prior to saving.
+- **Tier 2: Workspace-Scoped Auto-Memory (`~/.locallm/workspaces/<name>/memory.json`)**:
+  - Completely isolated episodic project memory. Facts learned in Project A never leak into Project B.
+  - **Zero-Friction Post-Turn Extraction**: Dispatches a lightweight background worker after conversation turns to automatically extract durable project facts (timelines, dates, inventory purchases, architectural decisions, and configurations).
+  - **Smart Relevance Filter**: Automatically filters out casual chit-chat, trivial greetings, and transient debug noise.
+  - **Bounded Memory Quota (Max 30 Facts)**: Preserves KV-cache budget and GPU VRAM headroom by maintaining only the most recent 30 facts with timestamps.
+  - **Granular Workspace Toggle**: Easily enable or disable auto-extraction per workspace in the Web UI Workspace Modal or via `workspace.json` (`"auto_memory": true/false`).
+  - **Context Grounding**: Injected dynamically into prompt context (`[Workspace Long-Term Memory & Project Context]`), enabling the model to remember facts across new sessions without re-explaining context.
+
 ### 🧠 Workspace Persona Engine (`AGENTS.md`) & Proactive Research
 - **Customizable Persona Directives**: Every workspace contains its own `AGENTS.md` file defining how the model thinks, responds, and uses tools.
 - **Auto-Scaffolding**: Newly created workspaces automatically inherit a production-grade persona template with zero manual configuration.
@@ -203,7 +223,7 @@ locallm models
 - **Turn 1 Refusal Interceptor**: If a model hesitates or admits a lack of knowledge on turn 1 (e.g. for niche enterprise tools), `locaLLM` automatically intercepts and nudges the model to execute `search_web` before synthesizing the final answer.
 
 ### 🛠️ Modular Tool Registry & Silent Tool Execution
-- **Modular Tool Architecture (`locallm/core/tools/`)**: Tools are decoupled into domain packages (`filesystem.py`, `web.py`, `system.py`, `messaging.py`, `ui.py`) and dynamically registered via `@tool` decorators.
+- **Modular Tool Architecture (`locallm/core/tools/`)**: Tools are decoupled into domain packages (`filesystem.py`, `web.py`, `system.py`, `messaging.py`, `ui.py`, `memory.py`) and dynamically registered via `@tool` decorators.
 - **Explicit JSON Schema & Typing**: Declarations enforce JSON Schema metadata, parameter typing, and mutating permission classification (`is_mutating: bool`).
 - **Dynamic Truncation & Pagination**: Content-heavy tools (file reading, web fetching) support clean sliding chunking (`offset`, `max_chars`) to prevent context exhaustion and latency spikes.
 - **Smart Path Resolution & Boundary Sandboxing**: Resolves filesystem aliases (`~`, `downloads`, `desktop`, `%USERPROFILE%`) and enforces directory boundary isolation in restricted or messaging modes.
@@ -226,7 +246,7 @@ locallm models
 - **Interactive TUI & CLI**: Manage servers with `locallm mcp list`, `locallm mcp test <name>`, `locallm mcp enable/disable <name>`, or the interactive wizard in `Integrations -> Model Context Protocol (MCP)`.
 
 ### 🗂️ Zero-Bleed Workspaces, Skills & Isolated Sessions
-- **Strict Context Isolation**: Each project workspace (`~/.locallm/workspaces/<name>/`) contains isolated `knowledge/`, `skills/`, and `sessions/`. No cross-contamination across projects.
+- **Strict Context Isolation**: Each project workspace (`~/.locallm/workspaces/<name>/`) contains isolated `knowledge/`, `skills/`, `sessions/`, and `memory.json`. No cross-contamination across projects.
 - **Drop-In Markdown Knowledge**: Drop `.md` or `.txt` reference files, API specs, and runbooks directly into workspace directories.
 - **Pure-Python GitHub Skill Installer**: Install agent skills from any GitHub repo (`locallm workspace install org/repo --skill name`) with automatic bloat filtering (`.git`, tests, binaries).
 - **Multi-Select Skill Deletion**: Cleanly batch-delete installed skills using interactive checkbox selection (`Delete Skill(s)`).
@@ -415,6 +435,7 @@ Native tools execute silently behind high-contrast spinners (`▘▀▝▐▗▄
 | `fetch_web` | Fetches webpage text | Markdown converter; direct raw `README.md` download for GitHub URLs. |
 | `get_weather` | Real-time weather reporting | Plain-text weather via wttr.in with Windows console charmap safety. |
 | `get_current_time` | System clock | Formatted local time, day, and date. |
+| `update_user_memory` | Global memory manager | Stores and updates persistent user profile, communication rules, or facts across workspaces. |
 | `list_skills` | Skill discovery | Discovers all skills across workspace and project root. |
 | `read_skill` | Skill reader | Loads full skill markdown instructions on demand. |
 
@@ -491,6 +512,24 @@ Configuration is stored in `~/.locallm/config.json` (`%USERPROFILE%\.locallm\con
   "agent_max_steps": 25
 }
 ```
+
+### Workspace Configuration (`workspace.json`)
+Each workspace maintains its metadata, persona overrides, and feature toggles in `~/.locallm/workspaces/<name>/workspace.json`:
+
+```json
+{
+  "name": "default",
+  "description": "Default development workspace",
+  "instructions": "",
+  "icon": "folder",
+  "icon_color": "#0ea5e9",
+  "auto_memory": true
+}
+```
+
+### Long-Term Memory Storage Files
+- **Global User Memory**: `~/.locallm/global_memory.json` (stores cross-workspace user persona, communication preferences, and persistent facts).
+- **Workspace Memory**: `~/.locallm/workspaces/<name>/memory.json` (stores up to 30 auto-extracted episodic project facts with timestamps, strictly isolated per workspace).
 
 ---
 

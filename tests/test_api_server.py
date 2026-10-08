@@ -25,6 +25,7 @@ class MockInferenceClient:
         self._models = models or [
             {"name": "test-model-1", "id": "test-model-1"},
             {"name": "test-model-2", "id": "test-model-2"},
+            {"name": "test-reasoning-model", "id": "test-reasoning-model"},
         ]
 
     def list_models(self) -> List[Dict[str, Any]]:
@@ -42,6 +43,8 @@ class MockInferenceClient:
         if stats_out is not None:
             stats_out["prompt_eval_count"] = 12
             stats_out["eval_count"] = 8
+        if "reasoning" in model:
+            return {"role": "assistant", "content": "<think>\nSecret steps\n</think>\nReasoned result"}
         return {"role": "assistant", "content": f"Mock response from {model}"}
 
     def chat_stream(
@@ -52,9 +55,13 @@ class MockInferenceClient:
         temperature: float = 0.7,
         num_ctx: int = 8192,
     ) -> Generator[str, None, None]:
-        yield "Mock "
-        yield "streaming "
-        yield f"from {model}"
+        if "reasoning" in model:
+            yield "<think>\nStep-by-step internal reasoning\n</think>\n"
+            yield "Final calculated answer: 42"
+        else:
+            yield "Mock "
+            yield "streaming "
+            yield f"from {model}"
 
 
 class TestPortUtilities(unittest.TestCase):
@@ -226,6 +233,78 @@ class TestOpenAIAPIServer(unittest.TestCase):
             first_data = json.loads(data_lines[0].replace("data: ", ""))
             self.assertEqual(first_data.get("object"), "chat.completion.chunk")
             self.assertEqual(first_data.get("model"), "test-model-2")
+
+    def test_chat_completions_streaming_reasoning_events_without_cot_leak(self) -> None:
+        """Verify internal CoT is never streamed to client and reasoning events are emitted cleanly."""
+        with httpx.Client(timeout=3.0) as client:
+            payload = {
+                "model": "test-reasoning-model",
+                "messages": [{"role": "user", "content": "Solve math puzzle"}],
+                "stream": True,
+            }
+            resp = client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": "Bearer secret-token-123"},
+            )
+            self.assertEqual(resp.status_code, 200)
+
+            lines = resp.text.strip().split("\n")
+            data_lines = [l for l in lines if l.startswith("data: ") and l != "data: [DONE]"]
+            events = []
+            tokens = []
+            for dl in data_lines:
+                chunk = json.loads(dl.replace("data: ", ""))
+                if "event" in chunk:
+                    events.append(chunk["event"])
+                delta_content = chunk.get("choices", [{}])[0].get("delta", {}).get("content", "")
+                if delta_content:
+                    tokens.append(delta_content)
+
+            full_streamed_content = "".join(tokens)
+            # Verify events
+            self.assertIn("routing", events)
+            self.assertIn("thinking_start", events)
+            self.assertIn("thinking_end", events)
+            self.assertIn("response_start", events)
+            self.assertIn("done", events)
+
+            # CRITICAL: Verify internal reasoning text is NEVER leaked in streamed tokens
+            self.assertNotIn("Step-by-step internal reasoning", full_streamed_content)
+            self.assertNotIn("<think>", full_streamed_content)
+            self.assertNotIn("</think>", full_streamed_content)
+            # Verify final content arrived intact
+            self.assertIn("Final calculated answer: 42", full_streamed_content)
+
+    def test_chat_completions_streaming_non_reasoning_direct(self) -> None:
+        """Verify models/tasks without reasoning do NOT emit fake thinking events."""
+        with httpx.Client(timeout=3.0) as client:
+            payload = {
+                "model": "test-model-1",
+                "messages": [{"role": "user", "content": "Casual chat"}],
+                "stream": True,
+            }
+            resp = client.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                headers={"Authorization": "Bearer secret-token-123"},
+            )
+            self.assertEqual(resp.status_code, 200)
+
+            lines = resp.text.strip().split("\n")
+            data_lines = [l for l in lines if l.startswith("data: ") and l != "data: [DONE]"]
+            events = []
+            for dl in data_lines:
+                chunk = json.loads(dl.replace("data: ", ""))
+                if "event" in chunk:
+                    events.append(chunk["event"])
+
+            # Verify no fake thinking events
+            self.assertNotIn("thinking_start", events)
+            self.assertNotIn("thinking_end", events)
+            self.assertIn("routing", events)
+            self.assertIn("response_start", events)
+            self.assertIn("done", events)
 
     def test_chat_completions_with_workspace_header(self) -> None:
         with httpx.Client(timeout=3.0) as client:
