@@ -83,14 +83,23 @@ class WorkspaceMemoryManager:
             if not isinstance(facts, dict):
                 facts = {}
 
-            # Sanitize facts ensuring string keys and values
-            cleaned_facts: Dict[str, str] = {}
+            # Sanitize facts ensuring string keys and values or session-tagged dictionaries
+            cleaned_facts: Dict[str, Any] = {}
             for k, v in facts.items():
                 if k and v is not None:
                     k_str = str(k).strip()
-                    v_str = str(v).strip()
-                    if k_str and v_str:
-                        cleaned_facts[k_str] = v_str
+                    if isinstance(v, dict):
+                        val_str = str(v.get("value", "")).strip()
+                        sid_str = str(v.get("session_id", "")).strip() or None
+                        if k_str and val_str:
+                            item: Dict[str, Any] = {"value": val_str}
+                            if sid_str:
+                                item["session_id"] = sid_str
+                            cleaned_facts[k_str] = item
+                    else:
+                        v_str = str(v).strip()
+                        if k_str and v_str:
+                            cleaned_facts[k_str] = v_str
 
             return {"facts": cleaned_facts}
         except Exception as exc:
@@ -147,15 +156,21 @@ class WorkspaceMemoryManager:
             )
             return False
 
-    def set_fact(self, key: str, value: Any) -> bool:
-        """Store a factual statement under key in workspace memory."""
+    def set_fact(self, key: str, value: Any, session_id: Optional[str] = None) -> bool:
+        """Store a factual statement under key in workspace memory, optionally tagging session ID."""
         clean_key = str(key or "").strip()
         clean_val = str(value or "").strip()
         if not clean_key or not clean_val:
             return False
 
         data = self.load()
-        data["facts"][clean_key] = clean_val
+        if session_id:
+            data["facts"][clean_key] = {
+                "value": clean_val,
+                "session_id": str(session_id).strip(),
+            }
+        else:
+            data["facts"][clean_key] = clean_val
         return self.save(data)
 
     def delete_fact(self, key: str) -> bool:
@@ -170,20 +185,51 @@ class WorkspaceMemoryManager:
             return self.save(data)
         return False
 
+    def delete_session_facts(self, session_id: str) -> int:
+        """Purge any stored facts associated with a specific session ID."""
+        clean_sid = str(session_id or "").strip()
+        if not clean_sid:
+            return 0
+        data = self.load()
+        facts = data.get("facts", {})
+        to_delete = [
+            k for k, v in facts.items()
+            if isinstance(v, dict) and str(v.get("session_id", "")).strip() == clean_sid
+        ]
+        if not to_delete:
+            return 0
+        for k in to_delete:
+            del facts[k]
+        self.save(data)
+        logger.info(
+            "Purged %d fact(s) associated with session '%s' in workspace '%s'",
+            len(to_delete),
+            clean_sid,
+            self.workspace_name,
+        )
+        return len(to_delete)
+
     def clear_memory(self) -> bool:
         """Clear all stored facts in this workspace."""
         return self.save({"facts": {}})
 
     def list_facts(self) -> Dict[str, str]:
-        """Return dictionary of all facts stored in this workspace."""
-        return dict(self.load().get("facts", {}))
+        """Return dictionary of all facts stored in this workspace as key -> statement."""
+        raw = dict(self.load().get("facts", {}))
+        out: Dict[str, str] = {}
+        for k, v in raw.items():
+            if isinstance(v, dict):
+                val = str(v.get("value", "")).strip()
+                if val:
+                    out[k] = val
+            else:
+                val = str(v).strip()
+                if val:
+                    out[k] = val
+        return out
 
     def build_workspace_memory_context(self) -> str:
         """Format workspace memory facts for supplementary context injection.
-
-        Format:
-        [Workspace Knowledge & Long-Term Memory]
-        - key: value
 
         Returns empty string if auto-memory is disabled or no facts are recorded.
         """
@@ -194,7 +240,14 @@ class WorkspaceMemoryManager:
         if not facts:
             return ""
 
-        lines = ["[Workspace Knowledge & Long-Term Memory]"]
+        lines = [
+            f"[Workspace Long-Term Memory & Project Context for '{self.workspace_name}']",
+            "Directives: You possess durable long-term memory across sessions for this workspace. "
+            "The following facts have been learned and saved from previous conversations with the user. "
+            "When the user asks if you remember past events or asks questions regarding topics mentioned below "
+            "(e.g., past purchases, dates, decisions, configurations), ALWAYS recall and confirm these facts accurately. "
+            "Never claim that you cannot remember or that you have no memory of past sessions when the answer is recorded here:",
+        ]
         for k, v in sorted(facts.items()):
             lines.append(f"- {k}: {v}")
 

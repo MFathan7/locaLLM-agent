@@ -293,7 +293,8 @@ export const api = {
     onChunk: (chunk: string) => void,
     images?: string[],
     history?: Message[],
-    onEvent?: (event: StreamEvent) => void
+    onEvent?: (event: StreamEvent) => void,
+    abortSignal?: AbortSignal
   ): Promise<string> => {
     const targetModel = config.default_model || config.model || 'nemotron3-super';
     const workspace = config.active_workspace || 'default';
@@ -351,20 +352,25 @@ export const api = {
       backend: config.active_backend || 'ollama',
       provider: config.active_backend || 'ollama',
       workspace,
+      session_id: options.sessionId,
       temperature: config.temperature,
       options: {
         files: options.files.map(f => f.name),
         webSearch: options.webSearch,
-        tools: options.tools
+        tools: options.tools,
+        sessionId: options.sessionId
       },
       ...(images && images.length > 0 ? { images } : {})
     };
+
+    let fullResponse = '';
 
     try {
       const res = await fetch(`${API_BASE}/chat`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        body: JSON.stringify(payload),
+        signal: abortSignal
       });
 
       if (!res.ok) {
@@ -383,10 +389,13 @@ export const api = {
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
-      let fullResponse = '';
       let buffer = '';
 
       while (true) {
+        if (abortSignal?.aborted) {
+          try { await reader.cancel(); } catch {}
+          break;
+        }
         const { done, value } = await reader.read();
         if (done) break;
 
@@ -477,6 +486,10 @@ export const api = {
 
       return fullResponse;
     } catch (err: any) {
+      if (err.name === 'AbortError' || abortSignal?.aborted) {
+        onEvent?.({ event: 'done' });
+        return fullResponse;
+      }
       console.warn('Direct chat stream failed, generating fallback response:', err);
       const fallback = `[Kendala Server]: Gagal terhubung ke engine locaLLM pada port ${config.server_port || 8080} (${err.message || 'Network error'}). Pastikan server locaLLM aktif.`;
       onChunk(fallback);

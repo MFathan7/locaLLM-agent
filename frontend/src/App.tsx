@@ -12,6 +12,7 @@ import { SourcesPanel } from './components/SourcesPanel';
 import { ConfirmModal } from './components/ConfirmModal';
 import { WorkspaceModal } from './components/WorkspaceModal';
 import { WorkspaceIcon } from './components/WorkspaceIcon';
+import { NotificationToast } from './components/NotificationToast';
 import { useLocaLLM } from './hooks/useLocaLLM';
 import { Menu, PanelLeftOpen, Search, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup, useSpring, useTransform } from 'motion/react';
@@ -38,6 +39,12 @@ function App() {
     sendMessage,
     regenerateMessage,
     isTyping,
+    typingSessionIds,
+    unreadSessionIds,
+    sessionNotification,
+    clearUnreadSession,
+    dismissNotification,
+    stopGeneration,
     refreshModels,
     refreshWorkspaces
   } = useLocaLLM();
@@ -52,6 +59,23 @@ function App() {
     id: string;
     name: string;
   } | null>(null);
+
+  // Dynamic browser tab title: active chat title or "LocaLLM - Workspace_Name"
+  useEffect(() => {
+    const wsName = activeWorkspace || 'Workspace';
+    const hasActiveSessionTitle = Boolean(
+      activeSession &&
+      activeSession.title &&
+      activeSession.title.trim() &&
+      activeSession.title.trim() !== 'New Chat'
+    );
+
+    if (hasActiveSessionTitle && activeSession) {
+      document.title = `${activeSession.title.trim()} - LocaLLM`;
+    } else {
+      document.title = `LocaLLM - ${wsName}`;
+    }
+  }, [activeSession?.title, activeWorkspace]);
 
   // Workspace setup and edit modal state
   const [workspaceModalState, setWorkspaceModalState] = useState<{
@@ -170,12 +194,17 @@ function App() {
             onDeleteWorkspace={(name) => setPendingDelete({ type: 'workspace', id: name, name })}
             sessions={sessions}
             activeSessionId={activeSessionId}
-            onSelectSession={setActiveSessionId}
+            onSelectSession={(id) => {
+              setActiveSessionId(id);
+              clearUnreadSession(id);
+            }}
             onNewSession={createSession}
             onDeleteSession={(id, title) => setPendingDelete({ type: 'session', id, name: title || 'this chat' })}
             onOpenSettings={() => setIsSettingsOpen(true)}
             onCollapse={() => setIsSidebarCollapsed(true)}
             onOpenSearch={() => setIsSearchOpen(true)}
+            typingSessionIds={typingSessionIds}
+            unreadSessionIds={unreadSessionIds}
           />
         </div>
       </motion.aside>
@@ -208,12 +237,18 @@ function App() {
                   onDeleteWorkspace={(name) => { setPendingDelete({ type: 'workspace', id: name, name }); setIsMobileSidebarOpen(false); }}
                   sessions={sessions}
                   activeSessionId={activeSessionId}
-                  onSelectSession={(id) => { setActiveSessionId(id); setIsMobileSidebarOpen(false); }}
+                  onSelectSession={(id) => {
+                    setActiveSessionId(id);
+                    clearUnreadSession(id);
+                    setIsMobileSidebarOpen(false);
+                  }}
                   onNewSession={() => { createSession(); setIsMobileSidebarOpen(false); }}
                   onDeleteSession={(id, title) => { setPendingDelete({ type: 'session', id, name: title || 'this chat' }); setIsMobileSidebarOpen(false); }}
                   onOpenSettings={() => { setIsSettingsOpen(true); setIsMobileSidebarOpen(false); }}
                   onCollapse={() => setIsMobileSidebarOpen(false)}
                   onOpenSearch={() => { setIsSearchOpen(true); setIsMobileSidebarOpen(false); }}
+                  typingSessionIds={typingSessionIds}
+                  unreadSessionIds={unreadSessionIds}
                 />
               </LayoutGroup>
             </motion.div>
@@ -350,10 +385,11 @@ function App() {
                   key={activeSession?.id || `new-${activeWorkspace}`}
                   workspace={activeWorkspace}
                   userName={config?.user_name}
-                  onSelectPrompt={(prompt) => sendMessage(prompt)}
                 />
               ) : (
                 <ChatContainer
+                  key={activeSession?.id || `empty-${activeWorkspace}`}
+                  sessionId={activeSession?.id}
                   messages={activeSession?.messages || []}
                   isTyping={isTyping}
                   selectedSourceMessageId={selectedSourceMessage?.id}
@@ -370,7 +406,8 @@ function App() {
               >
                 <ChatInput
                   onSend={sendMessage}
-                  disabled={isTyping}
+                  onStop={stopGeneration}
+                  isTyping={isTyping}
                   models={models}
                   currentModelId={config?.default_model || config?.model || ''}
                   onChangeModel={handleChangeModel}
@@ -422,6 +459,16 @@ function App() {
         onSave={handleSaveWorkspaceModal}
         onClose={() => setWorkspaceModalState(prev => ({ ...prev, isOpen: false }))}
         onReload={refreshWorkspaces}
+      />
+
+      {/* Background AI Response Notification Toast */}
+      <NotificationToast
+        notification={sessionNotification}
+        onOpenSession={(sId) => {
+          setActiveSessionId(sId);
+          clearUnreadSession(sId);
+        }}
+        onDismiss={dismissNotification}
       />
     </div>
   );

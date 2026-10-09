@@ -545,6 +545,15 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 data["model"] = getattr(cfg, "default_model", "gemma4:12b")
                 data["provider"] = "ollama" if cfg.active_backend == "ollama" else "openai"
                 data["contextLength"] = getattr(cfg, "context_window", 8192)
+                if not data.get("user_name"):
+                    try:
+                        from locallm.core.global_memory import GlobalMemoryManager
+                        g_mem = GlobalMemoryManager().load()
+                        u_name = g_mem.get("user_profile", {}).get("name")
+                        if u_name:
+                            data["user_name"] = str(u_name).strip()
+                    except Exception:
+                        pass
                 self._send_json_response(200, data)
                 self._log_request_event("GET", path, 200)
             except Exception as exc:
@@ -992,6 +1001,8 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
         inference_client = self.server.get_client_for_request(model=target_model, backend=backend_req)
 
+        session_id_req = str(payload.get("session_id") or payload.get("sessionId") or payload.get("chat_id") or self.headers.get("X-Session-ID") or "").strip()
+
         if stream_requested:
             self._handle_streaming_completion(
                 target_model=target_model,
@@ -1006,6 +1017,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 last_prompt=last_prompt,
                 workspace_name=req_ws,
                 route_info=route_info,
+                session_id=session_id_req,
             )
         else:
             self._handle_non_streaming_completion(
@@ -1020,6 +1032,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 tools_enabled=tools_enabled,
                 last_prompt=last_prompt,
                 workspace_name=req_ws,
+                session_id=session_id_req,
             )
 
     def _prepare_messages_with_context(
@@ -1109,6 +1122,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         tools_enabled: bool = False,
         last_prompt: str = "",
         workspace_name: str = "default",
+        session_id: Optional[str] = None,
     ) -> None:
         """Execute non-streaming chat turn and deliver standard OpenAI completion response."""
         stats: Dict[str, Any] = {}
@@ -1208,6 +1222,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         model=target_model,
                         user_prompt=last_prompt,
                         assistant_response=content,
+                        session_id=session_id,
                     )
                 except Exception:
                     pass
@@ -1229,6 +1244,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         last_prompt: str = "",
         workspace_name: str = "default",
         route_info: Optional[Dict[str, Any]] = None,
+        session_id: Optional[str] = None,
     ) -> None:
         """Stream completion tokens via Server-Sent Events (SSE) with typed reasoning execution events."""
         active_client = client or self.server.client
@@ -1511,6 +1527,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         model=target_model,
                         user_prompt=last_prompt,
                         assistant_response=full_resp,
+                        session_id=session_id,
                     )
                 except Exception:
                     pass

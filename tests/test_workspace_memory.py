@@ -146,13 +146,18 @@ class TestWorkspaceMemoryManager(unittest.TestCase):
         mock_client.chat.assert_not_called()
 
     def test_trivial_turn_filtering(self):
-        """Trivial greetings, short turns, or failed turns should be filtered out."""
-        self.assertTrue(_is_trivial_turn("halo", "Halo! Ada yang bisa saya bantu?"))
-        self.assertTrue(_is_trivial_turn("ok", "Siap."))
-        self.assertTrue(_is_trivial_turn("test", "[Gagal memproses pesan]"))
+        """Empty, whitespace, or system error turns should be filtered out structurally."""
+        self.assertTrue(_is_trivial_turn("", "Halo! Ada yang bisa saya bantu?"))
+        self.assertTrue(_is_trivial_turn("   ", "Siap."))
+        self.assertTrue(_is_trivial_turn("hello", ""))
+        self.assertTrue(_is_trivial_turn("test", "[System Error: backend offline]"))
         self.assertFalse(_is_trivial_turn(
             "Saya baru saja membeli 50 ekor sapi limousin pada tanggal 12 Agustus",
             "Selamat atas pembelian 50 ekor sapi limousin Anda!"
+        ))
+        self.assertFalse(_is_trivial_turn(
+            "We deployed v2.1 to production server today",
+            "Deployment noted."
         ))
 
 

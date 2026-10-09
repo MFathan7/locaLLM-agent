@@ -746,6 +746,15 @@ def load_workspace_context(name: str) -> str:
                     sections.append(f"[Local Project Skills]\n" + "\n\n".join(local_s_entries)[:2500])
                     break
 
+    # 6. Workspace Long-Term Memory & Episodic Facts
+    try:
+        from locallm.core.workspace_memory import WorkspaceMemoryManager
+        ws_mem = WorkspaceMemoryManager(clean_name).build_workspace_memory_context()
+        if ws_mem:
+            sections.append(ws_mem)
+    except Exception:
+        pass
+
     if not sections:
         return ""
 
@@ -757,15 +766,6 @@ def load_workspace_context(name: str) -> str:
 
     now_dt = datetime.now()
     now_str = now_dt.strftime("%A, %Y-%m-%d %H:%M:%S")
-
-    # 6. Workspace Long-Term Memory & Episodic Facts
-    try:
-        from locallm.core.workspace_memory import WorkspaceMemoryManager
-        ws_mem = WorkspaceMemoryManager(clean_name).build_workspace_memory_context()
-        if ws_mem:
-            sections.append(ws_mem)
-    except Exception:
-        pass
 
     header = (
         f"Current Real-World Date & Time: {now_str}\n"
@@ -1761,27 +1761,39 @@ def list_workspace_sessions(
 
 
 def delete_workspace_session(workspace_name: str, session_id: str) -> bool:
-    """Delete a specific session file from a workspace."""
+    """Delete a specific session file from a workspace and purge any memories extracted in that session."""
     clean_id = re.sub(r"[^a-zA-Z0-9_\-]", "_", session_id.strip().replace(".json", ""))
     target = get_workspace_sessions_dir(workspace_name) / f"{clean_id}.json"
+    deleted = False
     if target.is_file():
         try:
             target.unlink()
-            return True
+            deleted = True
         except Exception:
-            return False
-    return False
+            deleted = False
+
+    # Purge any memories that were extracted in this session
+    try:
+        from locallm.core.workspace_memory import WorkspaceMemoryManager
+        mgr = WorkspaceMemoryManager(workspace_name)
+        mgr.delete_session_facts(clean_id)
+    except Exception:
+        pass
+
+    return deleted
 
 
 def clear_all_workspace_sessions(
     workspace_name: str,
     session_type: Optional[str] = None,
 ) -> int:
-    """Delete saved session files from a workspace. Optionally filters by session_type ('chat', 'assistant', 'telegram', etc.). Returns count of deleted files."""
+    """Delete saved session files from a workspace and purge their session-extracted memories."""
     sessions_dir = get_workspace_sessions_dir(workspace_name)
     count = 0
+    deleted_session_ids = []
     for file_path in sessions_dir.glob("*.json"):
         try:
+            cur_sid = file_path.stem
             if session_type:
                 meta = {}
                 try:
@@ -1793,14 +1805,26 @@ def clear_all_workspace_sessions(
                     meta = {}
 
                 session_id = meta.get("session_id", file_path.stem)
+                cur_sid = session_id
                 stype = _classify_session_type(meta, file_path.stem, session_id)
                 if not _is_session_match(stype, file_path.stem, session_id, session_type):
                     continue
 
             file_path.unlink()
             count += 1
+            deleted_session_ids.append(cur_sid)
         except Exception:
             continue
+
+    if deleted_session_ids:
+        try:
+            from locallm.core.workspace_memory import WorkspaceMemoryManager
+            mgr = WorkspaceMemoryManager(workspace_name)
+            for sid in deleted_session_ids:
+                mgr.delete_session_facts(sid)
+        except Exception:
+            pass
+
     return count
 
 

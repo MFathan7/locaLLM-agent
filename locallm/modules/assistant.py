@@ -210,6 +210,28 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
                     memory,
                     metadata={"type": "assistant", "model": active_model},
                 )
+                try:
+                    from locallm.core.auto_memory import extract_workspace_memory_async
+                    last_user = ""
+                    last_asst = ""
+                    for m in reversed(memory.get_messages()):
+                        if m.get("role") == "assistant" and not last_asst:
+                            last_asst = m.get("content", "")
+                        elif m.get("role") == "user" and not last_user:
+                            last_user = m.get("content", "")
+                        if last_user and last_asst:
+                            break
+                    if last_user and last_asst:
+                        extract_workspace_memory_async(
+                            workspace_name=active_ws,
+                            client=client,
+                            model=active_model,
+                            user_prompt=last_user,
+                            assistant_response=last_asst,
+                            session_id=cur_id,
+                        )
+                except Exception:
+                    pass
             except Exception as exc:
                 console.print(f"[danger]Generation error:[/] {exc}")
 

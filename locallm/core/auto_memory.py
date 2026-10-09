@@ -10,24 +10,19 @@ from locallm.core.workspace_memory import WorkspaceMemoryManager
 
 logger = logging.getLogger(__name__)
 
-TRIVIAL_PROMPT_PATTERNS = [
-    r"^(?:halo|hi|hello|hey|tes|test|p|ping|ok|oke|siap|makasih|terima kasih|thanks|thank you)[\s.!?,]*$",
-    r"^(?:bagus|mantap|keren|sip|lanjut|clear|reset)[\s.!?,]*$",
-]
-
-
 def _is_trivial_turn(user_prompt: str, assistant_response: str) -> bool:
-    """Filter out casual conversation, short greetings, and transient queries from extraction."""
-    clean_user = user_prompt.strip().lower()
-    if len(clean_user) < 8:
+    """Filter out empty, whitespace-only, or system error turns prior to LLM extraction.
+
+    Semantic relevance is determined autonomously by the LLM in any language,
+    without brittle hardcoded keyword dictionaries.
+    """
+    clean_user = (user_prompt or "").strip()
+    clean_asst = (assistant_response or "").strip()
+    if not clean_user or not clean_asst:
         return True
 
-    for pat in TRIVIAL_PROMPT_PATTERNS:
-        if re.match(pat, clean_user, re.IGNORECASE):
-            return True
-
-    # If assistant response is an error notice
-    if assistant_response.startswith("[Gagal") or assistant_response.startswith("[Kendala"):
+    # Filter out short bracketed system error notifications
+    if clean_asst.startswith("[") and clean_asst.endswith("]") and len(clean_asst) < 40:
         return True
 
     return False
@@ -39,6 +34,7 @@ def _extract_worker(
     model: str,
     user_prompt: str,
     assistant_response: str,
+    session_id: Optional[str] = None,
 ) -> None:
     """Worker function executed in background thread."""
     try:
@@ -52,12 +48,12 @@ def _extract_worker(
         # Prepare extraction instruction
         extraction_prompt = (
             f"You are an episodic memory extractor for the active workspace '{workspace_name}'.\n"
-            "Analyze the conversation turn below and extract any durable, permanent facts about the user's specific project, "
-            "activities, purchases, dates, quantities, decisions, environment, or configuration.\n\n"
+            "Analyze the conversation turn below in any language and extract any durable, permanent facts about the user's specific project, "
+            "activities, purchases, dates, quantities, decisions, environment, configuration, or preferences.\n\n"
             "Guidelines:\n"
-            "- Ignore casual chat, greetings, general knowledge, or transient debugging questions.\n"
+            "- Ignore casual greetings, reactions, pleasantries, general knowledge, or transient debugging questions.\n"
             "- Extract ONLY durable facts specific to this workspace.\n"
-            "- If NO durable facts are found, reply exactly with: NONE\n"
+            "- If NO durable facts are found, reply strictly with: NONE\n"
             "- If facts ARE found, reply ONLY with a valid JSON object in this exact format:\n"
             '{"facts": {"snake_case_key": "concise factual statement"}}\n\n'
             f"Turn:\nUser: {user_prompt.strip()}\nAssistant: {assistant_response[:600].strip()}\n"
@@ -69,13 +65,21 @@ def _extract_worker(
 
         raw_result = ""
         if hasattr(client, "chat"):
-            resp = client.chat(
-                model=model,
-                messages=messages,
-                temperature=0.1,
-                num_ctx=2048,
-            )
-            raw_result = resp.get("content", "") if isinstance(resp, dict) else str(resp)
+            try:
+                resp = client.chat(
+                    model=model,
+                    messages=messages,
+                    temperature=0.1,
+                    num_ctx=2048,
+                )
+                raw_result = resp.get("content", "") if isinstance(resp, dict) else str(resp)
+            except TypeError:
+                resp = client.chat(
+                    model=model,
+                    messages=messages,
+                    temperature=0.1,
+                )
+                raw_result = resp.get("content", "") if isinstance(resp, dict) else str(resp)
         elif hasattr(client, "chat_turn"):
             resp = client.chat_turn(
                 model=model,
@@ -85,11 +89,30 @@ def _extract_worker(
             )
             raw_result = resp.get("content", "") if isinstance(resp, dict) else str(resp)
 
-        if not raw_result or "none" in raw_result.strip().lower():
+        if not raw_result:
             return
 
-        # Extract JSON from output
-        json_match = re.search(r"\{[\s\S]*\}", raw_result)
+        # 1. Clean reasoning tokens (<think>...</think>) before analyzing response
+        cleaned_text = re.sub(
+            r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>",
+            "",
+            raw_result,
+            flags=re.IGNORECASE,
+        ).strip()
+        cleaned_text = re.sub(
+            r"<(?:think|thought)>[\s\S]*$",
+            "",
+            cleaned_text,
+            flags=re.IGNORECASE,
+        ).strip()
+
+        # 2. Check if clean payload is empty or explicitly NONE
+        clean_lower = cleaned_text.lower().strip()
+        if not clean_lower or clean_lower == "none" or clean_lower.startswith("none"):
+            return
+
+        # 3. Locate JSON block in cleaned text or raw result
+        json_match = re.search(r"\{[\s\S]*\}", cleaned_text) or re.search(r"\{[\s\S]*\}", raw_result)
         if not json_match:
             return
 
@@ -100,15 +123,15 @@ def _extract_worker(
                 if k and v:
                     clean_k = str(k).strip()
                     clean_v = str(v).strip()
-                    # Strip think tags if any
-                    clean_v = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", clean_v).strip()
+                    clean_v = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", clean_v, flags=re.IGNORECASE).strip()
                     if clean_k and clean_v:
-                        mgr.set_fact(clean_k, clean_v)
+                        mgr.set_fact(clean_k, clean_v, session_id=session_id)
                         logger.info(
-                            "Auto-extracted workspace fact for '%s': %s -> %s",
+                            "Auto-extracted workspace fact for '%s': %s -> %s (session: %s)",
                             workspace_name,
                             clean_k,
                             clean_v,
+                            session_id or "untracked",
                         )
     except Exception as exc:
         logger.debug("Auto-memory extraction skipped: %s", exc)
@@ -120,6 +143,7 @@ def extract_workspace_memory_async(
     model: str,
     user_prompt: str,
     assistant_response: str,
+    session_id: Optional[str] = None,
 ) -> None:
     """Dispatch background thread for automatic episodic memory extraction without blocking response."""
     if not workspace_name or not client or not user_prompt:
@@ -127,7 +151,7 @@ def extract_workspace_memory_async(
 
     thread = threading.Thread(
         target=_extract_worker,
-        args=(workspace_name, client, model, user_prompt, assistant_response),
+        args=(workspace_name, client, model, user_prompt, assistant_response, session_id),
         daemon=True,
         name=f"auto-mem-{workspace_name}",
     )

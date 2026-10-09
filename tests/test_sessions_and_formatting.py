@@ -96,6 +96,26 @@ class TestSessionsAndFormatting(unittest.TestCase):
         self.assertFalse(saved_path.exists())
         self.assertEqual(len(list_workspace_sessions(self.test_ws)), 0)
 
+    def test_session_deletion_cascade_cleans_memory(self) -> None:
+        """Verify that deleting a session automatically purges any extracted facts tied to that session."""
+        from locallm.core.workspace_memory import WorkspaceMemoryManager
+        ws_mem = WorkspaceMemoryManager(self.test_ws)
+        ws_mem.set_fact("beli_ayam", "Membeli ayam kalkun", session_id="session_alpha")
+        ws_mem.set_fact("project_goal", "Sistem AI lokal", session_id="session_beta")
+
+        # Confirm both facts are present
+        facts = ws_mem.list_facts()
+        self.assertEqual(facts.get("beli_ayam"), "Membeli ayam kalkun")
+        self.assertEqual(facts.get("project_goal"), "Sistem AI lokal")
+
+        # Delete session_alpha
+        delete_workspace_session(self.test_ws, "session_alpha")
+
+        # Confirm session_alpha fact is purged, while session_beta fact remains
+        updated_facts = ws_mem.list_facts()
+        self.assertNotIn("beli_ayam", updated_facts)
+        self.assertEqual(updated_facts.get("project_goal"), "Sistem AI lokal")
+
     def test_clear_all_workspace_sessions(self) -> None:
         """Verify mass deletion of session files in a workspace."""
         mem = ConversationMemory()

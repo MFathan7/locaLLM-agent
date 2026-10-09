@@ -300,6 +300,7 @@ class OpenAIClient:
         model: str,
         messages: List[Dict[str, Any]],
         temperature: float = 0.7,
+        **kwargs: Any,
     ) -> str:
         """Complete a single turn chat request without streaming."""
         tokens = list(self.chat_stream(model, messages, temperature))

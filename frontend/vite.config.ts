@@ -63,6 +63,17 @@ function resolveUserName(cfg: Record<string, any>, activeWs?: string): string | 
   if (cfg.user_name && typeof cfg.user_name === 'string' && cfg.user_name.trim()) {
     return cfg.user_name.trim();
   }
+  // Check global memory user profile
+  try {
+    const memPath = path.join(os.homedir(), '.locallm', 'global_memory.json');
+    if (fs.existsSync(memPath)) {
+      const gMem = JSON.parse(fs.readFileSync(memPath, 'utf-8'));
+      const profileName = gMem?.user_profile?.name;
+      if (profileName && typeof profileName === 'string' && profileName.trim()) {
+        return profileName.trim();
+      }
+    }
+  } catch {}
   // Check active workspace knowledge files for an author or user profile declaration
   try {
     const wsRoot = getWorkspacesDir();
@@ -962,6 +973,25 @@ function locallmBridgePlugin(): Plugin {
                 if (fs.existsSync(sessionPath)) {
                   fs.unlinkSync(sessionPath);
                 }
+                // Cascade delete associated session facts in memory.json
+                const memPath = path.join(wsDir, targetWs, 'memory.json');
+                if (fs.existsSync(memPath)) {
+                  try {
+                    const memData = JSON.parse(fs.readFileSync(memPath, 'utf-8'));
+                    if (memData && typeof memData.facts === 'object') {
+                      let changed = false;
+                      for (const [k, v] of Object.entries(memData.facts)) {
+                        if (v && typeof v === 'object' && (v as any).session_id === sessionId) {
+                          delete memData.facts[k];
+                          changed = true;
+                        }
+                      }
+                      if (changed) {
+                        fs.writeFileSync(memPath, JSON.stringify(memData, null, 2), 'utf-8');
+                      }
+                    }
+                  } catch {}
+                }
               }
               sendJson(res, 200, { success: true });
             } catch (err: any) {
@@ -1147,10 +1177,12 @@ function locallmBridgePlugin(): Plugin {
             const targetModel = body.model || cfg.default_model || 'gemma4:12b';
             const workspace = body.workspace || cfg.active_workspace || 'default';
 
+            const sessionId = body.session_id || body.sessionId || (body.options && body.options.sessionId) || '';
             const payload = {
               model: targetModel,
               backend: body.backend || body.platform || body.provider || cfg.active_backend || 'ollama',
               provider: body.provider || cfg.active_backend || 'ollama',
+              session_id: sessionId,
               messages: body.messages || [
                 {
                   role: 'user',
@@ -1169,7 +1201,8 @@ function locallmBridgePlugin(): Plugin {
                 'Content-Type': 'application/json',
                 ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
                 'X-Workspace': workspace,
-                'X-Backend': String(payload.backend)
+                'X-Backend': String(payload.backend),
+                'X-Session-ID': sessionId
               },
               body: JSON.stringify(payload)
             });

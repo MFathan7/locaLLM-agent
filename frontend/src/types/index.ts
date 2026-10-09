@@ -73,6 +73,7 @@ export interface SendOptions {
   files: File[];
   webSearch: boolean;
   tools: boolean;
+  sessionId?: string;
 }
 
 export interface WorkspaceSkill {
@@ -150,5 +151,12 @@ export interface LocaLLMConfig {
   maxTokens?: number;
   topP?: number;
   dynamicRouting?: boolean;
+}
+
+export interface SessionNotification {
+  id: string;
+  sessionId: string;
+  sessionTitle: string;
+  message: string;
 }
 

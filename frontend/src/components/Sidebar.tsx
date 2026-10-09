@@ -30,6 +30,8 @@ interface SidebarProps {
   onOpenSettings: () => void;
   onCollapse: () => void;
   onOpenSearch?: () => void;
+  typingSessionIds?: string[];
+  unreadSessionIds?: string[];
 }
 
 // A slightly under-damped spring: the droplet overshoots and settles like iOS liquid glass.
@@ -49,7 +51,9 @@ export function Sidebar({
   onDeleteSession,
   onOpenSettings,
   onCollapse,
-  onOpenSearch
+  onOpenSearch,
+  typingSessionIds,
+  unreadSessionIds
 }: SidebarProps) {
   const [isAddingWorkspace, setIsAddingWorkspace] = useState(false);
   const [newWsName, setNewWsName] = useState('');
@@ -327,6 +331,8 @@ export function Sidebar({
             ) : (
               validSortedSessions.map((session) => {
                 const isActive = activeSessionId === session.id;
+                const isTyping = typingSessionIds?.includes(session.id);
+                const isUnread = unreadSessionIds?.includes(session.id);
                 return (
                   <div
                     key={session.id}
@@ -345,7 +351,21 @@ export function Sidebar({
                         className="absolute inset-0 rounded-2xl liquid-pill"
                       />
                     )}
-                    <span className="relative truncate flex-1 pr-2">{session.title}</span>
+                    <div className="relative flex items-center gap-2 min-w-0 flex-1 pr-1">
+                      {isTyping && (
+                        <span
+                          className="w-2 h-2 rounded-full bg-blue-500 animate-ping shrink-0"
+                          title="AI is responding..."
+                        />
+                      )}
+                      {!isTyping && isUnread && (
+                        <span
+                          className="w-2 h-2 rounded-full bg-emerald-500 shrink-0 shadow-[0_0_8px_rgba(16,185,129,0.8)]"
+                          title="New response ready"
+                        />
+                      )}
+                      <span className="truncate flex-1">{session.title}</span>
+                    </div>
                     <button
                       type="button"
                       onClick={(e) => { e.stopPropagation(); onDeleteSession(session.id, session.title); }}

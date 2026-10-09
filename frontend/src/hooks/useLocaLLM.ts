@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import type { LocaLLMConfig, ChatSession, Message, Workspace, WorkspaceSkill, ModelInfo, SendOptions, AttachedFile, ExecutionState } from '../types';
+import type { LocaLLMConfig, ChatSession, Message, Workspace, WorkspaceSkill, ModelInfo, SendOptions, AttachedFile, ExecutionState, SessionNotification } from '../types';
 import { api } from '../services/api';
 import { extractSourcesFromText, generateSmartTitleFallback, sanitizeChatTitle } from '../utils/messageProcessor';
 
@@ -46,11 +46,47 @@ export function useLocaLLM() {
   const [sessions, setSessions] = useState<ChatSession[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string | null>(() => initialParams.session);
   const [isConfigSyncing, setIsConfigSyncing] = useState(false);
-  const [isTyping, setIsTyping] = useState(false);
+  const [typingSessionIds, setTypingSessionIds] = useState<string[]>([]);
+  const [unreadSessionIds, setUnreadSessionIds] = useState<string[]>([]);
+  const [sessionNotification, setSessionNotification] = useState<SessionNotification | null>(null);
+  const abortControllersRef = useRef<Map<string, AbortController>>(new Map());
+  const activeSessionIdRef = useRef<string | null>(activeSessionId);
   const [models, setModels] = useState<ModelInfo[]>([]);
   const sessionsCacheRef = useRef<Record<string, ChatSession[]>>({});
   const isInitialHydratedRef = useRef(false);
   const initialRequestedSessionIdRef = useRef<string | null>(initialParams.session);
+
+  useEffect(() => {
+    activeSessionIdRef.current = activeSessionId;
+  }, [activeSessionId]);
+
+  const isTyping = Boolean(activeSessionId && typingSessionIds.includes(activeSessionId));
+
+  const clearUnreadSession = useCallback((sessionId: string) => {
+    setUnreadSessionIds(prev => prev.filter(id => id !== sessionId));
+    setSessionNotification(curr => curr?.sessionId === sessionId ? null : curr);
+  }, []);
+
+  const dismissNotification = useCallback(() => {
+    setSessionNotification(null);
+  }, []);
+
+  const stopGeneration = useCallback((targetSessionId?: string) => {
+    const sId = targetSessionId || activeSessionIdRef.current;
+    if (!sId) return;
+    const controller = abortControllersRef.current.get(sId);
+    if (controller) {
+      controller.abort();
+      abortControllersRef.current.delete(sId);
+    }
+    setTypingSessionIds(prev => prev.filter(id => id !== sId));
+  }, []);
+
+  useEffect(() => {
+    if (activeSessionId) {
+      clearUnreadSession(activeSessionId);
+    }
+  }, [activeSessionId, clearUnreadSession]);
 
   // Sync active session and workspace with URL whenever activeSessionId or activeWorkspace changes
   useEffect(() => {
@@ -474,7 +510,14 @@ export function useLocaLLM() {
     };
 
     setSessions(prev => prev.map(s => s.id === currentSessionId ? sessionToUpdate : s));
-    setIsTyping(true);
+
+    const abortController = new AbortController();
+    abortControllersRef.current.set(currentSessionId, abortController);
+    setTypingSessionIds(prev => Array.from(new Set([...prev, currentSessionId])));
+
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
 
     let assistantContent = '';
     const assistantMessageId = (Date.now() + 1).toString();
@@ -490,8 +533,8 @@ export function useLocaLLM() {
             role: 'assistant',
             content: '',
             timestamp: Date.now(),
-            executionState: 'routing',
-            statusLabel: ''
+            executionState: 'thinking',
+            statusLabel: 'Thinking...'
           }
         ]
       };
@@ -513,7 +556,7 @@ export function useLocaLLM() {
       const res = await api.sendMessage(
         promptForAI,
         config,
-        options,
+        { ...options, sessionId: currentSessionId },
         (chunk) => {
           assistantContent += chunk;
           setSessions(prev => prev.map(s => {
@@ -545,8 +588,8 @@ export function useLocaLLM() {
 
             switch (evt.event) {
               case 'routing':
-                nextState = 'routing';
-                nextLabel = '';
+                nextState = 'thinking';
+                nextLabel = 'Thinking...';
                 break;
               case 'thinking_start':
                 nextState = 'thinking';
@@ -596,7 +639,8 @@ export function useLocaLLM() {
             };
             return { ...s, messages: msgs };
           }));
-        }
+        },
+        abortController.signal
       );
 
       if (!assistantContent.trim() && res && res.trim()) {
@@ -609,18 +653,47 @@ export function useLocaLLM() {
           return { ...s, messages: msgs };
         }));
       }
+
+      // Check if user navigated to a different session while generating
+      if (activeSessionIdRef.current !== currentSessionId) {
+        setUnreadSessionIds(prev => Array.from(new Set([...prev, currentSessionId])));
+        const notifTitle = sessionToUpdate.title || title || 'Chat';
+        setSessionNotification({
+          id: Date.now().toString(),
+          sessionId: currentSessionId,
+          sessionTitle: notifTitle,
+          message: `AI finished responding in "${notifTitle}"`
+        });
+        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+          try {
+            const notif = new Notification('LocaLLM', {
+              body: `AI finished responding in "${notifTitle}"`,
+              icon: '/favicon.ico'
+            });
+            notif.onclick = () => {
+              window.focus();
+              setActiveSessionId(currentSessionId);
+            };
+          } catch {}
+        }
+      }
     } catch (err: any) {
-      const errMsg = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
-      assistantContent = errMsg;
-      setSessions(prev => prev.map(s => {
-        if (s.id !== currentSessionId) return s;
-        const msgs = [...s.messages];
-        const idx = msgs.findIndex(m => m.id === assistantMessageId);
-        if (idx !== -1) msgs[idx] = { ...msgs[idx], content: errMsg, executionState: 'error', statusLabel: errMsg };
-        return { ...s, messages: msgs };
-      }));
+      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+        // User aborted/stopped generation: preserve partial content cleanly
+      } else {
+        const errMsg = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+        assistantContent = errMsg;
+        setSessions(prev => prev.map(s => {
+          if (s.id !== currentSessionId) return s;
+          const msgs = [...s.messages];
+          const idx = msgs.findIndex(m => m.id === assistantMessageId);
+          if (idx !== -1) msgs[idx] = { ...msgs[idx], content: errMsg, executionState: 'error', statusLabel: errMsg };
+          return { ...s, messages: msgs };
+        }));
+      }
     } finally {
-      setIsTyping(false);
+      abortControllersRef.current.delete(currentSessionId);
+      setTypingSessionIds(prev => prev.filter(id => id !== currentSessionId));
     }
 
     if (!assistantContent.trim()) {
@@ -697,7 +770,9 @@ export function useLocaLLM() {
 
     if (!userPrompt) return;
 
-    setIsTyping(true);
+    const abortController = new AbortController();
+    abortControllersRef.current.set(currentSessionId, abortController);
+    setTypingSessionIds(prev => Array.from(new Set([...prev, currentSessionId])));
 
     let assistantContent = '';
     setSessions(prev => prev.map(s => {
@@ -705,7 +780,7 @@ export function useLocaLLM() {
       const msgs = [...s.messages];
       const idx = msgs.findIndex(m => m.id === assistantMessageId);
       if (idx !== -1) {
-        msgs[idx] = { ...msgs[idx], content: '', sources: undefined };
+        msgs[idx] = { ...msgs[idx], content: '', sources: undefined, executionState: 'thinking', statusLabel: 'Thinking...' };
       }
       return { ...s, messages: msgs };
     }));
@@ -746,8 +821,8 @@ export function useLocaLLM() {
 
             switch (evt.event) {
               case 'routing':
-                nextState = 'routing';
-                nextLabel = '';
+                nextState = 'thinking';
+                nextLabel = 'Thinking...';
                 break;
               case 'thinking_start':
                 nextState = 'thinking';
@@ -797,16 +872,33 @@ export function useLocaLLM() {
             };
             return { ...s, messages: msgs };
           }));
-        }
+        },
+        abortController.signal
       );
 
       if (!assistantContent.trim() && res && res.trim()) {
         assistantContent = res.trim();
       }
+
+      if (activeSessionIdRef.current !== currentSessionId) {
+        setUnreadSessionIds(prev => Array.from(new Set([...prev, currentSessionId])));
+        const notifTitle = session.title || 'Chat';
+        setSessionNotification({
+          id: Date.now().toString(),
+          sessionId: currentSessionId,
+          sessionTitle: notifTitle,
+          message: `AI finished responding in "${notifTitle}"`
+        });
+      }
     } catch (err: any) {
-      assistantContent = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+      if (err?.name === 'AbortError' || abortController.signal.aborted) {
+        // User stopped generation
+      } else {
+        assistantContent = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+      }
     } finally {
-      setIsTyping(false);
+      abortControllersRef.current.delete(currentSessionId);
+      setTypingSessionIds(prev => prev.filter(id => id !== currentSessionId));
     }
 
     if (!assistantContent.trim()) {
@@ -866,6 +958,12 @@ export function useLocaLLM() {
     sendMessage,
     regenerateMessage,
     isTyping,
+    typingSessionIds,
+    unreadSessionIds,
+    sessionNotification,
+    clearUnreadSession,
+    dismissNotification,
+    stopGeneration,
     refreshModels,
     refreshWorkspaces
   };

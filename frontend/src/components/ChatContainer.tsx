@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { Message, SourceItem, AttachedFile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Copy, Check, ArrowDown, FileDown, Compass, Sparkles, RotateCcw, FileText, Image as ImageIcon } from 'lucide-react';
+import { Copy, Check, ArrowDown, FileDown, Compass, RotateCcw, FileText, Image as ImageIcon } from 'lucide-react';
 import clsx from 'clsx';
 import { MarkdownRenderer } from './MarkdownRenderer';
 import { cleanAssistantContent, extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking } from '../utils/messageProcessor';
 import { exportResponseToDoc } from '../utils/docExport';
 
 interface ChatContainerProps {
+  sessionId?: string;
   messages: Message[];
   isTyping: boolean;
   selectedSourceMessageId?: string | null;
@@ -17,6 +18,7 @@ interface ChatContainerProps {
 }
 
 export function ChatContainer({
+  sessionId,
   messages,
   isTyping,
   selectedSourceMessageId,
@@ -50,6 +52,12 @@ export function ChatContainer({
     const el = containerRef.current;
     if (!el) return;
 
+    // Never show the scroll button if content does not overflow the visible height
+    if (el.scrollHeight <= el.clientHeight + 40) {
+      if (showScrollBottom) setShowScrollBottom(false);
+      return;
+    }
+
     // Distance in pixels from the current scroll position to the bottom of the container
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     // Show button when user scrolls up more than 140px; hide when within 70px of the bottom
@@ -60,10 +68,26 @@ export function ChatContainer({
     }
   };
 
+  // Reset scroll state immediately whenever switching sessions
   useEffect(() => {
-    // Only auto-scroll on new messages if the user is not actively scrolled up reading history
+    setShowScrollBottom(false);
+    isAutoScrollingRef.current = false;
+    const el = containerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
+  }, [sessionId]);
+
+  useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
+
+    // If content does not overflow the container, ensure the button is hidden
+    if (el.scrollHeight <= el.clientHeight + 40) {
+      setShowScrollBottom(false);
+      return;
+    }
+
     const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight;
     if (distanceFromBottom < 180 || isTyping) {
       scrollToBottom(true);
@@ -93,13 +117,14 @@ export function ChatContainer({
             ))}
             {isTyping && (!visibleMessages.length || visibleMessages[visibleMessages.length - 1].role === 'user') && (
               <motion.div
-                initial={{ opacity: 0, y: 6 }}
+                initial={{ opacity: 0, y: 4 }}
                 animate={{ opacity: 1, y: 0 }}
-                className="flex items-center gap-1.5 py-2 px-1"
+                className="inline-flex items-center gap-3 py-2 text-slate-800 dark:text-slate-100 select-none"
               >
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '0ms' }} />
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '150ms' }} />
-                <span className="w-2 h-2 rounded-full bg-blue-500 animate-bounce" style={{ animationDelay: '300ms' }} />
+                <ThinkingDots />
+                <span className="text-[14px] sm:text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100">
+                  Thinking...
+                </span>
               </motion.div>
             )}
           </AnimatePresence>
@@ -146,6 +171,18 @@ function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function ThinkingDots() {
+  return (
+    <div className="thinking-spinner" aria-hidden="true">
+      <div className="spinner-orbit">
+        <span className="thinking-dot thinking-dot-1 bg-blue-600 dark:bg-blue-400" />
+        <span className="thinking-dot thinking-dot-2 bg-blue-600 dark:bg-blue-400" />
+        <span className="thinking-dot thinking-dot-3 bg-blue-600 dark:bg-blue-400" />
+      </div>
+    </div>
+  );
 }
 
 const ChatBubble = ({
@@ -199,13 +236,10 @@ const ChatBubble = ({
     if (cleanedContent && cleanedContent.trim().length > 0) return null;
     if (!isTyping) return null;
 
-    if (message.statusLabel) {
+    if (message.statusLabel && message.statusLabel.trim().length > 0) {
       return message.statusLabel;
     }
 
-    if (message.executionState === 'thinking') {
-      return 'Thinking...';
-    }
     if (message.executionState === 'tool') {
       return 'Running tool...';
     }
@@ -218,8 +252,8 @@ const ChatBubble = ({
       return extractCurrentThinkingStep(message.content);
     }
 
-    // Default neutral status while waiting for stream start (non-reasoning models)
-    return 'Generating...';
+    // Default neutral status while waiting for stream start or thinking
+    return 'Thinking...';
   }, [isUser, isTyping, cleanedContent, message.content, message.statusLabel, message.executionState]);
 
   // Calculate sources attached or extract from content
@@ -322,10 +356,21 @@ const ChatBubble = ({
         /* AI Assistant response: rich Markdown rendering without background container */
         <div className="relative group w-full py-1 text-slate-800 dark:text-slate-100">
           {activeStatusLabel ? (
-            /* Modern clean animated execution status badge */
-            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-blue-500/10 text-blue-600 dark:text-blue-400 text-xs font-semibold animate-pulse border border-blue-500/20">
-              <Sparkles className="w-3.5 h-3.5 animate-spin text-blue-500 shrink-0" />
-              <span>{activeStatusLabel}</span>
+            /* Plain & bold thinking state: wave-to-triangle spinning dots + fade status text */
+            <div className="inline-flex items-center gap-3 py-2 text-slate-800 dark:text-slate-100 select-none">
+              <ThinkingDots />
+              <AnimatePresence mode="wait">
+                <motion.span
+                  key={activeStatusLabel}
+                  initial={{ opacity: 0, y: 3 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  exit={{ opacity: 0, y: -3 }}
+                  transition={{ duration: 0.22, ease: "easeInOut" }}
+                  className="text-[14px] sm:text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100"
+                >
+                  {activeStatusLabel}
+                </motion.span>
+              </AnimatePresence>
             </div>
           ) : !cleanedContent ? (
             /* Friendly fallback if response is empty */

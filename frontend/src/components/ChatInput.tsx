@@ -1,5 +1,6 @@
 import {
   ArrowUp,
+  Square,
   X,
   Paperclip,
   Globe,
@@ -15,7 +16,9 @@ import { ModelPicker } from './ModelPicker';
 
 interface ChatInputProps {
   onSend: (message: string, options: SendOptions) => void;
+  onStop?: () => void;
   disabled?: boolean;
+  isTyping?: boolean;
   models: ModelInfo[];
   currentModelId: string;
   onChangeModel: (model: ModelInfo) => void;
@@ -93,7 +96,9 @@ function extractFilesFromDataTransfer(dataTransfer: DataTransfer | null): File[]
 
 export function ChatInput({
   onSend,
+  onStop,
   disabled,
+  isTyping,
   models,
   currentModelId,
   onChangeModel,
@@ -202,7 +207,7 @@ export function ChatInput({
     }
   };
 
-  const canSend = (input.trim().length > 0 || files.length > 0) && !disabled;
+  const canSend = (input.trim().length > 0 || files.length > 0) && !disabled && !isTyping;
 
   const handleSend = () => {
     if (!canSend) return;
@@ -214,7 +219,9 @@ export function ChatInput({
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
-      handleSend();
+      if (!isTyping) {
+        handleSend();
+      }
     }
   };
 
@@ -364,18 +371,35 @@ export function ChatInput({
               activePlatform={activePlatform}
             />
 
-            <motion.button
-              type="button"
-              onClick={handleSend}
-              disabled={!canSend}
-              whileTap={{ scale: 0.88 }}
-              animate={{ opacity: canSend ? 1 : 0.4 }}
-              transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
-              aria-label="Send message"
-            >
-              <ArrowUp className="w-4 h-4" />
-            </motion.button>
+            {isTyping ? (
+              <motion.button
+                type="button"
+                onClick={onStop}
+                whileTap={{ scale: 0.88 }}
+                initial={{ scale: 0.8, opacity: 0 }}
+                animate={{ scale: 1, opacity: 1 }}
+                exit={{ scale: 0.8, opacity: 0 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer transition-colors"
+                aria-label="Stop generation"
+                title="Stop generation"
+              >
+                <Square className="w-3.5 h-3.5 fill-current" />
+              </motion.button>
+            ) : (
+              <motion.button
+                type="button"
+                onClick={handleSend}
+                disabled={!canSend}
+                whileTap={{ scale: 0.88 }}
+                animate={{ opacity: canSend ? 1 : 0.4 }}
+                transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
+                aria-label="Send message"
+              >
+                <ArrowUp className="w-4 h-4" />
+              </motion.button>
+            )}
           </div>
         </div>
       </div>

@@ -308,9 +308,11 @@ class OllamaClient:
         model: str,
         messages: List[Dict[str, str]],
         temperature: float = 0.7,
+        num_ctx: Optional[int] = None,
+        **kwargs: Any,
     ) -> str:
         """Complete a single turn chat request without streaming."""
-        tokens = list(self.chat_stream(model, messages, temperature))
+        tokens = list(self.chat_stream(model, messages, temperature, num_ctx=num_ctx))
         return "".join(tokens)
 
     def pull_model_stream(self, model_name: str) -> Generator[Dict[str, Any], None, None]:
