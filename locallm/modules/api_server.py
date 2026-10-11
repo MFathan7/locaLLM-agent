@@ -661,7 +661,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         "permission": [],
                         "root": "locallm-agent",
                         "parent": None,
-                        "capabilities": {"files": True, "webSearch": True, "tools": True},
+                        "capabilities": {"files": True, "webSearch": True, "tools": True, "thinking": False},
                     },
                     {
                         "id": "auto",
@@ -671,13 +671,28 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                         "permission": [],
                         "root": "auto",
                         "parent": None,
-                        "capabilities": {"files": True, "webSearch": True, "tools": True},
+                        "capabilities": {"files": True, "webSearch": True, "tools": True, "thinking": False},
                     },
                 ]
 
                 for m in raw_models:
                     m_id = m.get("name") or m.get("id")
                     if m_id:
+                        caps_list = m.get("capabilities", [])
+                        is_thinking = False
+                        if isinstance(caps_list, list) and "thinking" in caps_list:
+                            is_thinking = True
+                        elif hasattr(effective_client, "get_model_features"):
+                            try:
+                                feats = effective_client.get_model_features(m_id)
+                                is_thinking = "Reasoning" in feats or "Thinking" in feats
+                            except Exception:
+                                pass
+                        if not is_thinking:
+                            lower_id = m_id.lower()
+                            if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1")):
+                                is_thinking = True
+
                         model_entries.append({
                             "id": m_id,
                             "object": "model",
@@ -686,7 +701,12 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             "permission": [],
                             "root": m_id,
                             "parent": None,
-                            "capabilities": {"files": True, "webSearch": True, "tools": True},
+                            "capabilities": {
+                                "files": True,
+                                "webSearch": True,
+                                "tools": True,
+                                "thinking": is_thinking,
+                            },
                         })
 
                 self._send_json_response(200, {
@@ -696,6 +716,50 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._log_request_event("GET", path, 200, detail=f"{len(model_entries)} models")
             except Exception as exc:
                 self._send_openai_error(500, f"Failed to retrieve models: {exc}", error_type="api_error")
+                self._log_request_event("GET", path, 500, detail=str(exc))
+            return
+
+        if path in ("/api/models/check-thinking", "/v1/models/check-thinking"):
+            try:
+                self.server.reload_config_if_needed()
+                from urllib.parse import parse_qs, urlparse
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                model_name = params.get("model", [""])[0] or self.headers.get("X-Model", "")
+                target_backend = params.get("backend", [""])[0] or self.headers.get("X-Backend", "")
+                effective_client = self.server.get_client_for_request(backend=target_backend)
+
+                is_thinking = False
+                features: List[str] = []
+                capabilities_list: List[str] = []
+
+                if hasattr(effective_client, "get_model_info") and model_name:
+                    info = effective_client.get_model_info(model_name)
+                    raw_caps = info.get("capabilities", [])
+                    if isinstance(raw_caps, list):
+                        capabilities_list = raw_caps
+                        if "thinking" in capabilities_list:
+                            is_thinking = True
+
+                if not is_thinking and hasattr(effective_client, "get_model_features") and model_name:
+                    features = effective_client.get_model_features(model_name)
+                    if "Reasoning" in features or "Thinking" in features:
+                        is_thinking = True
+
+                if not is_thinking and model_name:
+                    lower_id = model_name.lower()
+                    if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1")):
+                        is_thinking = True
+
+                self._send_json_response(200, {
+                    "model": model_name,
+                    "thinking": is_thinking,
+                    "capabilities": capabilities_list,
+                    "features": features,
+                })
+                self._log_request_event("GET", path, 200, detail=f"model={model_name} thinking={is_thinking}")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to check model thinking capability: {exc}", error_type="api_error")
                 self._log_request_event("GET", path, 500, detail=str(exc))
             return
 
@@ -921,6 +985,9 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         options = payload.get("options", {})
         web_search_enabled = bool(options.get("webSearch", False))
         tools_enabled = bool(options.get("tools", False))
+        thinking_option = options.get("thinking")
+        if thinking_option is None:
+            thinking_option = payload.get("think")
 
         # Extract last user prompt
         last_prompt = ""
@@ -1419,12 +1486,21 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 _send_delta(text)
 
             if hasattr(active_client, "chat_stream"):
-                for raw_token in active_client.chat_stream(
-                    model=target_model,
-                    messages=messages,
-                    temperature=temperature,
-                    num_ctx=context_window,
-                ):
+                import inspect
+                chat_kwargs: Dict[str, Any] = {
+                    "model": target_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "num_ctx": context_window,
+                }
+                try:
+                    sig = inspect.signature(active_client.chat_stream)
+                    if "think" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        if thinking_option is not None:
+                            chat_kwargs["think"] = bool(thinking_option)
+                except Exception:
+                    pass
+                for raw_token in active_client.chat_stream(**chat_kwargs):
                     if not raw_token:
                         continue
                     stream_buf += raw_token

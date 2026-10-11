@@ -46,6 +46,7 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
             menu_prompt = "Main Menu:"
             menu_choices = [
                 "Assistant",
+                "Autonomous Agent",
                 "Workspaces",
                 "Integrations",
                 "Model Manager",
@@ -72,6 +73,12 @@ def start_main_menu(config: LocaLLMConfig, client: Optional[Any] = None) -> None
 
         if choice == "Assistant":
             run_assistant(config, client)
+        elif choice == "Autonomous Agent":
+            from locallm.modules.agent import run_agent_interactive
+            console.clear()
+            render_banner(config, client)
+            run_agent_interactive(config, client)
+            questionary.text("Press Enter to return to menu...", style=QUESTIONARY_STYLE).ask()
         elif choice == "Workspaces":
             run_workspace_menu(config)
         elif choice == "Integrations":

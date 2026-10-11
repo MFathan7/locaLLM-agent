@@ -198,12 +198,15 @@ class OllamaClient:
         temperature: float = 0.7,
         num_ctx: Optional[int] = None,
         stats_out: Optional[Dict[str, Any]] = None,
+        think: Optional[bool] = None,
     ) -> Dict[str, Any]:
-        """Single chat turn supporting native tool calls and telemetry."""
+        """Single chat turn supporting native tool calls, telemetry, and optional thinking control."""
         url = f"{self.base_url}/api/chat"
         opts: Dict[str, Any] = {"temperature": temperature}
         if num_ctx:
             opts["num_ctx"] = num_ctx
+        if think is not None:
+            opts["think"] = think
 
         payload: Dict[str, Any] = {
             "model": model,
@@ -211,6 +214,8 @@ class OllamaClient:
             "stream": False,
             "options": opts,
         }
+        if think is not None:
+            payload["think"] = think
         if tools:
             payload["tools"] = tools
 
@@ -249,19 +254,24 @@ class OllamaClient:
         temperature: float = 0.7,
         num_ctx: Optional[int] = None,
         stats_out: Optional[Dict[str, Any]] = None,
+        think: Optional[bool] = None,
     ) -> Generator[str, None, None]:
-        """Stream chat tokens from Ollama with optional telemetry collection."""
+        """Stream chat tokens from Ollama with optional telemetry collection and thinking control."""
         url = f"{self.base_url}/api/chat"
         opts: Dict[str, Any] = {"temperature": temperature}
         if num_ctx:
             opts["num_ctx"] = num_ctx
+        if think is not None:
+            opts["think"] = think
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": True,
             "options": opts,
         }
+        if think is not None:
+            payload["think"] = think
 
         in_thinking = False
         with httpx.Client(timeout=None) as client:

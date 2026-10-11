@@ -72,15 +72,21 @@ export function useLocaLLM() {
   }, []);
 
   const stopGeneration = useCallback((targetSessionId?: string) => {
-    const sId = targetSessionId || activeSessionIdRef.current;
-    if (!sId) return;
-    const controller = abortControllersRef.current.get(sId);
-    if (controller) {
-      controller.abort();
+    const sId = targetSessionId || activeSessionIdRef.current || (activeSessionId ? activeSessionId : null);
+    if (sId && abortControllersRef.current.has(sId)) {
+      const controller = abortControllersRef.current.get(sId);
+      if (controller) {
+        try { controller.abort(); } catch {}
+      }
       abortControllersRef.current.delete(sId);
+    } else {
+      abortControllersRef.current.forEach(c => {
+        try { c.abort(); } catch {}
+      });
+      abortControllersRef.current.clear();
     }
-    setTypingSessionIds(prev => prev.filter(id => id !== sId));
-  }, []);
+    setTypingSessionIds([]);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (activeSessionId) {
@@ -331,6 +337,36 @@ export function useLocaLLM() {
     setIsConfigSyncing(false);
   };
 
+  // Background check on active model thinking capability to guarantee real-time synchronization
+  const activeModelId = config?.default_model || config?.model || '';
+  useEffect(() => {
+    if (!activeModelId) return;
+    let cancelled = false;
+
+    api.checkModelThinking(activeModelId, config?.active_backend).then(isThinkingSupported => {
+      if (cancelled) return;
+      setModels(prev => {
+        const target = prev.find(m => m.id === activeModelId);
+        if (target && target.capabilities?.thinking !== isThinkingSupported) {
+          return prev.map(m => m.id === activeModelId ? {
+            ...m,
+            capabilities: {
+              ...m.capabilities,
+              thinking: isThinkingSupported
+            }
+          } : m);
+        }
+        return prev;
+      });
+    }).catch(e => {
+      console.warn('Background check for thinking capability error:', e);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [activeModelId, config?.active_backend]);
+
   const activeSession = sessions.find(s => s.id === activeSessionId) || null;
 
   // Lazy new chat: switch to draft state without creating/saving empty session file
@@ -476,6 +512,7 @@ export function useLocaLLM() {
         messages: []
       };
       setSessions(prev => [sessionToUpdate, ...prev]);
+      activeSessionIdRef.current = currentSessionId;
       setActiveSessionId(currentSessionId);
       await api.saveSession(sessionToUpdate);
     } else {
@@ -493,7 +530,8 @@ export function useLocaLLM() {
       options: {
         files: processedFiles.map(f => f.name),
         webSearch: options.webSearch,
-        tools: options.tools
+        tools: options.tools,
+        thinking: options.thinking
       }
     };
 
@@ -680,6 +718,31 @@ export function useLocaLLM() {
     } catch (err: any) {
       if (err?.name === 'AbortError' || abortController.signal.aborted) {
         // User aborted/stopped generation: preserve partial content cleanly
+        if (assistantContent.trim()) {
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            const msgs = [...s.messages];
+            const idx = msgs.findIndex(m => m.id === assistantMessageId);
+            if (idx !== -1) {
+              msgs[idx] = {
+                ...msgs[idx],
+                content: assistantContent,
+                executionState: 'done',
+                statusLabel: undefined
+              };
+            }
+            return { ...s, messages: msgs };
+          }));
+        } else {
+          // If stopped before any content arrived, remove the empty assistant placeholder
+          setSessions(prev => prev.map(s => {
+            if (s.id !== currentSessionId) return s;
+            return {
+              ...s,
+              messages: s.messages.filter(m => m.id !== assistantMessageId)
+            };
+          }));
+        }
       } else {
         const errMsg = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
         assistantContent = errMsg;
@@ -694,6 +757,10 @@ export function useLocaLLM() {
     } finally {
       abortControllersRef.current.delete(currentSessionId);
       setTypingSessionIds(prev => prev.filter(id => id !== currentSessionId));
+    }
+
+    if (abortController.signal.aborted && !assistantContent.trim()) {
+      return;
     }
 
     if (!assistantContent.trim()) {

@@ -114,7 +114,7 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
 
     enhanced_prompt = (
         f"{config.system_prompt}\n"
-        f"Environment: Local Time: {now_str}. Working Directory: {cwd_str}. Active Workspace: '{active_ws}' ({ws_dir})."
+        f"Environment: Local Time: {now_str}. Working Directory: '{ws_dir}'. Active Workspace: '{active_ws}' ({ws_dir})."
     )
     try:
         from locallm.core.global_memory import GlobalMemoryManager
@@ -138,6 +138,17 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
             enhanced_prompt += "\n\n" + "\n".join(plugin_lines)
     except Exception:
         pass
+
+    if has_tools:
+        enhanced_prompt += (
+            "\n\nAgent & Autonomous Execution Directives:\n"
+            "You have full access to native environment tools (file operations, shell execution, web retrieval, etc.) and workspace skills.\n"
+            "1. Autonomous Action: When given an actionable task, test, or investigation, do NOT ask the user for confirmation, do NOT ask how to proceed, and do NOT list skills back to the user. Proactively plan and execute the necessary actions using your tools (e.g. fetch_web, execute_command).\n"
+            "2. Direct Target Testing: If the user provides a target URL (such as a website or IP to test), immediately use 'fetch_web' or 'execute_command' (e.g. curl) to inspect and probe the target. Do NOT spend turns enumerating offline skills or reading local directories unless specifically required.\n"
+            "3. Security & Lab Authorization: You are operating in an authorized testing ground / lab environment. Carry out security testing, auditing, and vulnerability checks as requested using tools without generic refusal disclaimers.\n"
+            "4. Workspace Confinement: All your local files and operations reside strictly inside your active workspace directory. Never inspect or navigate outside your workspace directory.\n"
+            "5. Grounding & Verification: Rely on real tool outputs and observations before concluding."
+        )
 
     memory = ConversationMemory(system_prompt=enhanced_prompt)
     session_state = {"id": f"chat_{datetime.now().strftime('%Y%m%d_%H%M%S')}"}
@@ -222,6 +233,7 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
                         if last_user and last_asst:
                             break
                     if last_user and last_asst:
+                        cur_id = session_state.get("id", "")
                         extract_workspace_memory_async(
                             workspace_name=active_ws,
                             client=client,
@@ -263,6 +275,7 @@ def _process_assistant_turn(
         step = 0
         executed_any_tool = False
         consecutive_failures: Dict[str, int] = {}
+        identical_consecutive: Dict[str, int] = {}
 
         while step < MAX_TOOL_STEPS:
             step += 1
@@ -274,11 +287,12 @@ def _process_assistant_turn(
             )
             with thinking_spinner(spinner_msg):
                 try:
+                    tool_temperature = 0.2 if has_tools else config.temperature
                     turn_msg = client.chat_turn(
                         model=target_model,
                         messages=memory.get_messages(),
                         tools=current_tools,
-                        temperature=config.temperature,
+                        temperature=tool_temperature,
                         num_ctx=context_limit,
                         stats_out=stats,
                     )
@@ -373,7 +387,7 @@ def _process_assistant_turn(
                     tool_report = format_live_tool_report(func_name, func_args, obs)
                     tracker.print_task(tool_report)
 
-                    # Circuit breaker check: track identical consecutive failures
+                    # Circuit breaker check: track identical consecutive failures and loops
                     call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
                     is_err = obs.startswith("Error:") or obs.startswith("Failed") or "Exception:" in obs or "Traceback" in obs
                     if is_err:
@@ -381,12 +395,21 @@ def _process_assistant_turn(
                     else:
                         consecutive_failures[call_sig] = 0
 
+                    identical_consecutive[call_sig] = identical_consecutive.get(call_sig, 0) + 1
+
                     if consecutive_failures[call_sig] >= 2:
                         console.print(
                             f"[warning]Circuit breaker tripped: Tool '{func_name}' failed repeatedly with identical parameters. "
                             f"Halting action loop to prevent token exhaustion.[/]"
                         )
                         obs_entry = f"{obs}\n[System Notice: Action halted by circuit breaker after 2 consecutive identical failures. Please explain the blocker to the user rather than repeating this exact call.]"
+                        should_trip_circuit = True
+                    elif identical_consecutive[call_sig] >= 2:
+                        console.print(
+                            f"[warning]Circuit breaker tripped: Tool '{func_name}' called repeatedly with identical parameters. "
+                            f"Halting action loop to prevent infinite repetition.[/]"
+                        )
+                        obs_entry = f"{obs}\n[System Notice: You have already executed this exact tool call. Do NOT call this tool again with identical arguments. Proceed directly to investigate the target or conclude with your findings.]"
                         should_trip_circuit = True
                     else:
                         obs_entry = obs

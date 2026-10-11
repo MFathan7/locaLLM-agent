@@ -11,7 +11,7 @@ import { SearchOverlay } from './components/SearchOverlay';
 import { SourcesPanel } from './components/SourcesPanel';
 import { ConfirmModal } from './components/ConfirmModal';
 import { WorkspaceModal } from './components/WorkspaceModal';
-import { WorkspaceIcon } from './components/WorkspaceIcon';
+import { ModelPicker } from './components/ModelPicker';
 import { NotificationToast } from './components/NotificationToast';
 import { useLocaLLM } from './hooks/useLocaLLM';
 import { Menu, PanelLeftOpen, Search, Trash2 } from 'lucide-react';
@@ -321,20 +321,16 @@ function App() {
               </button>
             </div>
 
-            {/* Current conversation title glass pill */}
-            <div className="h-9 px-3.5 rounded-full liquid-glass flex items-center gap-2 min-w-0">
-              <span className="hidden sm:inline-flex items-center gap-1.5 text-xs font-semibold text-slate-800 dark:text-slate-200">
-                <WorkspaceIcon
-                  icon={workspaces.find(w => w.name === activeWorkspace)?.icon || 'Folder'}
-                  color={workspaces.find(w => w.name === activeWorkspace)?.color || '#3B82F6'}
-                  className="w-4 h-4"
-                />
-                <span>{activeWorkspace}</span>
-              </span>
-              <span className="hidden sm:inline text-slate-400">/</span>
-              <h2 className="text-xs font-medium truncate text-slate-800 dark:text-slate-100 max-w-[180px] sm:max-w-xs md:max-w-md">
-                {activeSession?.title || 'New conversation'}
-              </h2>
+            {/* Top-left Model Picker (formerly Workspace / Chat Title) */}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <ModelPicker
+                models={models}
+                currentId={config?.default_model || config?.model || ''}
+                onChange={handleChangeModel}
+                activePlatform={config?.active_backend}
+                placement="down"
+                className="liquid-glass"
+              />
               {activeSession && activeSession.messages && activeSession.messages.length > 0 && (
                 <button
                   type="button"
@@ -343,7 +339,7 @@ function App() {
                     id: activeSession.id,
                     name: activeSession.title || 'this chat'
                   })}
-                  className="p-1 -mr-1 rounded-full text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors cursor-pointer shrink-0"
+                  className="w-9 h-9 rounded-full liquid-glass flex items-center justify-center text-slate-400 hover:text-red-600 dark:hover:text-red-400 transition-colors cursor-pointer shrink-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-500"
                   title="Delete current chat"
                   aria-label="Delete current chat"
                 >
@@ -410,8 +406,6 @@ function App() {
                   isTyping={isTyping}
                   models={models}
                   currentModelId={config?.default_model || config?.model || ''}
-                  onChangeModel={handleChangeModel}
-                  activePlatform={config?.active_backend}
                 />
               </motion.div>
             </div>

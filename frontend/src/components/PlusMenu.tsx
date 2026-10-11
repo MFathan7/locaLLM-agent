@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import { Plus, Paperclip, Globe, Wrench } from 'lucide-react';
+import { Plus, Paperclip, Globe, Wrench, Check } from 'lucide-react';
 import clsx from 'clsx';
 import type { ModelCapabilities } from '../types';
 
@@ -61,6 +61,14 @@ export function PlusMenu({
 
   const hasDynamic = capabilities.webSearch || capabilities.tools;
 
+  const selectedCount = (webSearch ? 1 : 0) + (tools ? 1 : 0);
+  const activeLabels: string[] = [];
+  if (webSearch) activeLabels.push('Web search');
+  if (tools) activeLabels.push('Tools');
+  const buttonTitle = activeLabels.length > 0
+    ? `Add to message (${activeLabels.join(', ')})`
+    : 'Add to message';
+
   return (
     <div ref={rootRef} className="relative shrink-0">
       <motion.button
@@ -69,11 +77,25 @@ export function PlusMenu({
         whileTap={{ scale: 0.88 }}
         animate={{ rotate: open ? 45 : 0 }}
         transition={bounce}
-        className="w-9 h-9 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-300 bg-black/[0.06] dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/15 transition-colors cursor-pointer"
-        aria-label="Add to message"
+        className={clsx(
+          "w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer relative",
+          selectedCount > 0
+            ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60"
+            : "text-slate-600 dark:text-slate-300 bg-transparent hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-slate-900 dark:hover:text-white"
+        )}
+        aria-label={buttonTitle}
+        title={buttonTitle}
         aria-expanded={open}
       >
         <Plus className="w-4 h-4" />
+        {selectedCount > 0 && (
+          <span
+            className="absolute -top-1 -right-1 min-w-[17px] h-[17px] px-1 rounded-full bg-blue-600 dark:bg-blue-500 text-white text-[10px] font-bold flex items-center justify-center leading-none shadow-xs ring-2 ring-white dark:ring-[#121826] pointer-events-none select-none"
+            aria-hidden="true"
+          >
+            {selectedCount}
+          </span>
+        )}
       </motion.button>
 
       <AnimatePresence>
@@ -135,8 +157,8 @@ function MenuItem({
     <motion.button
       type="button"
       variants={itemVariants}
-      whileHover={{ scale: 1.03 }}
-      whileTap={{ scale: 0.95 }}
+      whileHover={{ scale: 1.02 }}
+      whileTap={{ scale: 0.96 }}
       onClick={onClick}
       role="menuitem"
       className={clsx(
@@ -148,7 +170,7 @@ function MenuItem({
     >
       {icon}
       <span className="flex-1">{label}</span>
-      {active && <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />}
+      {active && <Check className="w-3.5 h-3.5 shrink-0 text-blue-600 dark:text-blue-400" aria-hidden="true" />}
     </motion.button>
   );
 }

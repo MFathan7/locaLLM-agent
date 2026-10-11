@@ -16,24 +16,52 @@ def get_current_time_fn() -> str:
     return now.strftime(f"%A, %Y-%m-%d %H:%M:%S {tz_name}")
 
 
-def get_current_directory_fn() -> str:
-    """Return absolute path of current working directory."""
+def get_current_directory_fn(context: Optional[Dict[str, Any]] = None, **kwargs: Any) -> str:
+    """Return absolute path of active workspace or current working directory."""
+    ws_name = (context or {}).get("workspace_name")
+    if ws_name:
+        try:
+            from locallm.core.workspace import get_workspace_dir
+            ws_dir = get_workspace_dir(ws_name)
+            if ws_dir.is_dir():
+                return str(ws_dir.resolve())
+        except Exception:
+            pass
     return str(Path.cwd().resolve())
 
 
-def execute_command_fn(command: str, timeout: int = 15) -> str:
+def execute_command_fn(
+    command: str,
+    timeout: int = 15,
+    context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> str:
     """Run shell command safely in subprocess with output capture and timeout."""
     cmd = command.strip()
     if not cmd:
         return "Error: Empty command."
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        ws_name = (context or {}).get("workspace_name")
+        run_cwd = None
+        if ws_name:
+            try:
+                from locallm.core.workspace import get_workspace_dir
+                ws_dir = get_workspace_dir(ws_name)
+                if ws_dir.is_dir():
+                    run_cwd = str(ws_dir.resolve())
+            except Exception:
+                pass
+        if not run_cwd:
+            run_cwd = str(Path.cwd().resolve())
+
         res = subprocess.run(
             cmd,
             shell=True,
             capture_output=True,
             text=True,
             timeout=timeout,
+            cwd=run_cwd,
             creationflags=flags,
         )
         output = res.stdout + ("\nError: " + res.stderr if res.stderr else "")

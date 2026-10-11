@@ -22,8 +22,27 @@ def resolve_smart_path(
     If boundary_dir is provided, enforces that the resolved path does not escape
     the boundary directory (path traversal protection for messaging/bridges).
     """
+    # Determine active workspace
+    ws_target_name = workspace_name
+    if not ws_target_name:
+        try:
+            from locallm.config import load_config
+            ws_target_name = load_config().active_workspace
+        except Exception:
+            ws_target_name = "default"
+
+    from locallm.core.workspace import get_workspace_path
+    ws_dir = get_workspace_path(ws_target_name or "default")
+    ws_files = ws_dir / "files"
+    ws_images = ws_dir / "images"
+    ws_skills = ws_dir / "skills"
+    ws_knowledge = ws_dir / "knowledge"
+
     if not raw_path or raw_path.strip() in (".", ""):
-        candidate = Path.cwd().resolve()
+        if workspace_name:
+            candidate = ws_dir.resolve()
+        else:
+            candidate = Path.cwd().resolve()
     else:
         clean = raw_path.strip().strip("'\"")
         expanded = os.path.expanduser(os.path.expandvars(clean))
@@ -31,28 +50,16 @@ def resolve_smart_path(
 
         if cand_path.is_absolute() and cand_path.exists():
             candidate = cand_path.resolve()
+        elif (ws_dir / cand_path).exists():
+            candidate = (ws_dir / cand_path).resolve()
+        elif (ws_files / cand_path).exists():
+            candidate = (ws_files / cand_path).resolve()
         elif (Path.cwd() / cand_path).exists():
             candidate = (Path.cwd() / cand_path).resolve()
         else:
             home = Path.home()
             norm = clean.replace("\\", "/").strip("/")
             norm_lower = norm.lower()
-
-            # Determine active workspace
-            ws_target_name = workspace_name
-            if not ws_target_name:
-                try:
-                    from locallm.config import load_config
-                    ws_target_name = load_config().active_workspace
-                except Exception:
-                    ws_target_name = "default"
-
-            from locallm.core.workspace import get_workspace_path
-            ws_dir = get_workspace_path(ws_target_name or "default")
-            ws_files = ws_dir / "files"
-            ws_images = ws_dir / "images"
-            ws_skills = ws_dir / "skills"
-            ws_knowledge = ws_dir / "knowledge"
 
             matched_alias = False
             # Handle direct .locallm path alias (e.g. .locallm/... -> ~/.locallm/...)

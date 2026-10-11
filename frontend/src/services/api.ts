@@ -175,7 +175,8 @@ export const api = {
           capabilities: {
             files: m.capabilities?.files ?? true,
             webSearch: m.capabilities?.webSearch ?? true,
-            tools: m.capabilities?.tools ?? true
+            tools: m.capabilities?.tools ?? true,
+            thinking: Boolean(m.capabilities?.thinking)
           }
         }));
       }
@@ -183,9 +184,27 @@ export const api = {
       console.warn('Failed to fetch models from backend, using fallback:', e);
     }
     return [
-      { id: 'nemotron3-super', name: 'nemotron3-super', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true } },
-      { id: 'auto', name: 'Auto Dynamic Router', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true } }
+      { id: 'nemotron3-super', name: 'nemotron3-super', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true, thinking: false } },
+      { id: 'auto', name: 'Auto Dynamic Router', provider: 'OpenAI', platform: 'OpenAI', capabilities: { files: true, webSearch: true, tools: true, thinking: false } }
     ];
+  },
+
+  checkModelThinking: async (modelId: string, backend?: string): Promise<boolean> => {
+    if (!modelId) return false;
+    try {
+      const url = backend
+        ? `${API_BASE}/models/check-thinking?model=${encodeURIComponent(modelId)}&backend=${encodeURIComponent(backend)}`
+        : `${API_BASE}/models/check-thinking?model=${encodeURIComponent(modelId)}`;
+      const res = await fetch(url);
+      if (res.ok) {
+        const data = await res.json();
+        return Boolean(data.thinking);
+      }
+    } catch (e) {
+      console.warn('Failed to check model thinking capability in background:', e);
+    }
+    const lower = modelId.toLowerCase();
+    return ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3'].some(k => lower.includes(k));
   },
 
   getConfig: async (): Promise<LocaLLMConfig> => {
@@ -358,8 +377,10 @@ export const api = {
         files: options.files.map(f => f.name),
         webSearch: options.webSearch,
         tools: options.tools,
+        thinking: options.thinking,
         sessionId: options.sessionId
       },
+      think: options.thinking,
       ...(images && images.length > 0 ? { images } : {})
     };
 
@@ -391,66 +412,93 @@ export const api = {
       const decoder = new TextDecoder();
       let buffer = '';
 
-      while (true) {
-        if (abortSignal?.aborted) {
-          try { await reader.cancel(); } catch {}
-          break;
+      const onAbort = () => {
+        try { reader.cancel(); } catch {}
+      };
+
+      if (abortSignal) {
+        if (abortSignal.aborted) {
+          try { reader.cancel(); } catch {}
+          const abortErr = new Error('The user aborted a request.');
+          abortErr.name = 'AbortError';
+          throw abortErr;
         }
-        const { done, value } = await reader.read();
-        if (done) break;
+        abortSignal.addEventListener('abort', onAbort, { once: true });
+      }
 
-        buffer += decoder.decode(value, { stream: true });
-        const lines = buffer.split('\n');
-        buffer = lines.pop() || '';
+      try {
+        while (true) {
+          if (abortSignal?.aborted) {
+            try { await reader.cancel(); } catch {}
+            break;
+          }
+          const { done, value } = await reader.read();
+          if (done) break;
 
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed || trimmed.startsWith(':')) continue;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
 
-          if (trimmed.startsWith('data: ')) {
-            const dataStr = trimmed.slice(6);
-            if (dataStr === '[DONE]') {
-              onEvent?.({ event: 'done' });
-              continue;
-            }
+          for (const line of lines) {
+            if (abortSignal?.aborted) break;
+            const trimmed = line.trim();
+            if (!trimmed || trimmed.startsWith(':')) continue;
 
-            try {
-              const parsed = JSON.parse(dataStr);
-
-              // 1. Process modern high-level execution events
-              if (parsed.event) {
-                onEvent?.(parsed as StreamEvent);
-                if (parsed.event === 'response_token' && typeof parsed.data === 'string') {
-                  fullResponse += parsed.data;
-                  onChunk(parsed.data);
-                } else if (parsed.event === 'error') {
-                  const errDetail = parsed.data?.message || 'Error occurred';
-                  const errText = `\n[Gagal memproses respon: ${errDetail}]`;
-                  fullResponse += errText;
-                  onChunk(errText);
-                }
+            if (trimmed.startsWith('data: ')) {
+              const dataStr = trimmed.slice(6);
+              if (dataStr === '[DONE]') {
+                onEvent?.({ event: 'done' });
                 continue;
               }
 
-              // 2. Compatibility fallback for standard OpenAI streaming chunk format
-              const delta = parsed.choices?.[0]?.delta;
-              if (delta?.content) {
-                fullResponse += delta.content;
-                onChunk(delta.content);
+              try {
+                const parsed = JSON.parse(dataStr);
+
+                // 1. Process modern high-level execution events
+                if (parsed.event) {
+                  onEvent?.(parsed as StreamEvent);
+                  if (parsed.event === 'response_token' && typeof parsed.data === 'string') {
+                    fullResponse += parsed.data;
+                    onChunk(parsed.data);
+                  } else if (parsed.event === 'error') {
+                    const errDetail = parsed.data?.message || 'Error occurred';
+                    const errText = `\n[Gagal memproses respon: ${errDetail}]`;
+                    fullResponse += errText;
+                    onChunk(errText);
+                  }
+                  continue;
+                }
+
+                // 2. Compatibility fallback for standard OpenAI streaming chunk format
+                const delta = parsed.choices?.[0]?.delta;
+                if (delta?.content) {
+                  fullResponse += delta.content;
+                  onChunk(delta.content);
+                }
+              } catch {
+                // Raw text chunk fallback
+                if (dataStr) {
+                  fullResponse += dataStr;
+                  onChunk(dataStr);
+                }
               }
-            } catch {
-              // Raw text chunk fallback
-              if (dataStr) {
-                fullResponse += dataStr;
-                onChunk(dataStr);
-              }
+            } else {
+              // Direct streaming text
+              fullResponse += line + '\n';
+              onChunk(line + '\n');
             }
-          } else {
-            // Direct streaming text
-            fullResponse += line + '\n';
-            onChunk(line + '\n');
           }
         }
+      } finally {
+        if (abortSignal) {
+          abortSignal.removeEventListener('abort', onAbort);
+        }
+      }
+
+      if (abortSignal?.aborted) {
+        const abortErr = new Error('The user aborted a request.');
+        abortErr.name = 'AbortError';
+        throw abortErr;
       }
 
       if (buffer.trim()) {

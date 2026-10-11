@@ -52,6 +52,7 @@ export interface Message {
     files?: string[];
     webSearch?: boolean;
     tools?: boolean;
+    thinking?: boolean;
   };
 }
 
@@ -59,6 +60,7 @@ export interface ModelCapabilities {
   files: boolean;
   webSearch: boolean;
   tools: boolean;
+  thinking?: boolean;
 }
 
 export interface ModelInfo {
@@ -73,6 +75,7 @@ export interface SendOptions {
   files: File[];
   webSearch: boolean;
   tools: boolean;
+  thinking?: boolean;
   sessionId?: string;
 }
 

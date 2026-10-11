@@ -180,11 +180,41 @@ class TestOpenAIAPIServer(unittest.TestCase):
             self.assertEqual(resp.status_code, 200)
             data = resp.json()
             self.assertEqual(data.get("object"), "list")
-            ids = [m["id"] for m in data.get("data", [])]
+            models_list = data.get("data", [])
+            ids = [m["id"] for m in models_list]
             self.assertIn("test-model-1", ids)
             self.assertIn("test-model-2", ids)
             self.assertIn("locallm-agent", ids)
             self.assertIn("auto", ids)
+
+            # Check that capabilities including thinking are returned
+            for m in models_list:
+                self.assertIn("capabilities", m)
+                self.assertIn("thinking", m["capabilities"])
+                if m["id"] == "test-reasoning-model":
+                    self.assertTrue(m["capabilities"]["thinking"])
+
+    def test_check_thinking_endpoint(self) -> None:
+        with httpx.Client(timeout=3.0) as client:
+            # Model with reasoning/thinking in name
+            resp = client.get(
+                f"{self.base_url}/api/models/check-thinking?model=test-reasoning-model",
+                headers={"Authorization": "Bearer secret-token-123"},
+            )
+            self.assertEqual(resp.status_code, 200)
+            data = resp.json()
+            self.assertEqual(data.get("model"), "test-reasoning-model")
+            self.assertTrue(data.get("thinking"))
+
+            # Non-reasoning model
+            resp_non = client.get(
+                f"{self.base_url}/api/models/check-thinking?model=test-model-1",
+                headers={"Authorization": "Bearer secret-token-123"},
+            )
+            self.assertEqual(resp_non.status_code, 200)
+            data_non = resp_non.json()
+            self.assertEqual(data_non.get("model"), "test-model-1")
+            self.assertFalse(data_non.get("thinking"))
 
     def test_chat_completions_non_streaming(self) -> None:
         with httpx.Client(timeout=3.0) as client:

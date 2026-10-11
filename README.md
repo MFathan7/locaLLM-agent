@@ -119,6 +119,17 @@ locallm models
 - **Apple Liquid Glass Aesthetic**: Inspired by modern macOS and iOS glass design, featuring translucent glassmorphism surfaces (`backdrop-filter: blur(24px)`), gradient specular highlights, soft sheen curves, and an animated blurred Aurora mesh background.
 - **Direct 1:1 Synchronization with CLI**: The Web UI communicates through a native local bridge with zero data silos. System prompts, sampling temperature, active model, custom OpenAI platforms, agent policies, and workspace chat histories are shared bidirectionally with the CLI in real time (`~/.locallm/config.json` and `~/.locallm/workspaces/`).
 - **Dual-Theme Architecture**: Sleek dark mode and crisp high-contrast light mode with deep slate typography (`text-slate-950 font-bold`), ensuring zero text wash-out and complete legibility across all surfaces.
+- **Multi-Session Background AI Execution**: Full concurrency across conversation sessions. Users can freely switch between chats or start new drafts while the AI is actively reasoning or generating in another session. Background streaming continues writing directly to the session without interruption or UI thread lockup.
+- **Response Ready Toast Notifications & Sidebar Status Indicators**:
+  - Floating Liquid Glass notification toast displays when a background AI generation finishes, featuring an instant one-click **"Open"** action button to jump directly into the finished chat.
+  - Native desktop notifications (via Web Notifications API) alert users when multitasking in other browser tabs or external applications.
+  - Real-time sidebar activity indicator (pulsing dot) displays on sessions actively generating in the background, accompanied by an unread completion badge until visited.
+- **Real-Time Stream Cancellation & Dynamic Stop Button**:
+  - The send button dynamically morphs into an accessible **Stop Button** (with a square icon) whenever the AI is in reasoning or token generation mode.
+  - Clicking Stop immediately triggers an `AbortController` cancellation signal to cut model inference on demand, cleanly preserving all previously streamed response content without displaying error banners.
+- **Wave-to-Triangle Thinking Spinner**:
+  - GPU-accelerated CSS animation providing rich visual feedback during reasoning phases.
+  - Three dots wave along a horizontal line, converge into a precise equilateral triangle, spin 360 degrees on their centroid, and expand back into a line, accompanied by semibold status labels (*"Thinking..."*, *"Generating..."*, *"Searching..."*, *"Running Python..."*) with smooth fade transitions.
 - **Event-Driven Reasoning States & Zero-Leak CoT**: High-level execution state streaming (`routing`, `thinking_start`, `thinking_end`, `tool_start`, `tool_end`, `response_start`, `response_token`, `done`). Internal reasoning is kept strictly internal to the engine, displaying clean generic status indicators (*"Thinking..."*, *"Searching..."*, *"Running Python..."*, *"Generating..."*) without leaking raw thoughts or fake reasoning tokens.
 - **Clean Reasoning & Trace Filtering**: Strips intermediate `<think>...</think>` and `<thought>...</thought>` blocks from final response bubbles and chat titles, keeping the output clean and uncluttered.
 - **Zero-Delay Streaming Web Search**: Connects instantly via SSE and emits real-time status chunks while executing web queries, synthesizing verified findings with markdown citations (`[Source Title](URL)`) and auto-populating the sources side panel.
@@ -142,20 +153,24 @@ locallm models
   - Contextual snippet extraction displaying ~120 characters centered around matches instead of unconstrained text dumps.
   - Smooth asynchronous chat opening with zero main-thread locking.
 - **Centered Floating Scroll-to-Bottom Button**: Dynamic scroll detector displaying a sleek circular icon-only button in the bottom-center of the viewport whenever scrolled up.
-- **Dynamic Model & Backend Picker**:
-  - Model list displays model name on top and backend name (*Ollama*, *OpenAI*, or custom backends) underneath.
-  - Select active inference backend (native local Ollama or custom remote OpenAI-compatible servers like vLLM or LocalAI).
-  - Model dropdowns re-query available models with 60-second in-memory caching and request timeout guards.
+- **Top-Left Header Model & Backend Picker**:
+  - Repositioned cleanly to the top-left header of the chat viewport, displaying the active model name and inference backend (*Ollama*, *OpenAI*, or custom platforms) with an instant dropdown switcher.
+  - Automatically re-queries available models with 60-second in-memory caching and connection timeout guards.
+- **Model-Aware "Thinking" Mode Toggle**:
+  - Dynamically verifies whether the active model supports reasoning/thinking via `/api/models/check-thinking` (inspecting model architecture, capabilities, and naming conventions like DeepSeek-R1, QwQ, Gemma, or Qwen reasoning variants).
+  - An interactive **"Thinking" button** appears in the chat toolbar when compatible, allowing users to toggle reasoning tokens on or off per message turn.
+- **Plus Menu Context & Tool Selector**:
+  - Expandable **"+" action button** with transparent idle styling and numeric badge indicators when tools or web search are enabled.
+  - Dedicated popover menu to toggle **Web Search** and **Workspace Agent Tools** without cluttering the input textarea.
+- **Dynamic Multiline Chat Input**:
+  - Smooth vertical expansion as prompts grow, keeping action controls aligned along the bottom toolbar.
 - **Multi-File Attachment System (Up to 5 Files)**:
   - Drag-and-drop or select images, documents (`.pdf`, `.docx`, `.txt`, `.py`, `.json`, etc.) with in-bubble preview chips.
   - **Multi-Turn Context Retention**: Extracted text content stays in context across all subsequent turns so the model never forgets document contents in follow-up queries.
-- **Interactive Starter Prompts & Dynamic Greetings**:
-  - 3 randomized starter prompt cards on empty sessions for immediate 1-click execution (code review, brainstorming, system architecture, concept breakdown).
-  - Dynamic modern AI web chat greetings (ChatGPT/Claude style) that refresh on each new session.
+- **Dynamic Contextual Greetings**:
+  - Native `Intl.DateTimeFormat` context aware greetings tailored to time-of-day and day-of-week (*"Can I help you on this Friday morning, Fathan?"*), providing a warm and natural entrance for every new conversation without generic filler.
 - **AI Disclaimer Header**:
   - Non-intrusive safety and responsibility disclaimer above the chat input box (*"LocaLLM can stumble sometimes. Stay sharp and double-check key info."*).
-- **On-The-Fly Web Search & Agent Tool Toggles**:
-  - Dedicated toggle controls in the chat input bar to selectively enable or disable autonomous tools and real-time web search per prompt.
 - **Real-Time Temporal Grounding**:
   - Injects live real-world date and time into workspace context so the model always knows current time and date without hallucinations.
 - **Refined Workspace Management Modal**:
@@ -185,6 +200,7 @@ locallm models
 
 ### 🚀 OpenAI-Compatible HTTP API Gateway (`locallm serve`)
 - **Universal OpenAI Endpoint**: Expose your local models through an OpenAI-standard HTTP service (`/v1/chat/completions` and `/v1/models`), compatible out of the box with **Cursor**, **Continue.dev**, **Claude Code**, **LibreChat**, **Open-WebUI**, and **LangChain**.
+- **Model Thinking Capability Endpoint**: Dedicated `/api/models/check-thinking` (and `/v1/models/check-thinking`) endpoint for inspecting whether specific models natively support reasoning/thinking modes, with `think: true/false` parameter passthrough.
 - **Smart Port Collision Fallback**: If the default port (e.g. `8080`) is already bound by another process, `locaLLM` automatically detects the conflict and finds the next available port (`8081..8090`).
 - **Optional Bearer Token Authentication**: Secure your API gateway with custom keys (`--api-key <secret>` or `LOCALLM_API_KEY`).
 - **Server-Sent Events (SSE) Streaming**: Chunked token emission matching the OpenAI SSE streaming protocol with live usage metrics.
@@ -192,6 +208,11 @@ locallm models
 
 ### 🤖 Unified Autonomous Coding Agent & Interactive Assistant
 - **Consolidated Coding Agent Cockpit**: Interactive assistant (`locallm chat` and `locallm agent`) combines full conversational memory with multi-step autonomous execution (`MAX_TOOL_STEPS = 25`).
+- **Autonomous Agent in Main Menu**: Directly accessible from the main interactive console menu or via `locallm agent` for dedicated multi-step goals.
+- **Hybrid Chat & Agent Mode**: In Assistant Chat, models seamlessly transition into autonomous action when given actionable tasks (such as inspecting code, auditing targets, or running commands) without conversational stalling or asking repetitive clarification questions.
+- **Strict Workspace Sandboxing & Confinement**: All tools (`list_directory`, `read_file`, `write_file`, `execute_command`, `get_current_directory`) are strictly locked into the active workspace directory (`~/.locallm/workspaces/<workspace_name>/`). Resolving `.` or relative paths always maps inside the workspace, preventing accidental leakage of host user files (`~`).
+- **Anti-Loop Circuit Breaker**: Proactively halts repetitive identical tool invocations (if the exact same call is repeated twice consecutively), preventing infinite token-draining loops.
+- **Focused Tool Sampling Temperature (`0.2`)**: Employs deterministic low-temperature sampling during tool turns to avoid conversational drift or hallucinations.
 - **Direct Execution Authority**: The agent autonomously scaffolds directories, creates and refactors files, executes shell commands, inspects project repositories, and queries web documentation.
 - **Granular Permission Policies**: Configured globally in `Settings -> Agent Permission Policy`:
   - `always_allow`: Fully hands-free autonomous coding and terminal execution.
@@ -214,6 +235,7 @@ locallm models
   - **Bounded Memory Quota (Max 30 Facts)**: Preserves KV-cache budget and GPU VRAM headroom by maintaining only the most recent 30 facts with timestamps.
   - **Granular Workspace Toggle**: Easily enable or disable auto-extraction per workspace in the Web UI Workspace Modal or via `workspace.json` (`"auto_memory": true/false`).
   - **Context Grounding**: Injected dynamically into prompt context (`[Workspace Long-Term Memory & Project Context]`), enabling the model to remember facts across new sessions without re-explaining context.
+  - **Memory Lifecycle & Session Pruning**: Keeps project memory clean and organized, pruning obsolete or session-specific facts upon chat session deletion.
 
 ### 🧠 Workspace Persona Engine (`AGENTS.md`) & Proactive Research
 - **Customizable Persona Directives**: Every workspace contains its own `AGENTS.md` file defining how the model thinks, responds, and uses tools.
@@ -293,7 +315,8 @@ When launching `locallm`, the terminal displays the real-time telemetry header b
 
 ```text
 Main Menu:
-  ├── Assistant             -> Interactive coding agent with multi-step tools, session persistence, & typing effect
+  ├── Assistant             -> Interactive chat & agent with autonomous tool execution, strict workspace sandboxing, & typing effect
+  ├── Autonomous Agent      -> Dedicated autonomous ReAct loop for multi-step goals (files, terminal commands, web research)
   ├── Workspaces            -> Isolated environments: Switch, Create, Edit AGENTS.md, Skills, Delete, Back
   ├── Integrations          -> Channels & external bot runners
   │     ├── Telegram        -> 24/7 Telegram bot: Start, Configure Token, Whitelist, Back

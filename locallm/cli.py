@@ -415,7 +415,8 @@ def main(argv: Optional[List[str]] = None) -> None:
             engine = AgentEngine(config, client, max_steps=max_steps_arg, interactive=False)
             engine.run_task(args.task)
         else:
-            run_assistant(config, client)
+            render_banner(config, client)
+            run_agent_interactive(config, client)
     elif cmd == "serve":
         from locallm.modules.api_server import run_api_server
         auto_port = not getattr(args, "no_auto_port", False)

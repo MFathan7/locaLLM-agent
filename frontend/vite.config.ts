@@ -1061,23 +1061,31 @@ function locallmBridgePlugin(): Plugin {
               const ollamaRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(3000) });
               if (ollamaRes.ok) {
                 const data = (await ollamaRes.json()) as any;
-                const models = (data.models || []).map((m: any) => ({
-                  id: m.name,
-                  name: m.name,
-                  provider: 'Ollama',
-                  platform: 'Ollama',
-                  capabilities: {
-                    files: true,
-                    webSearch: true,
-                    tools: m.name.includes('code') || m.name.includes('qwen') || m.name.includes('llama3') || m.name.includes('gemma')
-                  }
-                }));
+                const models = (data.models || []).map((m: any) => {
+                  const rawCaps = Array.isArray(m.capabilities) ? m.capabilities : [];
+                  const lowerName = (m.name || '').toLowerCase();
+                  const isThinking = rawCaps.includes('thinking') ||
+                    ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lowerName.includes(k));
+
+                  return {
+                    id: m.name,
+                    name: m.name,
+                    provider: 'Ollama',
+                    platform: 'Ollama',
+                    capabilities: {
+                      files: true,
+                      webSearch: true,
+                      tools: m.name.includes('code') || m.name.includes('qwen') || m.name.includes('llama3') || m.name.includes('gemma') || rawCaps.includes('tools'),
+                      thinking: isThinking
+                    }
+                  };
+                });
                 models.unshift({
                   id: 'auto',
                   name: 'Auto Dynamic Router',
                   provider: 'Ollama',
                   platform: 'Ollama',
-                  capabilities: { files: true, webSearch: true, tools: true }
+                  capabilities: { files: true, webSearch: true, tools: true, thinking: false }
                 });
                 setModelsCache(models);
                 sendJson(res, 200, models);
@@ -1099,6 +1107,8 @@ function locallmBridgePlugin(): Plugin {
                   const data = (await customRes.json()) as any;
                   const models = (data.data || []).map((m: any) => {
                     const id = m.id || m.name;
+                    const lowerId = (id || '').toLowerCase();
+                    const isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lowerId.includes(k));
                     return {
                       id,
                       name: id,
@@ -1107,7 +1117,8 @@ function locallmBridgePlugin(): Plugin {
                       capabilities: {
                         files: true,
                         webSearch: true,
-                        tools: true
+                        tools: true,
+                        thinking: isThinking
                       }
                     };
                   });
@@ -1116,7 +1127,7 @@ function locallmBridgePlugin(): Plugin {
                     name: 'Auto Dynamic Router',
                     provider: platform.name,
                     platform: platform.name,
-                    capabilities: { files: true, webSearch: true, tools: true }
+                    capabilities: { files: true, webSearch: true, tools: true, thinking: false }
                   });
                   setModelsCache(models);
                   sendJson(res, 200, models);
@@ -1141,6 +1152,9 @@ function locallmBridgePlugin(): Plugin {
               const models = (data.data || []).map((m: any) => {
                 const id = m.id;
                 const isAgent = id === 'auto' || id === 'locallm-agent';
+                const lowerId = (id || '').toLowerCase();
+                const isThinking = Boolean(m.capabilities?.thinking) ||
+                  ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3'].some((k: string) => lowerId.includes(k));
                 return {
                   id,
                   name: isAgent ? (id === 'auto' ? 'Auto Dynamic Router' : 'Autonomous Agent') : id,
@@ -1149,7 +1163,8 @@ function locallmBridgePlugin(): Plugin {
                   capabilities: {
                     files: true,
                     webSearch: true,
-                    tools: isAgent || id.includes('tool') || id.includes('coder')
+                    tools: isAgent || id.includes('tool') || id.includes('coder'),
+                    thinking: isThinking
                   }
                 };
               });
@@ -1160,9 +1175,53 @@ function locallmBridgePlugin(): Plugin {
 
           // Fallback static list
           sendJson(res, 200, [
-            { id: cfg.default_model || 'gemma4:12b', name: cfg.default_model || 'gemma4:12b', provider: 'ollama', capabilities: { files: true, webSearch: true, tools: true } },
-            { id: 'auto', name: 'Auto Dynamic Router', provider: 'ollama', capabilities: { files: true, webSearch: true, tools: true } }
+            { id: cfg.default_model || 'gemma4:12b', name: cfg.default_model || 'gemma4:12b', provider: 'ollama', capabilities: { files: true, webSearch: true, tools: true, thinking: false } },
+            { id: 'auto', name: 'Auto Dynamic Router', provider: 'ollama', capabilities: { files: true, webSearch: true, tools: true, thinking: false } }
           ]);
+          return;
+        }
+
+        // Check thinking capability endpoint
+        if (pathname === '/api/models/check-thinking' && req.method === 'GET') {
+          const modelName = (urlObj.searchParams.get('model') || '').trim();
+          const targetBackend = (urlObj.searchParams.get('backend') || 'ollama').trim();
+          let isThinking = false;
+          let capsList: string[] = [];
+
+          if (targetBackend === 'ollama' && modelName) {
+            try {
+              const cfg = loadConfigOnDisk();
+              const ollamaHost = cfg.ollama_host || 'http://127.0.0.1:11434';
+              const showRes = await fetch(`${ollamaHost}/api/show`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ name: modelName }),
+                signal: AbortSignal.timeout(3000)
+              });
+              if (showRes.ok) {
+                const showData = (await showRes.json()) as any;
+                if (Array.isArray(showData.capabilities)) {
+                  capsList = showData.capabilities;
+                  if (capsList.includes('thinking')) {
+                    isThinking = true;
+                  }
+                }
+              }
+            } catch (e) {
+              console.warn('Failed to query /api/show for thinking capability:', e);
+            }
+          }
+
+          if (!isThinking && modelName) {
+            const lower = modelName.toLowerCase();
+            isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lower.includes(k));
+          }
+
+          sendJson(res, 200, {
+            model: modelName,
+            thinking: isThinking,
+            capabilities: capsList
+          });
           return;
         }
 
@@ -1192,7 +1251,8 @@ function locallmBridgePlugin(): Plugin {
               ],
               stream: true,
               temperature: typeof body.temperature === 'number' ? body.temperature : cfg.temperature,
-              options: body.options || {}
+              options: body.options || {},
+              think: typeof body.think === 'boolean' ? body.think : (body.options?.thinking ?? undefined)
             };
 
             const upstream = await fetch(`http://127.0.0.1:${serverPort}/v1/chat/completions`, {
@@ -1221,12 +1281,21 @@ function locallmBridgePlugin(): Plugin {
             });
 
             const reader = upstream.body.getReader();
-            while (true) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              res.write(value);
+            const closeHandler = () => {
+              try { reader.cancel(); } catch {}
+            };
+            req.on('close', closeHandler);
+
+            try {
+              while (true) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                res.write(value);
+              }
+            } finally {
+              req.off('close', closeHandler);
+              res.end();
             }
-            res.end();
             return;
           } catch (err: any) {
             sendJson(res, 500, { error: `Failed to connect to locaLLM API server: ${err.message}` });

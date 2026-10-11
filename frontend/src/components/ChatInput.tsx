@@ -3,29 +3,28 @@ import {
   Square,
   X,
   Paperclip,
-  Globe,
-  Wrench,
+  Brain,
   FileText,
   Image as ImageIcon
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
-import type { ModelInfo, SendOptions } from '../types';
+import clsx from 'clsx';
+import type { ModelInfo, SendOptions, ModelCapabilities } from '../types';
 import { PlusMenu } from './PlusMenu';
-import { ModelPicker } from './ModelPicker';
 
 interface ChatInputProps {
   onSend: (message: string, options: SendOptions) => void;
   onStop?: () => void;
   disabled?: boolean;
   isTyping?: boolean;
-  models: ModelInfo[];
-  currentModelId: string;
-  onChangeModel: (model: ModelInfo) => void;
-  activePlatform?: string;
+  models?: ModelInfo[];
+  currentModelId?: string;
+  currentModel?: ModelInfo;
+  isThinkingCompatible?: boolean;
 }
 
-const DEFAULT_CAPS = { files: true, webSearch: true, tools: true };
+const DEFAULT_CAPS: ModelCapabilities = { files: true, webSearch: true, tools: true, thinking: false };
 
 const IMAGE_MIME_BY_EXT: Record<string, string> = {
   png: 'image/png',
@@ -101,13 +100,15 @@ export function ChatInput({
   isTyping,
   models,
   currentModelId,
-  onChangeModel,
-  activePlatform
+  currentModel,
+  isThinkingCompatible
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [webSearchPref, setWebSearchPref] = useState(false);
   const [toolsPref, setToolsPref] = useState(false);
+  const [thinkingPref, setThinkingPref] = useState(true);
+  const [isExpanded, setIsExpanded] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -119,15 +120,22 @@ export function ChatInput({
   }, [disabled]);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const capabilities = models.find(m => m.id === currentModelId)?.capabilities ?? DEFAULT_CAPS;
+  const capabilities = currentModel?.capabilities ?? (models?.find(m => m.id === currentModelId)?.capabilities ?? DEFAULT_CAPS);
+  const isCompatible = typeof isThinkingCompatible === 'boolean'
+    ? isThinkingCompatible
+    : Boolean(capabilities.thinking);
   const webSearch = webSearchPref && (capabilities.webSearch ?? true);
   const tools = toolsPref && (capabilities.tools ?? true);
+  const thinking = thinkingPref && isCompatible;
 
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
     el.style.height = 'auto';
-    el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    const scrollH = el.scrollHeight;
+    el.style.height = `${Math.min(scrollH, 200)}px`;
+    const expanded = Boolean(input.trim().length > 0 && (input.includes('\n') || scrollH > 44));
+    setIsExpanded(expanded);
   }, [input]);
 
   const appendFiles = (newFiles: File[]) => {
@@ -211,7 +219,7 @@ export function ChatInput({
 
   const handleSend = () => {
     if (!canSend) return;
-    onSend(input.trim(), { files, webSearch, tools });
+    onSend(input.trim(), { files, webSearch, tools, thinking });
     setInput('');
     setFiles([]);
   };
@@ -239,7 +247,7 @@ export function ChatInput({
 
   const imageFiles = files.filter(isImageFile);
   const docFiles = files.filter(f => !isImageFile(f));
-  const hasChips = files.length > 0 || webSearch || tools;
+  const hasChips = files.length > 0;
 
   return (
     <div className="px-4 pb-4 pt-1">
@@ -279,7 +287,7 @@ export function ChatInput({
             )}
           </AnimatePresence>
 
-          {/* Attachments & Chips Tray */}
+          {/* Attachments Tray (Only shown when files are attached) */}
           <AnimatePresence initial={false}>
             {hasChips && (
               <motion.div
@@ -301,48 +309,46 @@ export function ChatInput({
                   </div>
                 )}
 
-                {/* 2. Documents & Feature Chips */}
-                <div className="flex flex-wrap gap-1.5 px-2 pt-0.5 pb-2">
-                  {docFiles.map((f, i) => (
-                    <DocumentChip
-                      key={`${f.name}-${i}`}
-                      file={f}
-                      onRemove={() => setFiles(prev => prev.filter(item => item !== f))}
-                    />
-                  ))}
-                  {files.length >= 5 && (
-                    <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-300 select-none">
-                      Max 5 files
-                    </span>
-                  )}
-                  {webSearch && (
-                    <Chip
-                      icon={<Globe className="w-3 h-3 text-emerald-500" />}
-                      label="Web search"
-                      onRemove={() => setWebSearchPref(false)}
-                    />
-                  )}
-                  {tools && (
-                    <Chip
-                      icon={<Wrench className="w-3 h-3 text-purple-500" />}
-                      label="Tools"
-                      onRemove={() => setToolsPref(false)}
-                    />
-                  )}
-                </div>
+                {/* 2. Documents */}
+                {docFiles.length > 0 && (
+                  <div className="flex flex-wrap gap-1.5 px-2 pt-0.5 pb-2">
+                    {docFiles.map((f, i) => (
+                      <DocumentChip
+                        key={`${f.name}-${i}`}
+                        file={f}
+                        onRemove={() => setFiles(prev => prev.filter(item => item !== f))}
+                      />
+                    ))}
+                    {files.length >= 5 && (
+                      <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium bg-amber-500/15 text-amber-700 dark:text-amber-300 select-none">
+                        Max 5 files
+                      </span>
+                    )}
+                  </div>
+                )}
               </motion.div>
             )}
           </AnimatePresence>
 
-          <div className="flex items-end gap-1.5">
-            <PlusMenu
-              capabilities={capabilities}
-              webSearch={webSearch}
-              tools={tools}
-              onUploadClick={() => fileInputRef.current?.click()}
-              onToggleWebSearch={() => setWebSearchPref(v => !v)}
-              onToggleTools={() => setToolsPref(v => !v)}
-            />
+          <div
+            className={clsx(
+              "grid transition-all duration-150",
+              isExpanded
+                ? "grid-cols-[1fr_auto] gap-y-2 pt-1"
+                : "grid-cols-[auto_1fr_auto] items-end gap-1.5"
+            )}
+          >
+            <div className={clsx("shrink-0", isExpanded && "col-start-1 row-start-2 justify-self-start self-center")}>
+              <PlusMenu
+                capabilities={capabilities}
+                webSearch={webSearch}
+                tools={tools}
+                onUploadClick={() => fileInputRef.current?.click()}
+                onToggleWebSearch={() => setWebSearchPref(v => !v)}
+                onToggleTools={() => setToolsPref(v => !v)}
+              />
+            </div>
+
             <input
               ref={fileInputRef}
               type="file"
@@ -361,45 +367,80 @@ export function ChatInput({
               placeholder="Message LocaLLM (or drop files here)"
               rows={1}
               disabled={disabled}
-              className="flex-1 min-w-0 bg-transparent resize-none py-2 px-2 text-sm md:text-base leading-5 text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none"
+              className={clsx(
+                "bg-transparent resize-none text-sm md:text-base text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none transition-[padding,height]",
+                isExpanded
+                  ? "col-span-2 row-start-1 w-full min-w-0 py-1.5 px-2 leading-relaxed max-h-[220px]"
+                  : "min-w-0 py-2 px-2 leading-5"
+              )}
             />
 
-            <ModelPicker
-              models={models}
-              currentId={currentModelId}
-              onChange={onChangeModel}
-              activePlatform={activePlatform}
-            />
+            <div
+              className={clsx(
+                "flex items-center gap-1.5 shrink-0",
+                isExpanded && "col-start-2 row-start-2 justify-self-end self-center"
+              )}
+            >
+              <AnimatePresence>
+                {isCompatible && (
+                  <motion.button
+                    type="button"
+                    onClick={() => setThinkingPref(v => !v)}
+                    whileTap={{ scale: 0.94 }}
+                    initial={{ opacity: 0, scale: 0.88 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.88 }}
+                    transition={{ type: 'spring', stiffness: 500, damping: 25 }}
+                    aria-pressed={thinking}
+                    aria-label={thinking ? "Thinking mode enabled" : "Thinking mode disabled"}
+                    title={thinking ? "Thinking mode: ON" : "Thinking mode: OFF"}
+                    className={clsx(
+                      "h-8 px-3 rounded-full flex items-center gap-1.5 text-xs font-semibold cursor-pointer transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 shrink-0 select-none",
+                      thinking
+                        ? "bg-blue-100/90 dark:bg-blue-900/60 text-blue-700 dark:text-blue-300 border border-blue-300/90 dark:border-blue-700/80 shadow-xs"
+                        : "text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-black/[0.05] dark:hover:bg-white/[0.06] border border-transparent"
+                    )}
+                  >
+                    <Brain className="w-3.5 h-3.5 shrink-0" aria-hidden="true" />
+                    <span>Thinking</span>
+                  </motion.button>
+                )}
+              </AnimatePresence>
 
-            {isTyping ? (
-              <motion.button
-                type="button"
-                onClick={onStop}
-                whileTap={{ scale: 0.88 }}
-                initial={{ scale: 0.8, opacity: 0 }}
-                animate={{ scale: 1, opacity: 1 }}
-                exit={{ scale: 0.8, opacity: 0 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer transition-colors"
-                aria-label="Stop generation"
-                title="Stop generation"
-              >
-                <Square className="w-3.5 h-3.5 fill-current" />
-              </motion.button>
-            ) : (
-              <motion.button
-                type="button"
-                onClick={handleSend}
-                disabled={!canSend}
-                whileTap={{ scale: 0.88 }}
-                animate={{ opacity: canSend ? 1 : 0.4 }}
-                transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-                className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
-                aria-label="Send message"
-              >
-                <ArrowUp className="w-4 h-4" />
-              </motion.button>
-            )}
+              {isTyping ? (
+                <motion.button
+                  type="button"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    onStop?.();
+                  }}
+                  whileTap={{ scale: 0.88 }}
+                  initial={{ scale: 0.8, opacity: 0 }}
+                  animate={{ scale: 1, opacity: 1 }}
+                  exit={{ scale: 0.8, opacity: 0 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer transition-colors z-20"
+                  aria-label="Stop generation"
+                  title="Stop generation"
+                >
+                  <Square className="w-3.5 h-3.5 fill-current" />
+                </motion.button>
+              ) : (
+                <motion.button
+                  type="button"
+                  onClick={handleSend}
+                  disabled={!canSend}
+                  whileTap={{ scale: 0.88 }}
+                  animate={{ opacity: canSend ? 1 : 0.4 }}
+                  transition={{ type: 'spring', stiffness: 500, damping: 22 }}
+                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
+                  aria-label="Send message"
+                >
+                  <ArrowUp className="w-4 h-4" />
+                </motion.button>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -471,36 +512,6 @@ function DocumentChip({ file, onRemove }: { file: File; onRemove: () => void }) 
         onClick={onRemove}
         className="p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
         aria-label={`Remove ${file.name}`}
-      >
-        <X className="w-3 h-3" />
-      </button>
-    </motion.span>
-  );
-}
-
-function Chip({
-  icon,
-  label,
-  onRemove
-}: {
-  icon: React.ReactNode;
-  label: string;
-  onRemove: () => void;
-}) {
-  return (
-    <motion.span
-      initial={{ opacity: 0, scale: 0.7 }}
-      animate={{ opacity: 1, scale: 1 }}
-      transition={{ type: 'spring', stiffness: 520, damping: 18 }}
-      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 max-w-[200px]"
-    >
-      {icon}
-      <span className="truncate">{label}</span>
-      <button
-        type="button"
-        onClick={onRemove}
-        className="p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
-        aria-label={`Remove ${label}`}
       >
         <X className="w-3 h-3" />
       </button>
