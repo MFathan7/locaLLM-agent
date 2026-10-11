@@ -66,9 +66,9 @@ class ReActAgent:
             "Core Directives:\n"
             "1. Autonomous Action: Use tools directly to inspect the environment, fetch web data, read/write files, and execute commands. Never instruct the user to perform manual work when tools can perform the action.\n"
             "2. Grounding: Verify facts through tool output before concluding.\n"
-            "3. Stopping Condition: When the objective is completely satisfied, provide a clear, comprehensive final summary of the accomplished tasks and findings.\n"
+            "3. Smart Termination & Stopping Condition: Minimize tool invocations. Execute only the essential tools necessary to complete the goal. Once the required information is gathered or the action is taken, NEVER perform redundant inspections, repetitive searches, or re-read files. Immediately call 'complete_task' with your final summary or return your final answer directly in text to terminate execution.\n"
             "4. Read-Only vs Mutating Discipline: If the user's objective only asks to find, locate, search, check, or report file paths, existence, or metadata, NEVER invoke write_file, create_directory, or modifying commands. Use resolve_path, list_directory, or read_file exclusively.\n"
-            "5. Autonomous Verification & Self-Testing: When creating or modifying code, scripts, or configurations, never conclude without verification. Use execute_command to run actual tests (pytest, unittest, etc.), compilation/syntax checks, or standalone validation scripts. Test real edge cases with proper assertions—never do superficial tests. If errors occur, diagnose the traceback, fix the code, and re-test until it passes cleanly.\n"
+            "5. Autonomous Verification & Self-Testing: When creating or modifying code, scripts, or configurations, never conclude without verification. Use execute_command to run actual tests (pytest, unittest, etc.), compilation/syntax checks, or standalone validation scripts. Test real edge cases with proper assertions, never do superficial tests. If errors occur, diagnose the traceback, fix the code, and re-test until it passes cleanly.\n"
             "6. Linguistic & Intent Disambiguation: If the task is translation, phrasing, or grammar advice, provide the translation directly. Do NOT execute web searches or technical commands on the text to be translated.\n"
             "7. Workspace Storage Organization: Save generated documents and scripts inside the workspace 'files/' directory (e.g. files/output.txt), and visual assets or diagrams in 'images/' (e.g. images/chart.png). Always look inside these directories when retrieving previously created files or images."
         )
@@ -94,10 +94,24 @@ class ReActAgent:
 
         step = 0
         total_steps = self.max_steps
+        soft_limit_threshold = 8 if total_steps >= 12 else max(3, total_steps // 2)
+        soft_limit_nudged = False
 
         while step < total_steps:
             step += 1
             turn_msg: Optional[Dict[str, Any]] = None
+
+            # Kondisi 3 (Progressive System Nudge):
+            # Sisipkan peringatan sistem saat mendekati soft limit sebelum inferensi
+            if step == soft_limit_threshold and not soft_limit_nudged:
+                soft_limit_nudged = True
+                history.append({
+                    "role": "user",
+                    "content": (
+                        "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. "
+                        "Use the data and observations already gathered to synthesize the final answer immediately, or call 'complete_task'.]"
+                    ),
+                })
 
             spinner_label = (
                 f"Agent is planning step {step}/{total_steps}..."
@@ -170,6 +184,37 @@ class ReActAgent:
 
             # Execute tool calls if present
             if tool_calls:
+                # Kondisi 2 (Explicit Completion Tool):
+                # Deteksi tool penyelesaian complete_task, putus iterasi seketika dan kembalikan output
+                completion_call = next(
+                    (tc for tc in tool_calls if tc.get("function", {}).get("name") == "complete_task"),
+                    None
+                )
+                if completion_call:
+                    func_args = completion_call.get("function", {}).get("arguments", {})
+                    if isinstance(func_args, str):
+                        try:
+                            func_args = json.loads(func_args)
+                        except Exception:
+                            func_args = {}
+                    final_ans = func_args.get("final_answer") or func_args.get("answer") or ""
+                    if not final_ans and content:
+                        final_ans = content
+                    if not final_ans:
+                        final_ans = "Task completed successfully."
+
+                    console.print(
+                        f"[bold {palette.accent}]⟦{palette.icon} STEP {step}/{total_steps}⟧[/] "
+                        f"[bold {palette.success}]complete_task[/] [dim]{json.dumps(func_args)}[/]"
+                    )
+                    console.print(Panel(
+                        final_ans.strip(),
+                        title=f"[bold {palette.success}]⟦{palette.icon} Task Completed⟧[/]",
+                        box=palette.box_style,
+                        border_style=palette.border_style,
+                    ))
+                    return
+
                 history.append(turn_msg)
                 should_trip_circuit = False
 
@@ -239,16 +284,20 @@ class ReActAgent:
 
                 continue
 
-            # No tool calls: model returned final answer
-            if content and content.strip():
-                final_answer_text = self._extract_final_answer(content)
-                console.print(Panel(
-                    final_answer_text,
-                    title=f"[bold {palette.success}]⟦{palette.icon} Task Completed⟧[/]",
-                    box=palette.box_style,
-                    border_style=palette.border_style,
-                ))
-                return
+            # Kondisi 1 (Text-Only Response / No Tools):
+            # Jika respons model berisi teks dan tool_calls kosong, segera hentikan loop dan kembalikan teks
+            if not tool_calls:
+                if content and content.strip():
+                    final_answer_text = self._extract_final_answer(content)
+                    console.print(Panel(
+                        final_answer_text,
+                        title=f"[bold {palette.success}]⟦{palette.icon} Task Completed⟧[/]",
+                        box=palette.box_style,
+                        border_style=palette.border_style,
+                    ))
+                    return
+                # Empty response without tool calls: break to summary synthesis
+                break
 
             # Check if step limit reached
             if step >= total_steps:

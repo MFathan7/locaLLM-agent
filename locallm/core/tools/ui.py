@@ -66,6 +66,9 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
         sname = args.get("skill_name", "")
         return f"locaLLM is reading skill instructions for '{sname}'..." if sname else "locaLLM is reading skill..."
 
+    elif name == "complete_task":
+        return "locaLLM is concluding task and finalizing answer..."
+
     elif name.startswith("telegram_"):
         return f"locaLLM is dispatching Telegram action: {name}..."
 
@@ -148,6 +151,12 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
     elif name == "read_skill":
         sname = args.get("skill_name", "")
         return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Loaded skill:[/] [dim {palette.primary}]{sname}[/]"
+
+    elif name == "complete_task":
+        ans_preview = args.get("final_answer", "")
+        if len(ans_preview) > 60:
+            ans_preview = ans_preview[:60] + "..."
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Task completed:[/] [dim]{ans_preview}[/]"
 
     elif name.startswith("mcp__"):
         parts = name.split("__", 2)

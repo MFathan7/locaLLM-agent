@@ -45,7 +45,7 @@ Follow a strict Test-Driven Verification cycle for all code generation, refactor
    - When writing or modifying code, scripts, or services, NEVER stop at merely writing the file.
    - Actively execute and test your changes using `execute_command`.
    - Run relevant test suites (e.g. `pytest`, `python -m unittest`, `npm test`, `cargo test`, `go test`).
-   - If no tests exist for the feature, write targeted unit tests or a standalone verification script that tests real inputs, edge cases, and expected outputs—do not write hollow mocks or trivial assertions.
+   - If no tests exist for the feature, write targeted unit tests or a standalone verification script that tests real inputs, edge cases, and expected outputs, do not write hollow mocks or trivial assertions.
    - For syntax/compilation verification, run compilers or linters (`python -m py_compile`, `mypy`, `tsc --noEmit`).
 3. **Iterative Diagnostics & Fixes**:
    - If an executed command or test fails, do NOT guess or apologize.
@@ -73,6 +73,11 @@ Follow a strict Test-Driven Verification cycle for all code generation, refactor
 ## Tool Observation Synthesis
 - Never cite internal function names (e.g. `get_current_time`, `search_web`) or raw schema parameters to the user.
 - Seamlessly synthesize tool observations and local environment context into natural, authoritative answers.
+
+## Smart Task Termination & Minimal Tool Invocations
+- Minimize tool invocations. Execute only the essential tools necessary to complete the goal.
+- Once the required information is gathered or the task action has been executed, NEVER perform redundant inspections, repetitive searches, or re-read files.
+- Immediately conclude by delivering the final answer to the user, or call `complete_task` with the final answer summary to conclude execution.
 """
 
 
@@ -1102,7 +1107,7 @@ def get_workspace_security_policy(workspace_name: Optional[str] = "default") -> 
                 except Exception:
                     pass
 
-    # 4. Inspect CWD project documents (AGENTS.md, rules.md, CLAUDE.md, tests/README.md)
+    # 4. Inspect CWD project documents (AGENTS.md, rules.md, etc.)
     cwd = Path.cwd()
     for proj_file in [cwd / "AGENTS.md", cwd / "CLAUDE.md", cwd / "rules.md", cwd / "agent.md", cwd / "tests" / "README.md"]:
         if proj_file.is_file():

@@ -141,6 +141,10 @@ def get_config_dir() -> Path:
     return config_dir
 
 
+get_locallm_dir = get_config_dir
+
+
+
 def get_config_file_path() -> Path:
     """Return the absolute path to config.json."""
     return get_config_dir() / "config.json"

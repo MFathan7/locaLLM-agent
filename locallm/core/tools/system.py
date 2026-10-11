@@ -201,3 +201,32 @@ tool(
     is_mutating=False,
     categories={"assistant"},
 )(read_skill_fn)
+
+
+def complete_task_fn(final_answer: str = "", **kwargs: Any) -> str:
+    """Signal task completion and return the final answer summary."""
+    ans = (final_answer or "").strip()
+    return ans or "Task completed successfully."
+
+
+tool(
+    name="complete_task",
+    description=(
+        "Conclude and finish the current task execution cycle. "
+        "Call this function ONLY when all user instructions have been completely satisfied, essential data is collected, "
+        "or the final answer is ready. Calling this function immediately concludes the agent execution cycle."
+    ),
+    parameters={
+        "type": "object",
+        "required": ["final_answer"],
+        "properties": {
+            "final_answer": {
+                "type": "string",
+                "description": "Comprehensive final answer or summary of the completed task to deliver to the user.",
+            },
+        },
+    },
+    is_mutating=False,
+    categories={"assistant", "telegram", "whatsapp"},
+)(complete_task_fn)
+

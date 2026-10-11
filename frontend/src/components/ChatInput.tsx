@@ -22,6 +22,7 @@ interface ChatInputProps {
   currentModelId?: string;
   currentModel?: ModelInfo;
   isThinkingCompatible?: boolean;
+  activeSessionId?: string;
 }
 
 const DEFAULT_CAPS: ModelCapabilities = { files: true, webSearch: true, tools: true, thinking: false };
@@ -101,17 +102,23 @@ export function ChatInput({
   models,
   currentModelId,
   currentModel,
-  isThinkingCompatible
+  isThinkingCompatible,
+  activeSessionId
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
   const [webSearchPref, setWebSearchPref] = useState(false);
   const [toolsPref, setToolsPref] = useState(false);
-  const [thinkingPref, setThinkingPref] = useState(true);
+  const [thinkingPref, setThinkingPref] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragCounter = useRef(0);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    // Reset thinking mode to false on new chat / session change
+    setThinkingPref(false);
+  }, [activeSessionId]);
 
   useEffect(() => {
     if (!disabled && textareaRef.current) {
@@ -131,12 +138,27 @@ export function ChatInput({
   useEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
+
+    // Reset height temporarily to accurately compute scrollHeight
     el.style.height = 'auto';
     const scrollH = el.scrollHeight;
-    el.style.height = `${Math.min(scrollH, 200)}px`;
-    const expanded = Boolean(input.trim().length > 0 && (input.includes('\n') || scrollH > 44));
-    setIsExpanded(expanded);
-  }, [input]);
+    const maxHeight = 200;
+
+    el.style.height = `${Math.min(scrollH, maxHeight)}px`;
+    el.style.overflowY = scrollH > maxHeight ? 'auto' : 'hidden';
+
+    // Prevent expansion hysteresis loop: keep expanded until cleared or deleted to single line
+    const shouldExpand = Boolean(
+      input.trim().length > 0 && (
+        input.includes('\n') ||
+        (isExpanded ? (scrollH > 44 || input.trim().length >= 40) : scrollH > 44)
+      )
+    );
+
+    if (shouldExpand !== isExpanded) {
+      setIsExpanded(shouldExpand);
+    }
+  }, [input, isExpanded]);
 
   const appendFiles = (newFiles: File[]) => {
     setFiles(prev => {
@@ -266,7 +288,7 @@ export function ChatInput({
           }}
           onDragOver={handleDragOverEvent}
           onDrop={handleDropEvent}
-          className={`relative bg-white dark:bg-[#121826] border rounded-[28px] p-2 shadow-lg shadow-black/5 dark:shadow-black/40 transition-all ${
+          className={`relative bg-white dark:bg-[#121826] border rounded-[26px] py-1.5 px-2 shadow-lg shadow-black/5 dark:shadow-black/40 transition-all ${
             isDragging
               ? 'border-blue-500 ring-2 ring-blue-500/40'
               : 'border-slate-300/80 dark:border-slate-700/80 focus-within:ring-2 focus-within:ring-blue-500/30 focus-within:border-blue-500/60'
@@ -279,7 +301,7 @@ export function ChatInput({
                 initial={{ opacity: 0 }}
                 animate={{ opacity: 1 }}
                 exit={{ opacity: 0 }}
-                className="absolute inset-0 z-40 rounded-[28px] border-2 border-dashed border-blue-500 bg-blue-500/10 dark:bg-blue-500/20 backdrop-blur-md flex items-center justify-center gap-2.5 text-blue-600 dark:text-blue-400 font-semibold text-sm pointer-events-none"
+                className="absolute inset-0 z-40 rounded-[26px] border-2 border-dashed border-blue-500 bg-blue-500/10 dark:bg-blue-500/20 backdrop-blur-md flex items-center justify-center gap-2.5 text-blue-600 dark:text-blue-400 font-semibold text-sm pointer-events-none"
               >
                 <Paperclip className="w-5 h-5 animate-bounce" />
                 <span>Drop files here to attach</span>
@@ -332,13 +354,13 @@ export function ChatInput({
 
           <div
             className={clsx(
-              "grid transition-all duration-150",
+              "grid transition-[gap,padding] duration-150",
               isExpanded
-                ? "grid-cols-[1fr_auto] gap-y-2 pt-1"
-                : "grid-cols-[auto_1fr_auto] items-end gap-1.5"
+                ? "grid-cols-[1fr_auto] gap-y-2 pt-0.5"
+                : "grid-cols-[auto_1fr_auto] items-center gap-1.5"
             )}
           >
-            <div className={clsx("shrink-0", isExpanded && "col-start-1 row-start-2 justify-self-start self-center")}>
+            <div className={clsx("shrink-0", isExpanded ? "col-start-1 row-start-2 justify-self-start self-center" : "self-center")}>
               <PlusMenu
                 capabilities={capabilities}
                 webSearch={webSearch}
@@ -368,17 +390,17 @@ export function ChatInput({
               rows={1}
               disabled={disabled}
               className={clsx(
-                "bg-transparent resize-none text-sm md:text-base text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none transition-[padding,height]",
+                "bg-transparent resize-none text-sm md:text-base text-slate-900 dark:text-slate-50 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none py-1 px-2 leading-6 overflow-y-hidden self-center",
                 isExpanded
-                  ? "col-span-2 row-start-1 w-full min-w-0 py-1.5 px-2 leading-relaxed max-h-[220px]"
-                  : "min-w-0 py-2 px-2 leading-5"
+                  ? "col-span-2 row-start-1 w-full min-w-0 max-h-[200px]"
+                  : "min-w-0"
               )}
             />
 
             <div
               className={clsx(
-                "flex items-center gap-1.5 shrink-0",
-                isExpanded && "col-start-2 row-start-2 justify-self-end self-center"
+                "flex items-center gap-1.5 shrink-0 self-center",
+                isExpanded && "col-start-2 row-start-2 justify-self-end"
               )}
             >
               <AnimatePresence>
@@ -420,7 +442,7 @@ export function ChatInput({
                   animate={{ scale: 1, opacity: 1 }}
                   exit={{ scale: 0.8, opacity: 0 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer transition-colors z-20"
+                  className="shrink-0 w-8.5 h-8.5 rounded-full flex items-center justify-center bg-slate-900 dark:bg-white text-white dark:text-slate-900 shadow-md hover:bg-slate-800 dark:hover:bg-slate-100 cursor-pointer transition-colors z-20"
                   aria-label="Stop generation"
                   title="Stop generation"
                 >
@@ -434,7 +456,7 @@ export function ChatInput({
                   whileTap={{ scale: 0.88 }}
                   animate={{ opacity: canSend ? 1 : 0.4 }}
                   transition={{ type: 'spring', stiffness: 500, damping: 22 }}
-                  className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
+                  className="shrink-0 w-8.5 h-8.5 rounded-full flex items-center justify-center bg-blue-600 text-white shadow-[inset_0_1px_1px_rgba(255,255,255,0.45),0_6px_14px_-4px_rgba(37,99,235,0.6)] cursor-pointer disabled:cursor-not-allowed"
                   aria-label="Send message"
                 >
                   <ArrowUp className="w-4 h-4" />

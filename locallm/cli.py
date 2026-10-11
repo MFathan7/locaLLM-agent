@@ -156,21 +156,21 @@ def build_parser() -> argparse.ArgumentParser:
         description="Control background inference services without automatic launches. Check status or control services.",
     )
     svc_parser.add_argument("action", choices=["start", "stop", "status"], help="Action to perform: start, stop, or status")
-    svc_parser.add_argument("target", nargs="?", default="ollama", help="Target inference service or platform (default: ollama)")
+    svc_parser.add_argument("target", nargs="?", default="all", help="Target inference service or platform: all (default), ollama, or server")
 
     start_parser = subparsers.add_parser(
         "start",
-        help="Start local LLM service in background (default: ollama)",
-        description="Start local inference service process explicitly in the background upon command.",
+        help="Start local LLM services in background (default: all)",
+        description="Start local inference service and API Gateway server processes in the background.",
     )
-    start_parser.add_argument("target", nargs="?", default="ollama", help="Service to start (default: ollama)")
+    start_parser.add_argument("target", nargs="?", default="all", help="Service to start: all (default), ollama, or server")
 
     stop_parser = subparsers.add_parser(
         "stop",
-        help="Stop local LLM service process (default: ollama)",
-        description="Stop active inference service processes cleanly.",
+        help="Stop local LLM service processes (default: all)",
+        description="Stop active inference services and background server cleanly.",
     )
-    stop_parser.add_argument("target", nargs="?", default="ollama", help="Service to stop (default: ollama)")
+    stop_parser.add_argument("target", nargs="?", default="all", help="Service to stop: all (default), ollama, or server")
 
     # Platform manager
     plat_parser = subparsers.add_parser(
@@ -291,6 +291,11 @@ def build_parser() -> argparse.ArgumentParser:
     serve_parser.add_argument("--host", type=str, default=None, help="Host interface to bind to (default: 127.0.0.1, use 0.0.0.0 for LAN)")
     serve_parser.add_argument("--api-key", "-k", type=str, default=None, help="Optional bearer API key to secure endpoints")
     serve_parser.add_argument("--no-auto-port", action="store_true", help="Fail if specified port is in use instead of choosing next available")
+    serve_parser.add_argument(
+        "--detach", "-d",
+        action="store_true",
+        help="Run API server in the background as a detached process without keeping console open",
+    )
 
     # Update / Synchronization
     update_parser = subparsers.add_parser(
@@ -418,6 +423,16 @@ def main(argv: Optional[List[str]] = None) -> None:
             render_banner(config, client)
             run_agent_interactive(config, client)
     elif cmd == "serve":
+        if getattr(args, "detach", False):
+            from locallm.core.service_manager import start_api_server_service
+            h = getattr(args, "host", None) or getattr(config, "server_host", "127.0.0.1")
+            p = getattr(args, "port", None) or getattr(config, "server_port", 8080)
+            ok, msg = start_api_server_service(config, host=h, port=p)
+            if ok:
+                console.print(f"[bold green]✔[/] {msg}")
+            else:
+                console.print(f"[bold red]✘[/] {msg}")
+            return
         from locallm.modules.api_server import run_api_server
         auto_port = not getattr(args, "no_auto_port", False)
         run_api_server(
@@ -750,26 +765,53 @@ def _handle_service_cli(action: str, target: str, config) -> None:
         get_all_services_status,
         start_ollama_service,
         stop_ollama_service,
+        start_api_server_service,
+        stop_api_server_service,
     )
 
+    s_host = getattr(config, "server_host", "127.0.0.1")
+    s_port = getattr(config, "server_port", 8080)
+    tgt = (target or "").strip().lower()
+
     if action == "status":
-        statuses = get_all_services_status(config.ollama_host, config.custom_platforms)
+        statuses = get_all_services_status(
+            config.ollama_host,
+            config.custom_platforms,
+            server_host=s_host,
+            server_port=s_port,
+        )
         for name, running in statuses.items():
             st = "[bold green]ONLINE[/]" if running else "[bold red]OFFLINE[/]"
             console.print(f"{name}: {st}")
         return
 
     if action == "start":
-        if target in ("ollama", "all"):
+        if tgt in ("server", "api", "gateway"):
+            ok, msg = start_api_server_service(config, host=s_host, port=s_port)
+            console.print(f"[bold cyan][API Gateway Server][/] {msg}")
+        elif tgt in ("ollama",):
             ok, msg = start_ollama_service()
             console.print(f"[bold cyan][Ollama][/] {msg}")
+        elif tgt in ("all", ""):
+            ok1, msg1 = start_ollama_service()
+            console.print(f"[bold cyan][Ollama][/] {msg1}")
+            ok2, msg2 = start_api_server_service(config, host=s_host, port=s_port)
+            console.print(f"[bold cyan][API Gateway Server][/] {msg2}")
         else:
             console.print(f"[#aaaaaa]Service '{target}' is an external or custom platform. Start it via its daemon executable or container.[/]")
 
     elif action == "stop":
-        if target in ("ollama", "all"):
+        if tgt in ("server", "api", "gateway"):
+            ok, msg = stop_api_server_service(s_host, s_port)
+            console.print(f"[bold cyan][API Gateway Server][/] {msg}")
+        elif tgt in ("ollama",):
             ok, msg = stop_ollama_service(config.ollama_host)
             console.print(f"[bold cyan][Ollama][/] {msg}")
+        elif tgt in ("all", ""):
+            ok1, msg1 = stop_ollama_service(config.ollama_host)
+            console.print(f"[bold cyan][Ollama][/] {msg1}")
+            ok2, msg2 = stop_api_server_service(s_host, s_port)
+            console.print(f"[bold cyan][API Gateway Server][/] {msg2}")
         else:
             console.print(f"[#aaaaaa]Service '{target}' is an external or custom platform. Stop it via its daemon process or container.[/]")
 

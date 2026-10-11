@@ -67,38 +67,146 @@ export function getSiteName(domain: string, title?: string): string {
   return cleanDomain;
 }
 
+export interface ProcessedMessageContent {
+  thinking: string;
+  response: string;
+  isThinking: boolean;
+}
+
+/**
+ * Remove directives, web search raw dumps, and JSON tool call artifacts from final text.
+ */
+function cleanDirectivesAndArtifacts(text: string): string {
+  if (!text) return '';
+  let cleaned = text;
+
+  // 1. Remove [Web Search Results for '...']: block dumps
+  cleaned = cleaned.replace(
+    /(?:\[?Web Search Results for '[^']+']?:?|\[Web Search Notice[^\]]*\]:?)\s*[\s\S]*?(?=(?:\n\n|\r?\n)(?:Based on|According to|Here (?:are|is)|Summary|In summary|Tentu|Baik|Berdasarkan|[A-Z#]))/gi,
+    ''
+  );
+
+  // 2. Remove system directive leaks e.g. "Directives: ..." or "Directives (Tools Enabled): ..."
+  cleaned = cleaned.replace(
+    /(?:^|\n\n)Directives(?:\s*\([^)]*\))?:\s*[\s\S]*?(?=(?:\n\n|\r?\n)(?:[A-Z#]|Based on|Tentu|Baik|$))/gi,
+    ''
+  );
+
+  // 3. Remove standalone JSON tool call blocks (e.g. ```json {"tool": ...} ``` or raw { "command": "search_web", ... })
+  cleaned = cleaned.replace(/```(?:json|tool_calls?)?\s*\{[\s\S]*?"(?:tool|action|name|command|function)":[\s\S]*?\}\s*```/gi, '');
+  cleaned = cleaned.replace(/\{[\s\S]*?"(?:command|tool|action|function)"\s*:[\s\S]*?"(?:parameters|arguments|query)"[\s\S]*?\}/gi, '');
+  cleaned = cleaned.replace(/\{[\s\S]*?"reasoning"\s*:[\s\S]*?"command"\s*:[\s\S]*?\}/gi, '');
+
+  // 4. Remove dangling tool preambles (e.g. "I'll search for ... for you.")
+  cleaned = cleaned.replace(/^(?:I(?:'ll| will)\s+(?:search|look up|check|browse)\s+[\s\S]*?(?:for you|online)\.?\s*)$/gim, '');
+
+  // 5. Clean leading response labels like "Response:", "**Response:**", "**Answer:**"
+  cleaned = cleaned.replace(/^(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer|Jawaban|Hasil)(?:\*\*|\*|:|\s)*\n?/i, '');
+
+  return cleaned.trim();
+}
+
+/**
+ * Robustly extract thinking / chain of thought and clean response for both XML tags and prose-based models (Gemma, Qwen, etc.).
+ */
+export function extractThinkingAndResponse(rawText: string): ProcessedMessageContent {
+  if (!rawText) return { thinking: '', response: '', isThinking: false };
+
+  const text = rawText.trim();
+
+  // Case 1: Tag-based reasoning (<think>...</think> or <thought>...</thought>)
+  const closedTagMatch = text.match(/<(?:think|thought)>([\s\S]*?)<\/(?:think|thought)>/i);
+  if (closedTagMatch) {
+    const thinking = closedTagMatch[1].trim();
+    const rawResponse = text.replace(/<(?:think|thought)>[\s\S]*?<\/(?:think|thought)>/i, '').trim();
+    return {
+      thinking,
+      response: cleanDirectivesAndArtifacts(rawResponse),
+      isThinking: false
+    };
+  }
+
+  // Unclosed <think> or <thought> tag (currently streaming thinking tokens)
+  const unclosedTagMatch = text.match(/<(?:think|thought)>([\s\S]*)$/i);
+  if (unclosedTagMatch) {
+    return {
+      thinking: unclosedTagMatch[1].trim(),
+      response: '',
+      isThinking: true
+    };
+  }
+
+  // Case 2: Prose-based thinking headers (e.g. Gemma, Llama, Qwen outputting markdown or labeled thinking)
+  const proseThinkHeaderRegex = /^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?|Let(?:'s| us) think step by step:?)(?:\r?\n)?/i;
+
+  if (proseThinkHeaderRegex.test(text)) {
+    const startMatch = text.match(proseThinkHeaderRegex);
+    const startLen = startMatch ? startMatch[0].length : 0;
+    const afterHeader = text.slice(startLen);
+
+    // Look for transition to final response:
+    // **Response:**, **Answer:**, **Final Answer:**, Response:, Answer:, Final Answer:, ### Response, etc.
+    const responseTransitionRegex = /(?:\r?\n|\n\n)(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer|Output|Hasil|Jawaban|Kesimpulan)(?:\*\*|\*|:|\s)*(?:\r?\n|$)/i;
+    const transMatch = afterHeader.match(responseTransitionRegex);
+
+    if (transMatch && transMatch.index !== undefined) {
+      const thinking = afterHeader.slice(0, transMatch.index).trim();
+      const rawResponse = afterHeader.slice(transMatch.index + transMatch[0].length).trim();
+      return {
+        thinking,
+        response: cleanDirectivesAndArtifacts(rawResponse),
+        isThinking: false
+      };
+    }
+
+    // ReAct style Final Answer:
+    const finalAnswerMatch = afterHeader.match(/(?:\r?\n)(?:Final Answer|Jawaban Akhir):\s*/i);
+    if (finalAnswerMatch && finalAnswerMatch.index !== undefined) {
+      const thinking = afterHeader.slice(0, finalAnswerMatch.index).trim();
+      const rawResponse = afterHeader.slice(finalAnswerMatch.index + finalAnswerMatch[0].length).trim();
+      return {
+        thinking,
+        response: cleanDirectivesAndArtifacts(rawResponse),
+        isThinking: false
+      };
+    }
+
+    // Still streaming thinking or no transition tag yet
+    return {
+      thinking: afterHeader.trim(),
+      response: '',
+      isThinking: true
+    };
+  }
+
+  // Case 3: Embedded think block within text
+  const embeddedMatch = text.match(/(?:(?:\n\n|\r?\n)(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning)(?:\*\*|\*|:|\s)*)([\s\S]*?)(?=(?:\n\n|\r?\n)(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer)(?:\*\*|\*|:|\s)*|$)/i);
+  if (embeddedMatch && embeddedMatch.index !== undefined) {
+    const thinking = embeddedMatch[1].trim();
+    let rawResponse = (text.slice(0, embeddedMatch.index) + text.slice(embeddedMatch.index + embeddedMatch[0].length)).trim();
+    rawResponse = rawResponse.replace(/^(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer)(?:\*\*|\*|:|\s)*/i, '').trim();
+    return {
+      thinking,
+      response: cleanDirectivesAndArtifacts(rawResponse),
+      isThinking: false
+    };
+  }
+
+  // Case 4: No thinking detected
+  return {
+    thinking: '',
+    response: cleanDirectivesAndArtifacts(text),
+    isThinking: false
+  };
+}
+
 /**
  * Remove thinking blocks, intermediate tool calls, search queries, and agent steps from displayed content.
  */
 export function cleanAssistantContent(rawText: string): string {
   if (!rawText) return '';
-
-  let cleaned = rawText;
-
-  // 1. Remove complete <think>...</think> and <thought>...</thought> reasoning blocks
-  cleaned = cleaned.replace(/<(?:think|thought)>[\s\S]*?<\/(?:think|thought)>/gi, '');
-
-  // 2. Remove unclosed <think> or <thought> tag if model is currently thinking or output truncated
-  cleaned = cleaned.replace(/<(?:think|thought)>[\s\S]*$/gi, '');
-
-  // 3. Remove "Web Search Results for '...':" block dumps while preserving the synthesis response
-  cleaned = cleaned.replace(
-    /Web Search Results for '[^']+':[\s\S]*?(?=\n\n(?:Based on|According to|Here are|Summary|In summary|[A-Z#]))/gi,
-    ''
-  );
-
-  // 4. Remove standalone JSON tool call blocks (e.g. ```json {"tool": ...} ``` or raw { "command": "search_web", ... })
-  cleaned = cleaned.replace(/```(?:json|tool_calls?)?\s*\{[\s\S]*?"(?:tool|action|name|command|function)":[\s\S]*?\}\s*```/gi, '');
-  cleaned = cleaned.replace(/\{[\s\S]*?"(?:command|tool|action|function)"\s*:[\s\S]*?"(?:parameters|arguments|query)"[\s\S]*?\}/gi, '');
-  cleaned = cleaned.replace(/\{[\s\S]*?"reasoning"\s*:[\s\S]*?"command"\s*:[\s\S]*?\}/gi, '');
-
-  // 5. Remove leading step prefixes like "Step 1: ...", "Action: ...", "Observation: ..."
-  cleaned = cleaned.replace(/^(?:Thinking Process|Thought|Action|Observation|Step \d+):\s*[\s\S]*?(?=\n\n[A-Z#]|\n\n(?:\*\*|[A-Z]))/gim, '');
-
-  // 6. Clean dangling tool preambles if no final content follows (e.g. "I'll search for ... for you.")
-  cleaned = cleaned.replace(/^(?:I(?:'ll| will)\s+(?:search|look up|check|browse)\s+[\s\S]*?(?:for you|online)\.?\s*)$/gim, '');
-
-  return cleaned.trim();
+  const parsed = extractThinkingAndResponse(rawText);
+  return parsed.response;
 }
 
 /**
@@ -106,11 +214,8 @@ export function cleanAssistantContent(rawText: string): string {
  */
 export function isOnlyThinking(rawText: string): boolean {
   if (!rawText) return false;
-  const hasThink = /<(?:think|thought)>|"(?:reasoning|reasoning_content|command|tool_call)"/i.test(rawText);
-  if (!hasThink) return false;
-
-  const cleaned = cleanAssistantContent(rawText);
-  return cleaned.length === 0;
+  const parsed = extractThinkingAndResponse(rawText);
+  return parsed.isThinking || (parsed.thinking.length > 0 && parsed.response.length === 0);
 }
 
 /**
@@ -131,7 +236,7 @@ export function extractCurrentThinkingStep(rawText: string): string {
   }
 
   // 2. CoT reasoning tags
-  if (/<(?:think|thought)>/i.test(rawText)) {
+  if (/<(?:think|thought)>/i.test(rawText) || /thinking process|thought:/i.test(rawText)) {
     return 'Thinking...';
   }
 

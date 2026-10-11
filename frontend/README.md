@@ -22,14 +22,17 @@ Built with **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Motion (`mot
 - **Sleek Dark Mode**: Deep obsidian and zinc surfaces (`#070a12`) with frosted translucent cards.
 - **Crisp Light Mode**: Soft glare-free background with bold, high-contrast dark typography (`text-slate-950 font-bold`) ensuring complete legibility without washed-out gray text.
 
-### 📝 Rich Markdown, Tables & Code Highlighting
+### 📝 Rich Markdown, Tables, Canvas & Code Highlighting
 - **Event-Driven Reasoning States & Zero-Leak CoT**: Real-time high-level execution state streaming (`routing`, `thinking_start`, `thinking_end`, `tool_start`, `tool_end`, `response_start`, `response_token`, `done`), transforming model states into clean generic badges (*"Thinking..."*, *"Searching..."*, *"Running Python..."*, *"Generating..."*) without leaking internal raw thoughts.
+- **Collapsible Thought Process Accordion**: Deep reasoning traces are automatically parsed into an interactive expandable thought accordion above the answer, keeping thought traces organized without leaking into the final answer.
 - **Clean Reasoning & Trace Filtering**: Automatically hides `<think>...</think>` and `<thought>...</thought>` reasoning tokens from the final response bubbles and session titles, keeping answers clean and readable.
 - **Zero-Delay Streaming Web Search**: Connects immediately via SSE to stream real-time status chunks while queries run, synthesizing findings with markdown links (`[Source Title](URL)`) and auto-populating the sources drawer.
 - **Refined Tables with Hover Copy Button**: Clean horizontal-only grid lines (no vertical lines) with centered, bold column headers and no outer borders. Hovering reveals a copy icon beside the table that copies the whole table with headers in Markdown and HTML.
 - **Collapsible Sources Side Panel**: External references and search results are parsed into domain-branded cards with favicons, viewable in a sliding side panel.
 - **One-Click Word Export (`.doc`)**: Export any assistant response directly to a styled Microsoft Word document.
-- **Code Blocks & Lightbox**: Multi-language syntax-highlighted code blocks with copy buttons, and full-resolution inline image zoom modal.
+- **Seamless Canvas CodeBlocks**: Multi-language syntax-highlighted code canvas with uniform dark surface across header and body, zero distracting borders or grid lines, bold language headers, icon-only copy button with instant checkmark feedback and universal clipboard fallback, and customized dark horizontal scrollbars.
+- **Floating Header with Full-Screen Message Scroll**: Translucent model picker and theme controls float gracefully with passthrough pointer events, allowing conversation messages to glide all the way to the top edge of the browser viewport.
+- **Image Lightbox**: Full-resolution inline image zoom modal with smooth backdrop blur.
 
 ### 🎯 Conversation Workflow & Polish
 - **Tactile Copy Buttons**: Copy buttons with hover tooltips on both assistant responses and user message bubbles.
@@ -70,7 +73,7 @@ Built with **React 19**, **TypeScript**, **Tailwind CSS v4**, and **Motion (`mot
 - **Multi-File Attachments (up to 5 files)**: Drag-and-drop or upload images, PDFs, Word documents (`.docx`), and text/code files directly into the prompt context with interactive preview chips.
 - **Multi-Turn Document Context Retention**: File content is automatically maintained across subsequent conversation turns so the model retains full document awareness during follow-up questions.
 - **Interactive Starter Prompts**: 3 randomized starter suggestion cards on empty sessions to jumpstart coding, debugging, or brainstorming tasks in one click.
-- **Dynamic Web Chat Greetings**: Randomized modern AI greetings (ChatGPT/Claude style) that refresh on every new chat.
+- **Dynamic Web Chat Greetings**: Randomized modern contextual AI greetings that refresh on every new chat.
 - **AI Disclaimer Header**: Subtle, sleek disclaimer header above the chat input box (*"LocaLLM can stumble sometimes. Stay sharp and double-check key info."*).
 - **Web Search & Agent Tool Toggles**: Direct toggle buttons to enable or disable autonomous tools or real-time web research on a per-prompt basis.
 

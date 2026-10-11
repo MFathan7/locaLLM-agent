@@ -3,7 +3,7 @@
 import shutil
 import subprocess
 import time
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple, Any
 import httpx
 import psutil
 
@@ -45,12 +45,27 @@ def is_ollama_installed() -> bool:
 
 
 def start_ollama_service() -> Tuple[bool, str]:
-    """Start Ollama server process explicitly upon user request."""
-    if is_ollama_running():
+    """Start Ollama server process explicitly upon user request with environment inheritance."""
+    import os
+    import sys
+    from pathlib import Path
+
+    if is_ollama_running(max_cache_age=0.0):
         return True, "Ollama service is already running."
 
-    if not shutil.which("ollama"):
-        return False, "Ollama CLI executable not found in system PATH."
+    ollama_cmd = ["ollama", "serve"]
+    if sys.platform == "win32":
+        local_app_data = os.environ.get("LOCALAPPDATA", "")
+        if local_app_data:
+            ollama_app_exe = Path(local_app_data) / "Programs" / "Ollama" / "ollama app.exe"
+            ollama_cli_exe = Path(local_app_data) / "Programs" / "Ollama" / "ollama.exe"
+            if ollama_app_exe.exists():
+                ollama_cmd = [str(ollama_app_exe)]
+            elif ollama_cli_exe.exists():
+                ollama_cmd = [str(ollama_cli_exe), "serve"]
+
+    if not shutil.which(ollama_cmd[0]) and not Path(ollama_cmd[0]).exists():
+        return False, "Ollama CLI or application executable not found in system PATH."
 
     try:
         flags = 0
@@ -59,13 +74,25 @@ def start_ollama_service() -> Tuple[bool, str]:
         if hasattr(subprocess, "CREATE_NO_WINDOW"):
             flags |= subprocess.CREATE_NO_WINDOW
 
-        subprocess.Popen(
-            ["ollama", "serve"],
+        env = dict(os.environ)
+        proc = subprocess.Popen(
+            ollama_cmd,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
             creationflags=flags,
+            env=env,
         )
-        return True, "Ollama service started successfully in background."
+
+        for _ in range(15):
+            time.sleep(0.25)
+            _service_cache.clear()
+            if is_ollama_running(max_cache_age=0.0):
+                return True, "Ollama service started successfully in background."
+
+        if proc.poll() is not None:
+            return False, f"Ollama process exited with code {proc.returncode}."
+
+        return True, f"Ollama launched (PID {proc.pid}) and initializing in background."
     except Exception as exc:
         return False, f"Failed to start Ollama: {exc}"
 
@@ -154,13 +181,157 @@ def is_custom_platform_reachable(
         return False
 
 
+def is_api_server_running(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+    max_cache_age: float = 3.0,
+) -> bool:
+    """Check if the local OpenAI-compatible API Gateway server is actively listening."""
+    now = time.time()
+    cache_key = f"api_server_{host}_{port}"
+    if cache_key in _service_cache:
+        val, ts = _service_cache[cache_key]
+        if now - ts < max_cache_age:
+            return val
+
+    # Fast HTTP probe on /health
+    try:
+        url = f"http://{host}:{port}/health"
+        with httpx.Client(timeout=0.6) as client:
+            res = client.get(url)
+            if res.status_code == 200:
+                _service_cache[cache_key] = (True, now)
+                return True
+    except Exception:
+        pass
+
+    # Process table check fallback for locallm serve
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        try:
+            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
+            if "locallm" in cmdline and "serve" in cmdline:
+                _service_cache[cache_key] = (True, now)
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    _service_cache[cache_key] = (False, now)
+    return False
+
+
+def start_api_server_service(
+    config: Optional[Any] = None,
+    host: Optional[str] = None,
+    port: Optional[int] = None,
+) -> Tuple[bool, str]:
+    """Start locaLLM API Gateway server daemon in background."""
+    import os
+    import sys
+    from pathlib import Path
+    from locallm.config import get_config_dir
+
+    target_host = host or getattr(config, "server_host", "127.0.0.1")
+    target_port = port or getattr(config, "server_port", 8080)
+
+    if is_api_server_running(target_host, target_port):
+        return True, f"API Gateway server is already running on http://{target_host}:{target_port}/v1"
+
+    repo_root = Path(__file__).resolve().parent.parent.parent
+
+    # Detect the best python or locallm executable in local environment
+    venv_locallm = repo_root / ".venv" / "Scripts" / "locallm.exe"
+    venv_pythonw = repo_root / ".venv" / "Scripts" / "pythonw.exe"
+    venv_python = repo_root / ".venv" / "Scripts" / "python.exe"
+
+    if sys.platform == "win32" and venv_pythonw.exists():
+        cmd = [str(venv_pythonw), "-m", "locallm", "serve", "--host", str(target_host), "--port", str(target_port)]
+    elif sys.platform == "win32" and venv_locallm.exists():
+        cmd = [str(venv_locallm), "serve", "--host", str(target_host), "--port", str(target_port)]
+    elif venv_python.exists():
+        cmd = [str(venv_python), "-m", "locallm", "serve", "--host", str(target_host), "--port", str(target_port)]
+    else:
+        cmd = [sys.executable, "-m", "locallm", "serve", "--host", str(target_host), "--port", str(target_port)]
+
+    try:
+        flags = 0
+        if hasattr(subprocess, "DETACHED_PROCESS") and hasattr(subprocess, "CREATE_NEW_PROCESS_GROUP"):
+            flags = subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+        if hasattr(subprocess, "CREATE_NO_WINDOW"):
+            flags |= subprocess.CREATE_NO_WINDOW
+
+        log_dir = get_config_dir()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = open(log_dir / "server.log", "a", encoding="utf-8")
+
+        env = dict(os.environ)
+        current_pp = env.get("PYTHONPATH", "")
+        env["PYTHONPATH"] = f"{repo_root}{os.pathsep}{current_pp}" if current_pp else str(repo_root)
+
+        kwargs: Dict[str, Any] = {
+            "stdout": log_file,
+            "stderr": log_file,
+            "stdin": subprocess.DEVNULL,
+            "cwd": str(repo_root),
+            "env": env,
+        }
+        if sys.platform == "win32":
+            kwargs["creationflags"] = flags
+        else:
+            kwargs["start_new_session"] = True
+
+        proc = subprocess.Popen(cmd, **kwargs)
+
+        for _ in range(12):
+            time.sleep(0.25)
+            _service_cache.clear()
+            if is_api_server_running(target_host, target_port, max_cache_age=0.0):
+                return True, f"API Gateway server started in background at http://{target_host}:{target_port}/v1"
+
+        if proc.poll() is not None:
+            return False, f"API Gateway server exited with code {proc.returncode}. See {log_dir / 'server.log'}"
+
+        return False, f"API Gateway server launched (PID {proc.pid}) but did not respond on port {target_port} within timeout. See {log_dir / 'server.log'}"
+    except Exception as exc:
+        return False, f"Failed to start API Gateway server: {exc}"
+
+
+def stop_api_server_service(
+    host: str = "127.0.0.1",
+    port: int = 8080,
+) -> Tuple[bool, str]:
+    """Stop running locaLLM API Gateway background process."""
+    stopped_count = 0
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
+        try:
+            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
+            if ("locallm" in cmdline and "serve" in cmdline) or ("api_server" in cmdline and "python" in cmdline):
+                for child in proc.children(recursive=True):
+                    try:
+                        child.terminate()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+                proc.terminate()
+                stopped_count += 1
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
+    _service_cache.clear()
+    if stopped_count > 0:
+        return True, f"Stopped {stopped_count} background API server process(es)."
+    return False, "No active API server process found to stop."
+
+
 def get_all_services_status(
     ollama_host: str = "http://127.0.0.1:11434",
     custom_platforms: Optional[list] = None,
+    server_host: str = "127.0.0.1",
+    server_port: int = 8080,
 ) -> Dict[str, bool]:
     """Return running state map for configured local inference services."""
     statuses: Dict[str, bool] = {
         "Ollama": is_ollama_running(ollama_host),
+        "API Gateway Server": is_api_server_running(server_host, server_port),
     }
     if custom_platforms:
         for p in custom_platforms:

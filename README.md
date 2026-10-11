@@ -21,6 +21,17 @@
 
 ### 2. Installation
 
+#### Automated Installation (Windows)
+Run the automated Windows installer script which auto-detects Python, creates the `.venv` virtual environment, installs dependencies, and configures global CLI runners:
+
+```powershell
+# In PowerShell or Command Prompt:
+.\install.bat
+
+# Or directly in PowerShell:
+.\install.ps1
+```
+
 #### Automated Installation (Linux & macOS)
 Run the automated installer script which auto-detects your OS (including Arch Linux, Ubuntu/Debian, Fedora, macOS), bootstraps the Python virtual environment (`.venv`), installs all dependencies, and configures the `locallm` CLI command:
 
@@ -109,6 +120,12 @@ locallm serve --port 8080
 
 # 6. Check GPU VRAM and model compatibility
 locallm models
+
+# 7. Start Ollama and LocaLLM API server in the background
+locallm start
+
+# 8. Stop background services cleanly
+locallm stop
 ```
 
 ---
@@ -144,9 +161,16 @@ locallm models
   - Instant heuristic title extraction stripping conversational filler words (*"tolong buatkan"*, *"can you help me"*, etc.).
   - Thought-aware asynchronous AI title synthesis running in the background that waits for reasoning blocks to finish before naming conversations by user goal, ensuring zero leaked `<think>` tags in session titles.
 - **Adaptive Header Navigation**: Top header search icon hides when the sidebar is visible and animates in when collapsed, maintaining smooth spring transitions with zero animation gaps.
-- **Rich Markdown, Code Highlighting & Image Lightbox**:
-  - Syntax-highlighted code blocks with language tags and one-click copy.
-  - Inline image rendering with full-screen zoom lightbox modal.
+- **Seamless Canvas CodeBlocks**:
+  - Multi-language syntax-highlighted code canvas with uniform dark surface across header and body, zero distracting borders or grid lines, bold language headers, and customized dark horizontal scrollbars.
+  - Sticky header pinning at `top: 0` during vertical code scroll without mid-air floating gaps.
+  - Icon-only copy button with instant green checkmark visual feedback and universal fallback (`document.execCommand` + textarea) for restricted clipboard environments.
+- **Collapsible Thought Process Accordion**:
+  - Deep reasoning traces (`<think>` / `<thought>`) are automatically parsed into an interactive expandable thought accordion above the answer, keeping internal thought tokens organized without cluttering final answers.
+- **Floating Header with Full-Screen Message Scroll**:
+  - Translucent model picker and theme controls float gracefully with passthrough pointer events, allowing conversation messages to glide smoothly all the way to the top edge of the browser viewport.
+- **Image Lightbox Modal**:
+  - Inline image rendering with full-resolution zoom lightbox modal and smooth backdrop blur.
 - **High-Performance Conversation Search**:
   - Instant keyboard shortcut access (`Ctrl+F` or `Cmd+K` or header search icon).
   - Debounced input (120ms) for instantaneous 60fps keystrokes.
@@ -199,7 +223,7 @@ locallm models
 - **Universal Slash Command**: Access the Live Monitor on-the-fly anytime from inside chat sessions with `/top` or `/monitor`.
 
 ### 🚀 OpenAI-Compatible HTTP API Gateway (`locallm serve`)
-- **Universal OpenAI Endpoint**: Expose your local models through an OpenAI-standard HTTP service (`/v1/chat/completions` and `/v1/models`), compatible out of the box with **Cursor**, **Continue.dev**, **Claude Code**, **LibreChat**, **Open-WebUI**, and **LangChain**.
+- **Universal OpenAI Endpoint**: Expose your local models through an OpenAI-standard HTTP service (`/v1/chat/completions` and `/v1/models`), compatible out of the box with standard tools and clients such as **Cursor**, **Continue.dev**, **LibreChat**, **Open-WebUI**, and **LangChain**.
 - **Model Thinking Capability Endpoint**: Dedicated `/api/models/check-thinking` (and `/v1/models/check-thinking`) endpoint for inspecting whether specific models natively support reasoning/thinking modes, with `think: true/false` parameter passthrough.
 - **Smart Port Collision Fallback**: If the default port (e.g. `8080`) is already bound by another process, `locaLLM` automatically detects the conflict and finds the next available port (`8081..8090`).
 - **Optional Bearer Token Authentication**: Secure your API gateway with custom keys (`--api-key <secret>` or `LOCALLM_API_KEY`).
@@ -209,6 +233,7 @@ locallm models
 ### 🤖 Unified Autonomous Coding Agent & Interactive Assistant
 - **Consolidated Coding Agent Cockpit**: Interactive assistant (`locallm chat` and `locallm agent`) combines full conversational memory with multi-step autonomous execution (`MAX_TOOL_STEPS = 25`).
 - **Autonomous Agent in Main Menu**: Directly accessible from the main interactive console menu or via `locallm agent` for dedicated multi-step goals.
+- **Smart Task Termination & Early Exit Logic**: Evaluates multi-step execution on each turn and stops early when the user's objective is completed, preventing wasteful tool loops from spinning needlessly through the maximum iteration limit.
 - **Hybrid Chat & Agent Mode**: In Assistant Chat, models seamlessly transition into autonomous action when given actionable tasks (such as inspecting code, auditing targets, or running commands) without conversational stalling or asking repetitive clarification questions.
 - **Strict Workspace Sandboxing & Confinement**: All tools (`list_directory`, `read_file`, `write_file`, `execute_command`, `get_current_directory`) are strictly locked into the active workspace directory (`~/.locallm/workspaces/<workspace_name>/`). Resolving `.` or relative paths always maps inside the workspace, preventing accidental leakage of host user files (`~`).
 - **Anti-Loop Circuit Breaker**: Proactively halts repetitive identical tool invocations (if the exact same call is repeated twice consecutively), preventing infinite token-draining loops.
@@ -262,7 +287,7 @@ locallm models
 - **Multi-Connection Architecture**: Connect to multiple MCP servers concurrently (`filesystem`, `github`, `postgres`, `sqlite`, remote APIs).
 - **Transport Flexibility**: Native support for **`stdio`** (subprocesses via `npx`, `python`, `node`, `uvx`) and **`sse`** (remote HTTP/SSE streams).
 - **Zero External Bloat**: High-performance, zero-conflict JSON-RPC 2.0 client built directly on standard Python libraries and HTTPX.
-- **Cross-Platform & Standard Compatible**: Standard `mcp_servers.json` configuration compatible with Claude Desktop and Cursor.
+- **Cross-Platform & Standard Compatible**: Standard `mcp_servers.json` configuration compatible with standard MCP clients and Cursor.
 - **Unified Tool Dispatch & Namespacing**: Discovered MCP tools are dynamically exposed to Chat, Autonomous ReAct Agent, Telegram Bot, and WhatsApp Bot with collision-free namespacing (`mcp__<server>__<tool>`).
 - **Access Control & Privilege Gating**: Flag servers or individual tools as `privileged` to restrict them to authorized administrator callers only.
 - **Interactive TUI & CLI**: Manage servers with `locallm mcp list`, `locallm mcp test <name>`, `locallm mcp enable/disable <name>`, or the interactive wizard in `Integrations -> Model Context Protocol (MCP)`.
@@ -432,7 +457,7 @@ When compiling the prompt context, `locaLLM` resolves directives in strict order
 1. **Active Workspace**: `~/.locallm/workspaces/<name>/AGENTS.md` (or `SOUL.md`)
 2. **Global Custom Directives**: `~/.locallm/AGENTS.md`
 3. **Default Built-in Directives**: `DEFAULT_WORKSPACE_AGENTS_MD` template
-4. **Project Repository Rules**: Loaded automatically from `<cwd>/AGENTS.md` or `CLAUDE.md` under `[Project Architecture & Rules]`.
+4. **Project Repository Rules**: Loaded automatically from `<cwd>/AGENTS.md` (or other standard repository rule files) under `[Project Architecture & Rules]`.
 
 ### 2. Proactive Web Search & Refusal Interception
 Traditional local models often emit canned refusals (e.g., *"I don't have information about X"* or *"My knowledge cutoff is..."*) when asked about unfamiliar entities, niche enterprise software, or real-time news.

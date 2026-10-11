@@ -90,6 +90,21 @@ def execute_prompt(prompt: str, config: LocaLLMConfig, client: OllamaClient) -> 
                         turn_msg["tool_calls"] = recovered
 
                 if tool_calls:
+                    completion_call = next(
+                        (tc for tc in tool_calls if tc.get("function", {}).get("name") == "complete_task"),
+                        None
+                    )
+                    if completion_call:
+                        func_args = completion_call.get("function", {}).get("arguments", {})
+                        if isinstance(func_args, str):
+                            try:
+                                func_args = json.loads(func_args)
+                            except Exception:
+                                func_args = {}
+                        final_ans = func_args.get("final_answer") or func_args.get("answer") or "Task completed successfully."
+                        print_assistant_response(final_ans, stats=stats, context_limit=context_limit, model_name=target_model)
+                        return
+
                     executed_any_tool = True
                     messages.append(turn_msg)
                     for idx, tc in enumerate(tool_calls):

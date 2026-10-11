@@ -61,6 +61,26 @@
 ::-webkit-scrollbar-thumb { background: rgba(30, 41, 66, 0.22); border-radius: 9999px; }
 .dark ::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.16); }
 
+/* Canvas dark horizontal scrollbar */
+.canvas-scrollbar {
+  color-scheme: dark;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.22) transparent;
+}
+.canvas-scrollbar::-webkit-scrollbar {
+  height: 6px;
+}
+.canvas-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+.canvas-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 9999px;
+}
+.canvas-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+}
+
 /* ------------------------------------------------------------------ */
 /* Liquid Glass                                                         */
 /* Layers: translucent fill, strong backdrop blur + saturation, inner   */

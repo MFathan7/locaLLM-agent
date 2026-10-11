@@ -78,7 +78,7 @@ export function PlusMenu({
         animate={{ rotate: open ? 45 : 0 }}
         transition={bounce}
         className={clsx(
-          "w-9 h-9 rounded-full flex items-center justify-center transition-colors cursor-pointer relative",
+          "w-8.5 h-8.5 rounded-full flex items-center justify-center transition-colors cursor-pointer relative",
           selectedCount > 0
             ? "text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-950/60 hover:bg-blue-100 dark:hover:bg-blue-900/60"
             : "text-slate-600 dark:text-slate-300 bg-transparent hover:bg-black/[0.05] dark:hover:bg-white/[0.08] hover:text-slate-900 dark:hover:text-white"
@@ -124,7 +124,7 @@ export function PlusMenu({
                 icon={<Globe className="w-4 h-4" />}
                 label="Search web"
                 active={webSearch}
-                onClick={() => { onToggleWebSearch(); setOpen(false); }}
+                onClick={() => { onToggleWebSearch(); }}
               />
             )}
             {capabilities.tools && (
@@ -132,7 +132,7 @@ export function PlusMenu({
                 icon={<Wrench className="w-4 h-4" />}
                 label="Tools"
                 active={tools}
-                onClick={() => { onToggleTools(); setOpen(false); }}
+                onClick={() => { onToggleTools(); }}
               />
             )}
           </motion.div>

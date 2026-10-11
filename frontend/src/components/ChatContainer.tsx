@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import type { Message, SourceItem, AttachedFile } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
-import { Copy, Check, ArrowDown, FileDown, Compass, RotateCcw, FileText, Image as ImageIcon } from 'lucide-react';
+import { Copy, Check, ArrowDown, FileDown, Compass, RotateCcw, FileText, Image as ImageIcon, Brain, ChevronDown } from 'lucide-react';
 import clsx from 'clsx';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { cleanAssistantContent, extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking } from '../utils/messageProcessor';
+import { cleanAssistantContent, extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking, extractThinkingAndResponse } from '../utils/messageProcessor';
 import { exportResponseToDoc } from '../utils/docExport';
 
 interface ChatContainerProps {
@@ -100,9 +100,9 @@ export function ChatContainer({
       <div
         ref={containerRef}
         onScroll={handleScroll}
-        className="flex-1 overflow-y-auto px-4 py-4 md:px-8 scroll-smooth"
+        className="flex-1 overflow-y-auto px-4 pb-4 md:px-8 scroll-smooth"
       >
-        <div className="max-w-3xl mx-auto space-y-6">
+        <div className="max-w-3xl mx-auto space-y-6 pt-16">
           <AnimatePresence initial={false}>
             {visibleMessages.map((msg) => (
               <ChatBubble
@@ -185,6 +185,43 @@ function ThinkingDots() {
   );
 }
 
+function ThoughtAccordion({ thinking }: { thinking: string }) {
+  const [isExpanded, setIsExpanded] = useState(false);
+
+  if (!thinking || !thinking.trim()) return null;
+
+  return (
+    <div className="mb-3.5 select-none">
+      <button
+        type="button"
+        onClick={() => setIsExpanded(prev => !prev)}
+        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-xs font-medium text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-white/[0.08] transition-all cursor-pointer"
+        aria-expanded={isExpanded}
+      >
+        <Brain className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
+        <span>{isExpanded ? 'Hide thought process' : 'Thought process'}</span>
+        <ChevronDown className={clsx("w-3.5 h-3.5 transition-transform duration-200 text-slate-400", isExpanded && "rotate-180")} />
+      </button>
+
+      <AnimatePresence initial={false}>
+        {isExpanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: 'auto' }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.22, ease: 'easeInOut' }}
+            className="overflow-hidden mt-2"
+          >
+            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-black/30 border border-slate-200/80 dark:border-white/[0.08] text-xs/relaxed text-slate-600 dark:text-slate-400 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto selection:bg-blue-500/20 scrollbar-thin">
+              {thinking}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
 const ChatBubble = ({
   message,
   isTyping,
@@ -225,9 +262,10 @@ const ChatBubble = ({
     return attachedFiles.filter(f => !imageFiles.includes(f));
   }, [attachedFiles, imageFiles]);
 
-  // Clean intermediate thinking/search trace from the final rendered output
-  const cleanedContent = useMemo(() => {
-    return isUser ? message.content : cleanAssistantContent(message.content);
+  // Clean intermediate thinking/search trace from the final rendered output and extract reasoning
+  const { thinking: extractedThinking, response: cleanedContent } = useMemo(() => {
+    if (isUser) return { thinking: '', response: message.content, isThinking: false };
+    return extractThinkingAndResponse(message.content);
   }, [isUser, message.content]);
 
   // Resolve active high-level execution state or generic status badge
@@ -262,8 +300,38 @@ const ChatBubble = ({
     return extractSourcesFromText(message.content, message.sources);
   }, [isUser, message.content, message.sources]);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(cleanedContent || message.content);
+  const handleCopy = async () => {
+    const textToCopy = cleanedContent || message.content;
+    let success = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(textToCopy);
+        success = true;
+      }
+    } catch {
+      // fallback below
+    }
+
+    if (!success) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = textToCopy;
+        textarea.style.position = 'fixed';
+        textarea.style.top = '0';
+        textarea.style.left = '0';
+        textarea.style.width = '2em';
+        textarea.style.height = '2em';
+        textarea.style.background = 'transparent';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        success = document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch (err) {
+        console.error('Fallback message copy failed', err);
+      }
+    }
+
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
@@ -379,7 +447,10 @@ const ChatBubble = ({
               <span>Model tidak memberikan respon teks. Anda dapat mengklik tombol <strong>Re-answer</strong> di bawah untuk mencoba kembali.</span>
             </div>
           ) : (
-            <MarkdownRenderer content={cleanedContent} />
+            <>
+              {extractedThinking && <ThoughtAccordion thinking={extractedThinking} />}
+              <MarkdownRenderer content={cleanedContent} />
+            </>
           )}
 
           {/* Action icon buttons row: icon-only with animated hover tooltips */}

@@ -256,10 +256,10 @@ function App() {
         )}
       </AnimatePresence>
 
-      <main className="flex-1 flex flex-col min-w-0 relative h-[100dvh] z-10">
+      <main className="flex-1 flex flex-col min-w-0 relative h-[100dvh] z-10 overflow-hidden">
         {/* Floating header: no bar, no divider, only glass pills */}
-        <header className="h-14 shrink-0 flex items-center justify-between px-3 md:px-4 pt-2">
-          <div className="flex items-center gap-1.5 md:gap-2 min-w-0">
+        <header className="absolute top-0 left-0 right-0 z-20 h-14 flex items-center justify-between px-3 md:px-4 pt-2 pointer-events-none">
+          <div className="flex items-center gap-1.5 md:gap-2 min-w-0 pointer-events-auto">
             {/* Desktop collapsed controls: Expand sidebar + Search icon appear ONLY when sidebar is closed */}
             <AnimatePresence initial={false}>
               {isSidebarCollapsed && (
@@ -349,33 +349,35 @@ function App() {
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 pointer-events-auto">
             <ThemeToggle />
           </div>
         </header>
 
         {/* Center Area: Search mode replaces the active chat view when active */}
         {isSearchOpen ? (
-          <SearchOverlay
-            isOpen={isSearchOpen}
-            onClose={() => setIsSearchOpen(false)}
-            sessions={sessions}
-            workspaces={workspaces}
-            activeWorkspace={activeWorkspace}
-            onSelectSession={(sessionId, ws) => {
-              setIsSearchOpen(false);
-              if (ws && ws !== activeWorkspace) {
-                selectWorkspace(ws);
-              }
-              setActiveSessionId(sessionId);
-            }}
-          />
+          <div className="flex-1 flex min-h-0 pt-14 overflow-hidden relative">
+            <SearchOverlay
+              isOpen={isSearchOpen}
+              onClose={() => setIsSearchOpen(false)}
+              sessions={sessions}
+              workspaces={workspaces}
+              activeWorkspace={activeWorkspace}
+              onSelectSession={(sessionId, ws) => {
+                setIsSearchOpen(false);
+                if (ws && ws !== activeWorkspace) {
+                  selectWorkspace(ws);
+                }
+                setActiveSessionId(sessionId);
+              }}
+            />
+          </div>
         ) : (
           /* One shared layout: on a new chat the greeting + input sit centred, and once a message
               exists the input springs down to the bottom. The input stays mounted so it animates
               instead of re-rendering. */
           <div className="flex-1 flex min-h-0 overflow-hidden relative">
-            <div className={clsx('flex-1 flex flex-col min-h-0', isEmptyChat && 'justify-center pb-10')}>
+            <div className={clsx('flex-1 flex flex-col min-h-0', isEmptyChat && 'justify-center pb-10 pt-14')}>
               {isEmptyChat ? (
                 <EmptyState
                   key={activeSession?.id || `new-${activeWorkspace}`}
@@ -406,6 +408,7 @@ function App() {
                   isTyping={isTyping}
                   models={models}
                   currentModelId={config?.default_model || config?.model || ''}
+                  activeSessionId={activeSessionId}
                 />
               </motion.div>
             </div>

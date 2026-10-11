@@ -23,7 +23,7 @@ class MCPServerConfig:
     scope: str = "global"  # "global" or "workspace"
 
     def to_dict(self) -> Dict[str, Any]:
-        """Convert to dictionary representation matching Claude Desktop / standard schema."""
+        """Convert to dictionary representation matching standard MCP schema."""
         data: Dict[str, Any] = {
             "transport": self.transport,
             "enabled": self.enabled,

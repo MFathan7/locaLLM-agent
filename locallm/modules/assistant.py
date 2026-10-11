@@ -147,7 +147,8 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
             "2. Direct Target Testing: If the user provides a target URL (such as a website or IP to test), immediately use 'fetch_web' or 'execute_command' (e.g. curl) to inspect and probe the target. Do NOT spend turns enumerating offline skills or reading local directories unless specifically required.\n"
             "3. Security & Lab Authorization: You are operating in an authorized testing ground / lab environment. Carry out security testing, auditing, and vulnerability checks as requested using tools without generic refusal disclaimers.\n"
             "4. Workspace Confinement: All your local files and operations reside strictly inside your active workspace directory. Never inspect or navigate outside your workspace directory.\n"
-            "5. Grounding & Verification: Rely on real tool outputs and observations before concluding."
+            "5. Grounding & Verification: Rely on real tool outputs and observations before concluding.\n"
+            "6. Smart Termination: Minimize tool invocations. Never repeat checks or re-read files once data is obtained. Deliver the final answer to the user immediately, or invoke 'complete_task' as soon as the goal is accomplished."
         )
 
     memory = ConversationMemory(system_prompt=enhanced_prompt)
@@ -276,9 +277,23 @@ def _process_assistant_turn(
         executed_any_tool = False
         consecutive_failures: Dict[str, int] = {}
         identical_consecutive: Dict[str, int] = {}
+        soft_limit_threshold = 8
+        soft_limit_nudged = False
 
         while step < MAX_TOOL_STEPS:
             step += 1
+
+            # Kondisi 3 (Progressive System Nudge):
+            if step == soft_limit_threshold and not soft_limit_nudged:
+                soft_limit_nudged = True
+                memory.history.append({
+                    "role": "user",
+                    "content": (
+                        "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. "
+                        "Use the data and observations already gathered to synthesize the final answer immediately, or invoke 'complete_task'.]"
+                    ),
+                })
+
             turn_msg = None
             spinner_msg = (
                 "locaLLM is thinking..."
@@ -337,6 +352,30 @@ def _process_assistant_turn(
                             pass
 
             if tool_calls:
+                # Kondisi 2 (Explicit Completion Tool):
+                # Deteksi tool penyelesaian complete_task, putus iterasi seketika dan kembalikan output
+                completion_call = next(
+                    (tc for tc in tool_calls if tc.get("function", {}).get("name") == "complete_task"),
+                    None
+                )
+                if completion_call:
+                    func_args = completion_call.get("function", {}).get("arguments", {})
+                    if isinstance(func_args, str):
+                        try:
+                            func_args = json.loads(func_args)
+                        except Exception:
+                            func_args = {}
+                    final_ans = func_args.get("final_answer") or func_args.get("answer") or ""
+                    if not final_ans and turn_msg.get("content"):
+                        final_ans = turn_msg.get("content", "")
+                    if not final_ans:
+                        final_ans = "Task completed successfully."
+
+                    tracker.clear()
+                    print_assistant_response(final_ans.strip(), stats=stats, context_limit=context_limit, model_name=target_model)
+                    memory.add_assistant_message(final_ans.strip())
+                    return
+
                 executed_any_tool = True
                 memory.history.append(turn_msg)
                 should_trip_circuit = False

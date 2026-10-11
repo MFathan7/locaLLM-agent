@@ -145,40 +145,73 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
 function CodeBlock({ language, code }: { language: string; code: string }) {
   const [copied, setCopied] = useState(false);
 
-  const handleCopy = () => {
-    navigator.clipboard.writeText(code);
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    e.preventDefault();
+    let success = false;
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(code);
+        success = true;
+      }
+    } catch {
+      // fallback below
+    }
+
+    if (!success) {
+      try {
+        const textarea = document.createElement('textarea');
+        textarea.value = code;
+        textarea.style.position = 'fixed';
+        textarea.style.top = '0';
+        textarea.style.left = '0';
+        textarea.style.width = '2em';
+        textarea.style.height = '2em';
+        textarea.style.padding = '0';
+        textarea.style.border = 'none';
+        textarea.style.outline = 'none';
+        textarea.style.boxShadow = 'none';
+        textarea.style.background = 'transparent';
+        document.body.appendChild(textarea);
+        textarea.focus();
+        textarea.select();
+        success = document.execCommand('copy');
+        document.body.removeChild(textarea);
+      } catch (err) {
+        console.error('Fallback copy failed', err);
+      }
+    }
+
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   };
 
+  const displayLang = (language || 'code').toLowerCase().trim();
+
   return (
-    <div className="relative my-3 rounded-2xl overflow-hidden border border-black/10 dark:border-white/10 bg-slate-900 dark:bg-black/40 text-slate-100 shadow-md">
-      {/* Code Header */}
-      <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.08] bg-black/20 text-xs text-slate-400">
-        <span className="font-mono text-[11px] uppercase tracking-wider text-slate-300">
-          {language || 'code'}
+    <div className="relative my-4 rounded-xl bg-[#181818] dark:bg-[#121214] text-neutral-100 shadow-sm">
+      {/* Sticky Header Bar */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-2.5 bg-[#181818] dark:bg-[#121214] rounded-t-xl select-none">
+        <span className="font-mono text-sm font-bold lowercase tracking-tight text-neutral-200 dark:text-neutral-100">
+          {displayLang}
         </span>
         <button
           onClick={handleCopy}
-          className="inline-flex items-center gap-1.5 text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
-          title="Copy code"
+          type="button"
+          className="w-8 h-8 rounded-lg flex items-center justify-center text-neutral-400 hover:text-white hover:bg-white/10 active:scale-95 transition-all cursor-pointer select-none"
+          title={copied ? 'Copied' : 'Copy code'}
+          aria-label={copied ? 'Copied' : 'Copy code'}
         >
           {copied ? (
-            <>
-              <Check className="w-3.5 h-3.5 text-emerald-400" />
-              <span className="text-emerald-400">Copied</span>
-            </>
+            <Check className="w-[18px] h-[18px] text-emerald-400" />
           ) : (
-            <>
-              <Copy className="w-3.5 h-3.5" />
-              <span>Copy</span>
-            </>
+            <Copy className="w-[18px] h-[18px]" />
           )}
         </button>
       </div>
 
-      {/* Code Content */}
-      <pre className="p-4 overflow-x-auto text-[13px]/relaxed font-mono selection:bg-blue-600/40">
+      {/* Code Content Canvas */}
+      <pre className="p-4 sm:p-5 overflow-x-auto text-[13.5px] md:text-[14px]/relaxed font-mono selection:bg-blue-600/40 text-neutral-100 canvas-scrollbar rounded-b-xl">
         <code>{code}</code>
       </pre>
     </div>

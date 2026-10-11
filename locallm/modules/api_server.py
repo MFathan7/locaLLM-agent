@@ -1512,14 +1512,14 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             lower_buf = stream_buf.lower()
                             think_idx = -1
                             tag_len = 0
-                            for start_tag in ("<think>", "<thought>"):
+                            for start_tag in ("<think>", "<thought>", "thinking process:", "**thinking process:**", "thought process:", "**thought process:**"):
                                 pos = lower_buf.find(start_tag)
                                 if pos != -1 and (think_idx == -1 or pos < think_idx):
                                     think_idx = pos
                                     tag_len = len(start_tag)
 
                             if think_idx != -1:
-                                # Flush any content prior to <think>
+                                # Flush any content prior to thinking block
                                 before_text = stream_buf[:think_idx]
                                 if before_text.strip():
                                     _flush_content(before_text)
@@ -1530,8 +1530,8 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
                             # Check if buffer ends with a potential opening tag prefix
                             possible_prefix = False
-                            for prefix in ("<thought", "<thou", "<tho", "<think", "<thin", "<thi", "<th", "<t", "<"):
-                                if lower_buf.endswith(prefix) and len(stream_buf) <= 15:
+                            for prefix in ("<thought", "<thou", "<tho", "<think", "<thin", "<thi", "<th", "<t", "<", "**thinking", "thinking"):
+                                if lower_buf.endswith(prefix) and len(stream_buf) <= 25:
                                     possible_prefix = True
                                     break
                             if possible_prefix:
@@ -1545,7 +1545,16 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             lower_buf = stream_buf.lower()
                             end_idx = -1
                             end_tag_len = 0
-                            for end_tag in ("</think>", "</thought>"):
+                            for end_tag in (
+                                "</think>",
+                                "</thought>",
+                                "\n\n**response:**",
+                                "\n\nresponse:",
+                                "\n\n**answer:**",
+                                "\n\nanswer:",
+                                "\n\n**final answer:**",
+                                "\n\nfinal answer:",
+                            ):
                                 pos = lower_buf.find(end_tag)
                                 if pos != -1 and (end_idx == -1 or pos < end_idx):
                                     end_idx = pos
@@ -1561,7 +1570,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
                             # Keep only suffix if it could be start of closing tag
                             matched_prefix_len = 0
-                            for prefix in ("</thought", "</thou", "</tho", "</think", "</thin", "</thi", "</th", "</t", "</", "<"):
+                            for prefix in ("</thought", "</thou", "</tho", "</think", "</thin", "</thi", "</th", "</t", "</", "<", "\n\n**response", "\n\n**answer", "\n\n**final"):
                                 if lower_buf.endswith(prefix):
                                     matched_prefix_len = len(prefix)
                                     break
