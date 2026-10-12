@@ -656,9 +656,14 @@ export function useLocaLLM() {
               case 'tool_end':
                 break;
               case 'response_start':
-              case 'response_token':
                 nextState = 'generating';
                 nextLabel = 'Generating...';
+                break;
+              case 'response_token':
+                if (nextState !== 'thinking') {
+                  nextState = 'generating';
+                  nextLabel = 'Generating...';
+                }
                 break;
               case 'done':
                 nextState = 'done';
@@ -798,7 +803,11 @@ export function useLocaLLM() {
     if (sessionToUpdate.messages.length <= 1) {
       api.generateTitle(titleSubject, config).then(aiTitle => {
         const cleanTitle = sanitizeChatTitle(aiTitle, '');
-        if (cleanTitle && cleanTitle.length > 1) {
+        if (
+          cleanTitle &&
+          cleanTitle.length > 2 &&
+          !/^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning)\s*:?$/i.test(cleanTitle)
+        ) {
           setSessions(prev => prev.map(s => s.id === currentSessionId ? { ...s, title: cleanTitle } : s));
           api.saveSession({ ...updated, title: cleanTitle });
         }
@@ -918,9 +927,14 @@ export function useLocaLLM() {
               case 'tool_end':
                 break;
               case 'response_start':
-              case 'response_token':
                 nextState = 'generating';
                 nextLabel = 'Generating...';
+                break;
+              case 'response_token':
+                if (nextState !== 'thinking') {
+                  nextState = 'generating';
+                  nextLabel = 'Generating...';
+                }
                 break;
               case 'done':
                 nextState = 'done';

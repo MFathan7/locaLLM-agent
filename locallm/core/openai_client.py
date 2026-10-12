@@ -171,9 +171,19 @@ class OpenAIClient:
             choice = response.choices[0]
             msg = choice.message
 
+            reasoning = getattr(msg, "reasoning_content", None)
+            base_content = msg.content or ""
+            if isinstance(reasoning, str) and reasoning.strip():
+                if base_content:
+                    final_content = f"<think>\n{reasoning}\n</think>\n\n{base_content}"
+                else:
+                    final_content = f"<think>\n{reasoning}\n</think>"
+            else:
+                final_content = base_content
+
             result: Dict[str, Any] = {
                 "role": "assistant",
-                "content": msg.content or "",
+                "content": final_content,
             }
 
             if msg.tool_calls:
@@ -269,7 +279,7 @@ class OpenAIClient:
             delta = chunk.choices[0].delta
             reasoning = getattr(delta, "reasoning_content", None)
             content = delta.content or ""
-            if reasoning:
+            if reasoning and isinstance(reasoning, str):
                 if not in_thinking:
                     yield "<think>\n"
                     in_thinking = True

@@ -5,6 +5,9 @@ import {
   Paperclip,
   Brain,
   FileText,
+  FileCode,
+  FileSpreadsheet,
+  File as FileGeneric,
   Image as ImageIcon
 } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
@@ -22,7 +25,7 @@ interface ChatInputProps {
   currentModelId?: string;
   currentModel?: ModelInfo;
   isThinkingCompatible?: boolean;
-  activeSessionId?: string;
+  activeSessionId?: string | null;
 }
 
 const DEFAULT_CAPS: ModelCapabilities = { files: true, webSearch: true, tools: true, thinking: false };
@@ -107,6 +110,7 @@ export function ChatInput({
 }: ChatInputProps) {
   const [input, setInput] = useState('');
   const [files, setFiles] = useState<File[]>([]);
+  const [previewFile, setPreviewFile] = useState<File | null>(null);
   const [webSearchPref, setWebSearchPref] = useState(false);
   const [toolsPref, setToolsPref] = useState(false);
   const [thinkingPref, setThinkingPref] = useState(false);
@@ -255,6 +259,14 @@ export function ChatInput({
     }
   };
 
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const pasted = extractFilesFromDataTransfer(e.clipboardData);
+    if (pasted.length > 0) {
+      e.preventDefault();
+      appendFiles(pasted);
+    }
+  };
+
   const handleFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
     const picked = Array.from(e.target.files ?? []).map(normalizeFile);
     if (picked.length) {
@@ -288,6 +300,7 @@ export function ChatInput({
           }}
           onDragOver={handleDragOverEvent}
           onDrop={handleDropEvent}
+          onPaste={handlePaste}
           className={`relative bg-white dark:bg-[#121826] border rounded-[26px] py-1.5 px-2 shadow-lg shadow-black/5 dark:shadow-black/40 transition-all ${
             isDragging
               ? 'border-blue-500 ring-2 ring-blue-500/40'
@@ -326,6 +339,7 @@ export function ChatInput({
                         key={`${f.name}-${i}`}
                         file={f}
                         onRemove={() => setFiles(prev => prev.filter(item => item !== f))}
+                        onPreview={() => setPreviewFile(f)}
                       />
                     ))}
                   </div>
@@ -339,6 +353,7 @@ export function ChatInput({
                         key={`${f.name}-${i}`}
                         file={f}
                         onRemove={() => setFiles(prev => prev.filter(item => item !== f))}
+                        onPreview={() => setPreviewFile(f)}
                       />
                     ))}
                     {files.length >= 5 && (
@@ -386,6 +401,7 @@ export function ChatInput({
               onKeyDown={handleKeyDown}
               onDragOver={handleDragOverEvent}
               onDrop={handleDropEvent}
+              onPaste={handlePaste}
               placeholder="Message LocaLLM (or drop files here)"
               rows={1}
               disabled={disabled}
@@ -465,12 +481,44 @@ export function ChatInput({
             </div>
           </div>
         </div>
+
+        {/* File Preview Modal Pop-up */}
+        <AnimatePresence>
+          {previewFile && (
+            <FilePreviewModal
+              file={previewFile}
+              onClose={() => setPreviewFile(null)}
+            />
+          )}
+        </AnimatePresence>
       </div>
     </div>
   );
 }
 
-function ImagePreviewCard({ file, onRemove }: { file: File; onRemove: () => void }) {
+function getFileIcon(fileName: string) {
+  const ext = fileName.split('.').pop()?.toLowerCase() || '';
+  if (ext === 'pdf') {
+    return <FileText className="w-3.5 h-3.5 text-rose-500 shrink-0" />;
+  }
+  if (['py', 'js', 'ts', 'tsx', 'jsx', 'json', 'html', 'css', 'scss', 'sh', 'bash', 'sql', 'cpp', 'c', 'java', 'rs', 'go', 'yaml', 'yml'].includes(ext)) {
+    return <FileCode className="w-3.5 h-3.5 text-amber-500 shrink-0" />;
+  }
+  if (['csv', 'xlsx', 'xls', 'tsv'].includes(ext)) {
+    return <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-500 shrink-0" />;
+  }
+  return <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />;
+}
+
+function ImagePreviewCard({
+  file,
+  onRemove,
+  onPreview
+}: {
+  file: File;
+  onRemove: () => void;
+  onPreview: () => void;
+}) {
   const [url, setUrl] = useState<string>('');
 
   useEffect(() => {
@@ -479,15 +527,15 @@ function ImagePreviewCard({ file, onRemove }: { file: File; onRemove: () => void
     return () => URL.revokeObjectURL(objectUrl);
   }, [file]);
 
-  const sizeKb = Math.round(file.size / 1024);
-
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.8 }}
       transition={{ type: 'spring', stiffness: 450, damping: 22 }}
-      className="relative group w-16 h-16 rounded-2xl overflow-hidden border border-slate-300/80 dark:border-slate-700/80 bg-slate-100 dark:bg-slate-800 shadow-sm shrink-0"
+      onClick={onPreview}
+      title={file.name}
+      className="relative group w-16 h-16 rounded-2xl overflow-hidden border border-slate-300/80 dark:border-slate-700/80 bg-slate-100 dark:bg-slate-800 shadow-sm shrink-0 cursor-pointer hover:ring-2 hover:ring-blue-500/40 transition-all select-none"
     >
       {url ? (
         <img
@@ -503,40 +551,208 @@ function ImagePreviewCard({ file, onRemove }: { file: File; onRemove: () => void
       <div className="absolute inset-0 bg-gradient-to-t from-black/60 via-transparent to-transparent opacity-0 group-hover:opacity-100 transition-opacity" />
       <button
         type="button"
-        onClick={onRemove}
-        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-red-500 text-white flex items-center justify-center shadow-xs cursor-pointer transition-colors"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/70 hover:bg-red-500 text-white flex items-center justify-center shadow-xs cursor-pointer transition-colors z-10"
         title={`Remove ${file.name}`}
         aria-label={`Remove ${file.name}`}
       >
         <X className="w-3 h-3" />
       </button>
-      <div className="absolute bottom-1 left-1 right-1 text-[9px] text-white truncate font-medium drop-shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none px-1">
-        {sizeKb} KB
+      {/* File name tooltip preview on hover (size is omitted as requested) */}
+      <div className="absolute bottom-1 left-1 right-1 text-[9px] text-white truncate font-medium drop-shadow-md opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none px-0.5">
+        {file.name}
       </div>
     </motion.div>
   );
 }
 
-function DocumentChip({ file, onRemove }: { file: File; onRemove: () => void }) {
-  const sizeKb = Math.round(file.size / 1024);
+function DocumentChip({
+  file,
+  onRemove,
+  onPreview
+}: {
+  file: File;
+  onRemove: () => void;
+  onPreview: () => void;
+}) {
   return (
     <motion.span
       initial={{ opacity: 0, scale: 0.8 }}
       animate={{ opacity: 1, scale: 1 }}
       exit={{ opacity: 0, scale: 0.8 }}
-      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 dark:bg-slate-800 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 max-w-[220px]"
+      onClick={onPreview}
+      title={file.name}
+      className="inline-flex items-center gap-1.5 pl-2.5 pr-1.5 py-1 rounded-full text-[11px] font-semibold bg-slate-100 hover:bg-slate-200/80 dark:bg-slate-800 dark:hover:bg-slate-700/80 text-slate-800 dark:text-slate-200 border border-slate-200 dark:border-slate-700 max-w-[220px] cursor-pointer transition-colors group/doc select-none"
     >
-      <FileText className="w-3.5 h-3.5 text-blue-500 shrink-0" />
-      <span className="truncate flex-1">{file.name}</span>
-      <span className="text-[10px] text-slate-400 shrink-0">({sizeKb} KB)</span>
+      {getFileIcon(file.name)}
+      <span className="truncate flex-1 group-hover/doc:text-blue-600 dark:group-hover/doc:text-blue-400 transition-colors">
+        {file.name}
+      </span>
+      {/* No file size displayed on hover, tooltip with name provided via title attribute */}
       <button
         type="button"
-        onClick={onRemove}
-        className="p-0.5 rounded-full hover:bg-slate-200 dark:hover:bg-slate-700 cursor-pointer"
+        onClick={(e) => {
+          e.stopPropagation();
+          onRemove();
+        }}
+        className="p-0.5 rounded-full hover:bg-slate-300 dark:hover:bg-slate-600 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 cursor-pointer transition-colors"
         aria-label={`Remove ${file.name}`}
       >
         <X className="w-3 h-3" />
       </button>
     </motion.span>
+  );
+}
+
+function FilePreviewModal({ file, onClose }: { file: File; onClose: () => void }) {
+  const [url, setUrl] = useState<string>('');
+  const [textContent, setTextContent] = useState<string>('');
+  const [isLoadingText, setIsLoadingText] = useState(false);
+
+  const isImage = isImageFile(file);
+  const ext = file.name.split('.').pop()?.toLowerCase() || '';
+  const isPdf = file.type === 'application/pdf' || ext === 'pdf';
+  const isCodeOrText =
+    file.type.startsWith('text/') ||
+    [
+      'txt', 'md', 'py', 'js', 'ts', 'tsx', 'jsx', 'json', 'html', 'css',
+      'scss', 'sh', 'bash', 'zsh', 'sql', 'cpp', 'c', 'h', 'hpp', 'java',
+      'rs', 'go', 'yaml', 'yml', 'toml', 'ini', 'env', 'xml', 'csv', 'log',
+      'svg', 'dockerfile'
+    ].includes(ext);
+
+  useEffect(() => {
+    const objectUrl = URL.createObjectURL(file);
+    setUrl(objectUrl);
+    return () => URL.revokeObjectURL(objectUrl);
+  }, [file]);
+
+  useEffect(() => {
+    if (isCodeOrText && !isImage) {
+      setIsLoadingText(true);
+      let isMounted = true;
+      file
+        .text()
+        .then(content => {
+          if (isMounted) {
+            // Cap preview length to avoid UI lag on massive files
+            const maxLen = 200000;
+            if (content.length > maxLen) {
+              setTextContent(content.slice(0, maxLen) + '\n\n... [File content truncated for preview]');
+            } else {
+              setTextContent(content);
+            }
+            setIsLoadingText(false);
+          }
+        })
+        .catch(() => {
+          if (isMounted) {
+            setTextContent('Unable to read text content from this file.');
+            setIsLoadingText(false);
+          }
+        });
+      return () => {
+        isMounted = false;
+      };
+    }
+  }, [file, isCodeOrText, isImage]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [onClose]);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      exit={{ opacity: 0 }}
+      onClick={onClose}
+      className="fixed inset-0 z-50 flex items-center justify-center p-3 sm:p-6 bg-black/60 backdrop-blur-sm"
+    >
+      <motion.div
+        initial={{ scale: 0.94, opacity: 0 }}
+        animate={{ scale: 1, opacity: 1 }}
+        exit={{ scale: 0.94, opacity: 0 }}
+        transition={{ type: 'spring', stiffness: 450, damping: 25 }}
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-full max-w-3xl max-h-[85vh] bg-white dark:bg-[#151c28] border border-slate-200/90 dark:border-white/10 rounded-2xl shadow-2xl flex flex-col overflow-hidden"
+      >
+        {/* Modal Header */}
+        <div className="flex items-center justify-between px-4 py-3 border-b border-slate-200/80 dark:border-white/10 bg-slate-50/50 dark:bg-black/20 shrink-0">
+          <div className="flex items-center gap-2.5 min-w-0 pr-2">
+            <div className="w-7 h-7 rounded-lg bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center shrink-0">
+              {isImage ? (
+                <ImageIcon className="w-4 h-4 text-sky-500" />
+              ) : (
+                getFileIcon(file.name)
+              )}
+            </div>
+            <div className="min-w-0">
+              <h3 className="font-semibold text-sm sm:text-base text-slate-900 dark:text-slate-100 truncate" title={file.name}>
+                {file.name}
+              </h3>
+            </div>
+          </div>
+
+          <button
+            type="button"
+            onClick={onClose}
+            className="p-1.5 rounded-full hover:bg-slate-200/80 dark:hover:bg-slate-700/80 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 cursor-pointer transition-colors"
+            title="Close preview (Esc)"
+            aria-label="Close preview"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+
+        {/* Modal Body */}
+        <div className="flex-1 overflow-auto p-4 flex items-center justify-center bg-slate-100/40 dark:bg-black/10 min-h-[220px]">
+          {isImage ? (
+            <div className="w-full flex items-center justify-center">
+              <img
+                src={url}
+                alt={file.name}
+                className="max-h-[68vh] max-w-full object-contain rounded-xl shadow-xs"
+              />
+            </div>
+          ) : isPdf ? (
+            <div className="w-full h-[65vh]">
+              <iframe
+                src={url}
+                title={file.name}
+                className="w-full h-full rounded-xl border border-slate-200 dark:border-slate-800 bg-white"
+              />
+            </div>
+          ) : isCodeOrText ? (
+            <div className="w-full max-h-[68vh] overflow-auto rounded-xl border border-slate-200/80 dark:border-white/10 bg-slate-50 dark:bg-[#0c1017]">
+              {isLoadingText ? (
+                <div className="p-8 text-center text-xs text-slate-400">Loading file content...</div>
+              ) : (
+                <pre className="p-4 text-xs font-mono text-slate-800 dark:text-slate-200 whitespace-pre-wrap leading-relaxed select-text scrollbar-thin">
+                  <code>{textContent}</code>
+                </pre>
+              )}
+            </div>
+          ) : (
+            <div className="p-8 flex flex-col items-center justify-center text-center gap-2.5">
+              <div className="w-14 h-14 rounded-2xl bg-blue-500/10 text-blue-600 dark:text-blue-400 flex items-center justify-center">
+                <FileGeneric className="w-7 h-7" />
+              </div>
+              <p className="font-semibold text-sm text-slate-800 dark:text-slate-200">{file.name}</p>
+              <p className="text-xs text-slate-500 dark:text-slate-400">Pratinjau visual langsung tidak tersedia untuk format file biner ini.</p>
+            </div>
+          )}
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }

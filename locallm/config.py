@@ -247,6 +247,15 @@ def switch_active_backend(config: LocaLLMConfig, backend_name: str) -> Tuple[boo
 
     config.active_backend = platform.name
 
+    # If switching away from Ollama, unload Ollama models to free VRAM immediately
+    if curr_backend == "ollama":
+        try:
+            from locallm.core.ollama_client import OllamaClient
+            o_client = OllamaClient(base_url=config.ollama_host)
+            o_client.unload_all_models(fallback_model=config.ollama_model)
+        except Exception:
+            pass
+
     # If platform already has a preferred model, use it
     if platform.default_model and platform.default_model.strip():
         config.default_model = platform.default_model.strip()

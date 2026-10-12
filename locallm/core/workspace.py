@@ -1612,10 +1612,20 @@ def save_workspace_session(
 
     if "title" in meta and isinstance(meta["title"], str):
         cleaned_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", meta["title"], flags=re.IGNORECASE).strip()
-        cleaned_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", cleaned_title).strip()
+        cleaned_title = re.sub(r"^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?", "", cleaned_title, flags=re.IGNORECASE).strip()
         cleaned_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", cleaned_title, flags=re.IGNORECASE).strip()
+        cleaned_title = re.sub(r"^[\"\'«»“”\s*#`_\-:]+|[\"\'«»“”\s*#`_\-:]+$", "", cleaned_title).strip()
         if cleaned_title and "\n" in cleaned_title:
             cleaned_title = cleaned_title.split("\n")[0].strip()
+        if not cleaned_title or re.match(r"^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$", cleaned_title, flags=re.IGNORECASE):
+            history_list = getattr(memory, "history", [])
+            first_user_msg = next((m.get("content", "") for m in history_list if isinstance(m, dict) and m.get("role") == "user" and m.get("content")), "")
+            if first_user_msg:
+                clean_first = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", first_user_msg, flags=re.IGNORECASE).strip()
+                clean_first = clean_first.split("\n")[0].strip()
+                cleaned_title = (clean_first[:45] + "...") if len(clean_first) > 45 else clean_first
+            else:
+                cleaned_title = "New Chat"
         meta["title"] = cleaned_title or "New Chat"
 
     if hasattr(memory, "save_to_json"):
@@ -1735,10 +1745,19 @@ def list_workspace_sessions(
 
             raw_title = meta.get("title", "")
             clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
-            clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+            clean_title = re.sub(r"^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?", "", clean_title, flags=re.IGNORECASE).strip()
             clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+            clean_title = re.sub(r"^[\"\'«»“”\s*#`_\-:]+|[\"\'«»“”\s*#`_\-:]+$", "", clean_title).strip()
             if clean_title and "\n" in clean_title:
                 clean_title = clean_title.split("\n")[0].strip()
+            if not clean_title or re.match(r"^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$", clean_title, flags=re.IGNORECASE):
+                first_user_msg = next((m.get("content", "") for m in history if isinstance(m, dict) and m.get("role") == "user" and m.get("content")), "")
+                if first_user_msg:
+                    clean_first = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", first_user_msg, flags=re.IGNORECASE).strip()
+                    clean_first = clean_first.split("\n")[0].strip()
+                    clean_title = (clean_first[:45] + "...") if len(clean_first) > 45 else clean_first
+                else:
+                    clean_title = last_snippet or "New Chat"
 
             session_id = meta.get("session_id", file_path.stem)
             stype = _classify_session_type(meta, file_path.stem, session_id)

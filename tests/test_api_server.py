@@ -299,10 +299,10 @@ class TestOpenAIAPIServer(unittest.TestCase):
             self.assertIn("response_start", events)
             self.assertIn("done", events)
 
-            # CRITICAL: Verify internal reasoning text is NEVER leaked in streamed tokens
-            self.assertNotIn("Step-by-step internal reasoning", full_streamed_content)
-            self.assertNotIn("<think>", full_streamed_content)
-            self.assertNotIn("</think>", full_streamed_content)
+            # Verify reasoning text is preserved within <think> tags for collapsible Thought Process
+            self.assertIn("<think>", full_streamed_content)
+            self.assertIn("Step-by-step internal reasoning", full_streamed_content)
+            self.assertIn("</think>", full_streamed_content)
             # Verify final content arrived intact
             self.assertIn("Final calculated answer: 42", full_streamed_content)
 

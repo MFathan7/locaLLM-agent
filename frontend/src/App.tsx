@@ -163,12 +163,15 @@ function App() {
 
   const handleChangeModel = (model: ModelInfo) => {
     if (!config) return;
+    const targetPlatform = model.platform || model.provider || config.active_backend || 'ollama';
+    const isOllama = targetPlatform.toLowerCase() === 'ollama';
     updateConfig({
       ...config,
+      active_backend: isOllama ? 'ollama' : targetPlatform,
       default_model: model.id,
       model: model.id,
-      provider: model.provider,
-      ...(model.provider === 'ollama' ? { ollama_model: model.id } : {})
+      provider: isOllama ? 'ollama' : targetPlatform,
+      ...(isOllama ? { ollama_model: model.id } : {})
     });
   };
 

@@ -1,5 +1,5 @@
 import type { LocaLLMConfig, ChatSession, Workspace, WorkspaceSkill, WorkspaceMemory, ModelInfo, SendOptions, Message, AttachedFile, StreamEvent } from '../types';
-import { sanitizeChatTitle } from '../utils/messageProcessor';
+import { sanitizeChatTitle, extractThinkingAndResponse } from '../utils/messageProcessor';
 
 const API_BASE = '/api';
 
@@ -315,8 +315,19 @@ export const api = {
     onEvent?: (event: StreamEvent) => void,
     abortSignal?: AbortSignal
   ): Promise<string> => {
-    const targetModel = config.default_model || config.model || 'nemotron3-super';
+    const targetModel = config.default_model || config.model || 'auto';
     const workspace = config.active_workspace || 'default';
+
+    // Match backend if model belongs to a custom platform
+    let activeBackend = config.active_backend || 'ollama';
+    if (config.custom_platforms && config.custom_platforms.length > 0) {
+      const matchPlat = config.custom_platforms.find(
+        (p: any) => (p.name && p.name.toLowerCase() === activeBackend.toLowerCase()) || p.default_model === targetModel
+      );
+      if (matchPlat && (activeBackend.toLowerCase() === 'ollama' || !activeBackend) && targetModel !== (config.ollama_model || '')) {
+        activeBackend = matchPlat.name;
+      }
+    }
 
     // Build multi-turn messages array ensuring full conversation context is preserved
     const conversationMessages: any[] = [];
@@ -368,8 +379,9 @@ export const api = {
       message,
       messages: conversationMessages,
       model: targetModel,
-      backend: config.active_backend || 'ollama',
-      provider: config.active_backend || 'ollama',
+      backend: activeBackend,
+      provider: activeBackend,
+      platform: activeBackend,
       workspace,
       session_id: options.sessionId,
       temperature: config.temperature,
@@ -566,7 +578,8 @@ export const api = {
           options: {
             files: [],
             webSearch: false,
-            tools: false
+            tools: false,
+            thinking: false
           }
         })
       });
@@ -600,23 +613,23 @@ export const api = {
             }
           }
 
-          // Strip completed thought blocks and currently unclosed thought block
-          const candidate = full
-            .replace(/<(?:think|thought)>[\s\S]*?<\/(?:think|thought)>/gi, '')
-            .replace(/<(?:think|thought)>[\s\S]*$/gi, '')
-            .trim();
+          // Extract non-thought response candidate
+          const { response: extractedResp } = extractThinkingAndResponse(full);
+          const candidate = sanitizeChatTitle(extractedResp || '', '');
 
           // Once we have actual non-thought title content
-          if (candidate.length >= 4) {
+          if (candidate.length >= 3) {
             if (candidate.includes('\n') || candidate.length >= 35) {
               break;
             }
           }
         }
-        return sanitizeChatTitle(full, '');
+        const { response: finalResp } = extractThinkingAndResponse(full);
+        return sanitizeChatTitle(finalResp || '', '');
       }
       const text = await res.text();
-      return sanitizeChatTitle(text, '');
+      const { response: textResp } = extractThinkingAndResponse(text);
+      return sanitizeChatTitle(textResp || '', '');
     } catch {
       return '';
     } finally {

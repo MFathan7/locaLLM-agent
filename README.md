@@ -166,11 +166,12 @@ locallm stop
   - Sticky header pinning at `top: 0` during vertical code scroll without mid-air floating gaps.
   - Icon-only copy button with instant green checkmark visual feedback and universal fallback (`document.execCommand` + textarea) for restricted clipboard environments.
 - **Collapsible Thought Process Accordion**:
-  - Deep reasoning traces (`<think>` / `<thought>`) are automatically parsed into an interactive expandable thought accordion above the answer, keeping internal thought tokens organized without cluttering final answers.
+  - Deep reasoning traces (`<think>` / `<thought>`) are automatically parsed into an interactive expandable thought accordion above the answer. While reasoning is underway, status states stream dynamically; once the answer tokens begin generating, the accordion collapses automatically into a clean header, keeping internal reasoning accessible without cluttering the final output.
 - **Floating Header with Full-Screen Message Scroll**:
   - Translucent model picker and theme controls float gracefully with passthrough pointer events, allowing conversation messages to glide smoothly all the way to the top edge of the browser viewport.
-- **Image Lightbox Modal**:
-  - Inline image rendering with full-resolution zoom lightbox modal and smooth backdrop blur.
+- **Image Lightbox & Universal File Preview Modal**:
+  - Inline image rendering with full-resolution zoom lightbox modal.
+  - Dedicated interactive modal for previewing attached PDFs, code scripts with syntax highlighting, and text files before or after sending.
 - **High-Performance Conversation Search**:
   - Instant keyboard shortcut access (`Ctrl+F` or `Cmd+K` or header search icon).
   - Debounced input (120ms) for instantaneous 60fps keystrokes.
@@ -180,6 +181,8 @@ locallm stop
 - **Top-Left Header Model & Backend Picker**:
   - Repositioned cleanly to the top-left header of the chat viewport, displaying the active model name and inference backend (*Ollama*, *OpenAI*, or custom platforms) with an instant dropdown switcher.
   - Automatically re-queries available models with 60-second in-memory caching and connection timeout guards.
+  - **Instant Platform Synchronization & Zero-Leak VRAM Release**: Switching between Ollama and custom platforms (e.g. remote vLLM, iForte-GPU, LocalAI) automatically updates the active backend and immediately evicts Ollama models from local VRAM (`keep_alive: 0`), releasing gigabytes of GPU memory instantly.
+  - **Safe Dynamic Model Routing**: Selecting `'auto'` dynamically resolves to the platform default or first installed model prior to dispatch, eliminating `"model not found"` errors.
 - **Model-Aware "Thinking" Mode Toggle**:
   - Dynamically verifies whether the active model supports reasoning/thinking via `/api/models/check-thinking` (inspecting model architecture, capabilities, and naming conventions like DeepSeek-R1, QwQ, Gemma, or Qwen reasoning variants).
   - An interactive **"Thinking" button** appears in the chat toolbar when compatible, allowing users to toggle reasoning tokens on or off per message turn.
@@ -188,8 +191,10 @@ locallm stop
   - Dedicated popover menu to toggle **Web Search** and **Workspace Agent Tools** without cluttering the input textarea.
 - **Dynamic Multiline Chat Input**:
   - Smooth vertical expansion as prompts grow, keeping action controls aligned along the bottom toolbar.
-- **Multi-File Attachment System (Up to 5 Files)**:
-  - Drag-and-drop or select images, documents (`.pdf`, `.docx`, `.txt`, `.py`, `.json`, etc.) with in-bubble preview chips.
+- **Universal Clipboard Paste & Multi-File Attachment System (Up to 5 Files)**:
+  - **Instant Clipboard Paste (Ctrl+V)**: Paste any file type directly into the chat input from your clipboard, including screenshots, images, PDFs, text documents, code scripts (`.py`, `.ts`, `.json`, etc.), and spreadsheets.
+  - **Drag-and-Drop & File Picker**: Drop files anywhere on the chat input card or select via the Plus menu.
+  - **Interactive File Previews & Tooltips**: File chips display format-specific icons with hover tooltips and one-click preview modals.
   - **Multi-Turn Context Retention**: Extracted text content stays in context across all subsequent turns so the model never forgets document contents in follow-up queries.
 - **Dynamic Contextual Greetings**:
   - Native `Intl.DateTimeFormat` context aware greetings tailored to time-of-day and day-of-week (*"Can I help you on this Friday morning, Fathan?"*), providing a warm and natural entrance for every new conversation without generic filler.
@@ -282,6 +287,12 @@ locallm stop
 - **Parameter Capacity Priority**: Prefers higher-capacity models (`14B` > `7B` > `3B`) for heavy development and reasoning workloads.
 - **Sticky Routing (Anti-Swap Protection)**: Retains the currently loaded GPU model if it satisfies prompt requirements, preventing expensive disk I/O and latency spikes.
 - **VRAM Hardware Guard**: Checks KV cache footprints and model weights against actual free GPU memory, automatically falling back to the next fitting model to prevent system freeze or CPU spillover.
+
+### 🔄 Multi-Platform Inference Engine & Instant VRAM Management
+- **Seamless Local & Cloud Hybrid Inference**: Effortlessly switch between local Ollama and external OpenAI-compatible backends (such as vLLM, LocalAI, iForte-GPU, or text-generation-webui) without data silos.
+- **Instant VRAM Ejection on Platform Switch**: When switching active execution from Ollama to a remote platform, `locaLLM` immediately signals Ollama to unload models from GPU memory (`keep_alive: 0`), releasing local VRAM and system RAM instantly.
+- **Direct Streaming Proxy Bridge**: The frontend bridge streams inference requests directly from the configured remote platform endpoint using saved Bearer authorization tokens, bypassing local model fallbacks and eliminating mismatched responses.
+- **Fail-Safe Concrete Model Resolution**: Requests utilizing `'auto'` routing are dynamically resolved to valid default or installed models across both Ollama and custom platforms, preventing runtime `"model 'auto' not found"` errors.
 
 ### 🌐 Model Context Protocol (MCP) Multi-Server Support
 - **Multi-Connection Architecture**: Connect to multiple MCP servers concurrently (`filesystem`, `github`, `postgres`, `sqlite`, remote APIs).

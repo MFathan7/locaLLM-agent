@@ -100,19 +100,24 @@ function cleanDirectivesAndArtifacts(text: string): string {
   // 4. Remove dangling tool preambles (e.g. "I'll search for ... for you.")
   cleaned = cleaned.replace(/^(?:I(?:'ll| will)\s+(?:search|look up|check|browse)\s+[\s\S]*?(?:for you|online)\.?\s*)$/gim, '');
 
-  // 5. Clean leading response labels like "Response:", "**Response:**", "**Answer:**"
+  // 5. Clean leading response labels like "Response:", "**Response:**", "**Answer:**" or "(Proceeds to generate output)."
+  cleaned = cleaned.replace(/^(?:\*+\s*(?:Okay,?\s*)?(?:ready to write|let's write|let us draft|drafting) the response\.?\*+\s*)/i, '');
+  cleaned = cleaned.replace(/^(?:\((?:Proceeds to )?(?:generate|write|draft) (?:output|response)\)\.?\s*)/i, '');
+  cleaned = cleaned.replace(/^(?:Let's write it\.(?:[a-z]{0,4}\s*)?)/i, '');
   cleaned = cleaned.replace(/^(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer|Jawaban|Hasil)(?:\*\*|\*|:|\s)*\n?/i, '');
 
   return cleaned.trim();
 }
 
 /**
- * Robustly extract thinking / chain of thought and clean response for both XML tags and prose-based models (Gemma, Qwen, etc.).
+ * Extract thinking / chain of thought and clean response for both XML tags and prose-based models (Gemma, Qwen, etc.).
  */
 export function extractThinkingAndResponse(rawText: string): ProcessedMessageContent {
   if (!rawText) return { thinking: '', response: '', isThinking: false };
 
-  const text = rawText.trim();
+  // 0. Pre-clean web search dumps and directives so thinking headers at the stream beginning can be detected accurately
+  const text = cleanDirectivesAndArtifacts(rawText).trim();
+  if (!text) return { thinking: '', response: '', isThinking: false };
 
   // Case 1: Tag-based reasoning (<think>...</think> or <thought>...</thought>)
   const closedTagMatch = text.match(/<(?:think|thought)>([\s\S]*?)<\/(?:think|thought)>/i);
@@ -136,18 +141,22 @@ export function extractThinkingAndResponse(rawText: string): ProcessedMessageCon
     };
   }
 
-  // Case 2: Prose-based thinking headers (e.g. Gemma, Llama, Qwen outputting markdown or labeled thinking)
-  const proseThinkHeaderRegex = /^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?|Let(?:'s| us) think step by step:?)(?:\r?\n)?/i;
+  // Case 2: Prose-based thinking headers (e.g. Gemma outputting "Here's a thinking process that leads to the suggested response:")
+  const proseThinkHeaderRegex = /^(?:(?:\*\*|\*|#+\s*|>+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?/i;
 
   if (proseThinkHeaderRegex.test(text)) {
     const startMatch = text.match(proseThinkHeaderRegex);
     const startLen = startMatch ? startMatch[0].length : 0;
     const afterHeader = text.slice(startLen);
 
-    // Look for transition to final response:
-    // **Response:**, **Answer:**, **Final Answer:**, Response:, Answer:, Final Answer:, ### Response, etc.
-    const responseTransitionRegex = /(?:\r?\n|\n\n)(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer|Output|Hasil|Jawaban|Kesimpulan)(?:\*\*|\*|:|\s)*(?:\r?\n|$)/i;
-    const transMatch = afterHeader.match(responseTransitionRegex);
+    // Comprehensive transition to final response:
+    // - Explicit procedural markers: (Proceeds to generate output). / *Okay, ready to write...* / Let's write it.
+    // - Header labels: Response:, Answer:, Final Answer:, Jawaban:, Output:, etc.
+    // - Horizontal dividers: ---, ___, ***
+    // - Natural prose openings: Berikut adalah, Tentu, Baik, Berdasarkan, Secara umum, Kesimpulannya, etc.
+    // - Markdown headers: #, ##, ###
+    const proseTransitionRegex = /(?:(?:\((?:Proceeds to )?(?:generate|write|draft) (?:output|response)\)\.?|\*+(?:Okay,?\s*)?(?:ready to write|let's write|let us draft|drafting) (?:the response|it)\.?\*+|Let's write it\.(?:[a-z]{0,4})?)(?:\s*)|(?:\r?\n|\n\n)(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer|Output|Hasil|Jawaban|Kesimpulan|Summary)(?:\*\*|\*|:|\s)*(?:\r?\n|$)|(?:\r?\n\r?\n)(?:---|___|\*\*\*)\s*(?:\r?\n|$)|(?:\r?\n\r?\n)(?=(?:Berikut (?:adalah|ini|merupakan)|Tentu,?\s+|Baik,?\s+|Berdasarkan |Secara umum,?\s+|Kesimpulannya,?\s+|Secara keseluruhan,?\s+|Untuk menjawab pertanyaan|Perbandingan |Di bawah ini|Jawaban singkatnya))|(?:\r?\n\r?\n)(?=#{1,4}\s+))/i;
+    const transMatch = afterHeader.match(proseTransitionRegex);
 
     if (transMatch && transMatch.index !== undefined) {
       const thinking = afterHeader.slice(0, transMatch.index).trim();
@@ -159,11 +168,11 @@ export function extractThinkingAndResponse(rawText: string): ProcessedMessageCon
       };
     }
 
-    // ReAct style Final Answer:
-    const finalAnswerMatch = afterHeader.match(/(?:\r?\n)(?:Final Answer|Jawaban Akhir):\s*/i);
-    if (finalAnswerMatch && finalAnswerMatch.index !== undefined) {
-      const thinking = afterHeader.slice(0, finalAnswerMatch.index).trim();
-      const rawResponse = afterHeader.slice(finalAnswerMatch.index + finalAnswerMatch[0].length).trim();
+    // Secondary transition: structured markdown numbered items denoting response start (\n\n### 1. or \n\n**1. )
+    const headingTransition = afterHeader.match(/(?:\r?\n\r?\n)(?=###?\s+\d+\.|\*\*1\.\s+)/i);
+    if (headingTransition && headingTransition.index !== undefined) {
+      const thinking = afterHeader.slice(0, headingTransition.index).trim();
+      const rawResponse = afterHeader.slice(headingTransition.index).trim();
       return {
         thinking,
         response: cleanDirectivesAndArtifacts(rawResponse),
@@ -171,20 +180,22 @@ export function extractThinkingAndResponse(rawText: string): ProcessedMessageCon
       };
     }
 
-    // Still streaming thinking or no transition tag yet
-    return {
-      thinking: afterHeader.trim(),
-      response: '',
-      isThinking: true
-    };
+    // If started explicitly with "Here's a thinking process" and no transition marker has appeared yet,
+    // it is actively streaming thinking tokens.
+    if (/^(?:(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process)/i.test(text)) {
+      return {
+        thinking: afterHeader.trim(),
+        response: '',
+        isThinking: true
+      };
+    }
   }
 
-  // Case 3: Embedded think block within text
+  // Case 3: Embedded think block
   const embeddedMatch = text.match(/(?:(?:\n\n|\r?\n)(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning)(?:\*\*|\*|:|\s)*)([\s\S]*?)(?=(?:\n\n|\r?\n)(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer)(?:\*\*|\*|:|\s)*|$)/i);
   if (embeddedMatch && embeddedMatch.index !== undefined) {
     const thinking = embeddedMatch[1].trim();
     let rawResponse = (text.slice(0, embeddedMatch.index) + text.slice(embeddedMatch.index + embeddedMatch[0].length)).trim();
-    rawResponse = rawResponse.replace(/^(?:\*\*|\*|#+\s*)?(?:Response|Answer|Final Answer)(?:\*\*|\*|:|\s)*/i, '').trim();
     return {
       thinking,
       response: cleanDirectivesAndArtifacts(rawResponse),
@@ -192,7 +203,7 @@ export function extractThinkingAndResponse(rawText: string): ProcessedMessageCon
     };
   }
 
-  // Case 4: No thinking detected
+  // Default: no thinking detected
   return {
     thinking: '',
     response: cleanDirectivesAndArtifacts(text),
@@ -346,21 +357,46 @@ export function extractSourcesFromText(content: string, existingSources?: Source
 }
 
 /**
- * Sanitize a chat title to ensure no <think> or <thought> tags, markdown or quotes leak into UI.
+ * Sanitize a chat title to ensure no <think> or <thought> tags, prose thinking headers, markdown or quotes leak into UI.
  */
 export function sanitizeChatTitle(rawTitle: string, fallback: string = 'New conversation'): string {
   if (!rawTitle) return fallback;
-  let cleaned = rawTitle
-    .replace(/<(?:think|thought)>[\s\S]*?(?:<\/(?:think|thought)>|$)/gi, '')
-    .replace(/^["'«»“”\s*#`_-]+|["'«»“”\s*#`_-]+$/g, '')
+
+  // 1. If rawTitle contains structured reasoning or thinking headers, separate thinking from response first
+  const { response: extractedResp } = extractThinkingAndResponse(rawTitle);
+  let cleaned = extractedResp && extractedResp.trim().length > 0 ? extractedResp.trim() : rawTitle.trim();
+
+  // 2. Strip XML think tags
+  cleaned = cleaned.replace(/<(?:think|thought)>[\s\S]*?(?:<\/(?:think|thought)>|$)/gi, '').trim();
+
+  // 3. Strip prose-based thinking headers and CoT introductions
+  const proseThinkPrefixRegex = /^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?/i;
+  cleaned = cleaned.replace(proseThinkPrefixRegex, '').trim();
+
+  // 4. Strip Title / Judul labels and surrounding quotes/markdown/colons
+  cleaned = cleaned
     .replace(/^(?:Title|Judul|Topic|Subjek)\s*:\s*/i, '')
+    .replace(/^["'«»“”\s*#`_\-:]+|["'«»“”\s*#`_\-:]+$/g, '')
     .trim();
 
-  // If unclosed tag or leftover think remains
+  // 5. If unclosed tag or leftover think remains
   if (!cleaned || cleaned.toLowerCase().includes('<think') || cleaned.toLowerCase().includes('</think') || cleaned.toLowerCase().includes('<thought')) {
     return fallback;
   }
-  const firstLine = cleaned.split('\n')[0].trim();
+
+  // 6. Reject standalone thinking headers, CoT labels, or numbered thought steps
+  if (
+    /^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$/i.test(cleaned) ||
+    /^\d+\.\s*(?:Analyze|Identif|Draft|Outlin|Step|Pikir|Analisa|Memikirkan)/i.test(cleaned)
+  ) {
+    return fallback;
+  }
+
+  const firstLine = cleaned.split('\n')[0].trim().replace(/^["'«»“”\s*#`_\-:]+|["'«»“”\s*#`_\-:]+$/g, '').trim();
+  if (!firstLine || /^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$/i.test(firstLine)) {
+    return fallback;
+  }
+
   return firstLine.slice(0, 48) || fallback;
 }
 

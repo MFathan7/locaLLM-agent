@@ -239,13 +239,18 @@ def start_api_server_service(
     repo_root = Path(__file__).resolve().parent.parent.parent
 
     # Detect the best python or locallm executable in local environment
-    venv_locallm = repo_root / ".venv" / "Scripts" / "locallm.exe"
-    venv_pythonw = repo_root / ".venv" / "Scripts" / "pythonw.exe"
-    venv_python = repo_root / ".venv" / "Scripts" / "python.exe"
+    if sys.platform == "win32":
+        venv_locallm = repo_root / ".venv" / "Scripts" / "locallm.exe"
+        venv_pythonw = repo_root / ".venv" / "Scripts" / "pythonw.exe"
+        venv_python = repo_root / ".venv" / "Scripts" / "python.exe"
+    else:
+        venv_locallm = repo_root / ".venv" / "bin" / "locallm"
+        venv_pythonw = None
+        venv_python = repo_root / ".venv" / "bin" / "python"
 
-    if sys.platform == "win32" and venv_pythonw.exists():
+    if sys.platform == "win32" and venv_pythonw and venv_pythonw.exists():
         cmd = [str(venv_pythonw), "-m", "locallm", "serve", "--host", str(target_host), "--port", str(target_port)]
-    elif sys.platform == "win32" and venv_locallm.exists():
+    elif venv_locallm.exists():
         cmd = [str(venv_locallm), "serve", "--host", str(target_host), "--port", str(target_port)]
     elif venv_python.exists():
         cmd = [str(venv_python), "-m", "locallm", "serve", "--host", str(target_host), "--port", str(target_port)]

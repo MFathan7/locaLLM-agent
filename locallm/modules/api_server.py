@@ -168,6 +168,15 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
 
         target_backend = (backend or "").strip().lower()
 
+        # Check if requested model explicitly belongs to any registered custom platform
+        if model:
+            target_model = model.strip()
+            from locallm.config import get_custom_platform
+            for p in getattr(config, "custom_platforms", []):
+                if target_model.lower() == p.default_model.lower() or target_model.lower() == p.name.lower():
+                    target_backend = p.name.lower()
+                    break
+
         if not target_backend and model:
             target_model = model.strip()
             from locallm.config import get_custom_platform
@@ -622,10 +631,19 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             })
                     raw_title = s.get("title") or s.get("last_snippet") or "New Chat"
                     clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
-                    clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+                    clean_title = re.sub(r"^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?", "", clean_title, flags=re.IGNORECASE).strip()
                     clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+                    clean_title = re.sub(r"^[\"\'«»“”\s*#`_\-:]+|[\"\'«»“”\s*#`_\-:]+$", "", clean_title).strip()
                     if clean_title and "\n" in clean_title:
                         clean_title = clean_title.split("\n")[0].strip()
+                    if not clean_title or re.match(r"^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$", clean_title, flags=re.IGNORECASE):
+                        first_user_msg = next((m.get("content", "") for m in msgs if isinstance(m, dict) and m.get("role") == "user" and m.get("content")), "")
+                        if first_user_msg:
+                            clean_first = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", first_user_msg, flags=re.IGNORECASE).strip()
+                            clean_first = clean_first.split("\n")[0].strip()
+                            clean_title = (clean_first[:45] + "...") if len(clean_first) > 45 else clean_first
+                        else:
+                            clean_title = "New Chat"
                     detailed_sessions.append({
                         "id": sess_id,
                         "title": clean_title or "New Chat",
@@ -792,6 +810,16 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self.server.config = new_cfg
                 self.server.default_model = new_cfg.default_model
                 self.server.workspace = new_cfg.active_workspace
+
+                # If switching away from Ollama to a custom platform, release Ollama models from VRAM
+                if current_cfg.active_backend.strip().lower() == "ollama" and new_cfg.active_backend.strip().lower() != "ollama":
+                    try:
+                        from locallm.core.ollama_client import OllamaClient
+                        o_client = OllamaClient(base_url=new_cfg.ollama_host)
+                        o_client.unload_all_models(fallback_model=current_cfg.ollama_model)
+                    except Exception:
+                        pass
+
                 from locallm.core.openai_client import get_inference_client
                 with self.server._client_lock:
                     self.server.client = get_inference_client(new_cfg)
@@ -861,10 +889,19 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     clean_history.append(item)
                 raw_title = payload.get("title", "New Chat")
                 clean_title = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", raw_title, flags=re.IGNORECASE).strip()
-                clean_title = re.sub(r"^[\"\'«»“”\s*#`_-]+|[\"\'«»“”\s*#`_-]+$", "", clean_title).strip()
+                clean_title = re.sub(r"^(?:(?:\*\*|\*|#+\s*)?(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Internal Thought|Plan)(?:\*\*|\*|:|\s)*|(?:\*\*|\*|>+\s*)?Here(?:'s| is) a thinking process(?: that leads to[^\n:]*)?:?(?:\*\*|\*)?|Let(?:'s| us) think step by step:?)(?:\r?\n)?", "", clean_title, flags=re.IGNORECASE).strip()
                 clean_title = re.sub(r"^(?:Title|Judul|Topic|Subjek)\s*:\s*", "", clean_title, flags=re.IGNORECASE).strip()
+                clean_title = re.sub(r"^[\"\'«»“”\s*#`_\-:]+|[\"\'«»“”\s*#`_\-:]+$", "", clean_title).strip()
                 if clean_title and "\n" in clean_title:
                     clean_title = clean_title.split("\n")[0].strip()
+                if not clean_title or re.match(r"^(?:Thinking Process|Thought Process|Thinking|Thought|Reasoning|Plan)\s*:?$", clean_title, flags=re.IGNORECASE):
+                    first_user_msg = next((m.get("content", "") for m in clean_history if isinstance(m, dict) and m.get("role") == "user" and m.get("content")), "")
+                    if first_user_msg:
+                        clean_first = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", first_user_msg, flags=re.IGNORECASE).strip()
+                        clean_first = clean_first.split("\n")[0].strip()
+                        clean_title = (clean_first[:45] + "...") if len(clean_first) > 45 else clean_first
+                    else:
+                        clean_title = "New Chat"
                 save_workspace_session(ws_name, session_id, memory, metadata={
                     "title": clean_title or "New Chat",
                     "session_id": session_id,
@@ -1066,6 +1103,16 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         else:
             route_info = {"model": target_model}
 
+        # Safeguard: Resolve target_model if still auto or empty
+        if not target_model or target_model.lower() in ("auto", "locallm-agent"):
+            if backend_req and backend_req.lower() != "ollama":
+                from locallm.config import get_custom_platform
+                cp = get_custom_platform(self.server.config, backend_req)
+                if cp and cp.default_model:
+                    target_model = cp.default_model
+            else:
+                target_model = self.server.config.ollama_model if (self.server.config.ollama_model and self.server.config.ollama_model.lower() != "auto") else "qwen3.5:9b"
+
         inference_client = self.server.get_client_for_request(model=target_model, backend=backend_req)
 
         session_id_req = str(payload.get("session_id") or payload.get("sessionId") or payload.get("chat_id") or self.headers.get("X-Session-ID") or "").strip()
@@ -1085,6 +1132,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 workspace_name=req_ws,
                 route_info=route_info,
                 session_id=session_id_req,
+                thinking_option=thinking_option,
             )
         else:
             self._handle_non_streaming_completion(
@@ -1100,6 +1148,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 last_prompt=last_prompt,
                 workspace_name=req_ws,
                 session_id=session_id_req,
+                thinking_option=thinking_option,
             )
 
     def _prepare_messages_with_context(
@@ -1190,6 +1239,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         last_prompt: str = "",
         workspace_name: str = "default",
         session_id: Optional[str] = None,
+        thinking_option: Optional[bool] = None,
     ) -> None:
         """Execute non-streaming chat turn and deliver standard OpenAI completion response."""
         stats: Dict[str, Any] = {}
@@ -1227,19 +1277,26 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
             turn_msg: Optional[Dict[str, Any]] = None
             if hasattr(active_client, "chat_turn"):
-                turn_msg = active_client.chat_turn(
-                    model=target_model,
-                    messages=messages,
-                    temperature=temperature,
-                    num_ctx=context_window,
-                    stats_out=stats,
-                )
+                import inspect
+                chat_turn_kwargs: Dict[str, Any] = {
+                    "model": target_model,
+                    "messages": messages,
+                    "temperature": temperature,
+                    "num_ctx": context_window,
+                    "stats_out": stats,
+                }
+                try:
+                    sig = inspect.signature(active_client.chat_turn)
+                    if "think" in sig.parameters or any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                        if thinking_option is not None:
+                            chat_turn_kwargs["think"] = bool(thinking_option)
+                except Exception:
+                    pass
+                turn_msg = active_client.chat_turn(**chat_turn_kwargs)
 
             content = ""
             if turn_msg and isinstance(turn_msg, dict):
                 content = turn_msg.get("content", "")
-                if content:
-                    content = re.sub(r"<(?:think|thought)>[\s\S]*?(?:</(?:think|thought)>|$)", "", content, flags=re.IGNORECASE).strip()
 
             prompt_tokens = stats.get("prompt_eval_count") or len(str(messages)) // 4
             completion_tokens = stats.get("eval_count") or len(content) // 4
@@ -1312,6 +1369,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         workspace_name: str = "default",
         route_info: Optional[Dict[str, Any]] = None,
         session_id: Optional[str] = None,
+        thinking_option: Optional[bool] = None,
     ) -> None:
         """Stream completion tokens via Server-Sent Events (SSE) with typed reasoning execution events."""
         active_client = client or self.server.client
@@ -1468,7 +1526,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 except Exception as tool_exc:
                     self._log_request_event("WARN", path, 500, detail=f"Tool evaluation error: {tool_exc}")
 
-            # Stream generated tokens with internal reasoning absorption
+            # Stream generated tokens with typed reasoning execution events
             in_thinking = False
             response_started = False
             stream_buf = ""
@@ -1482,6 +1540,14 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 if not response_started:
                     _send_event("response_start")
                     response_started = True
+                token_count += 1
+                _send_delta(text)
+
+            def _flush_thinking(text: str) -> None:
+                nonlocal token_count
+                if not text:
+                    return
+                accumulated_content.append(text)
                 token_count += 1
                 _send_delta(text)
 
@@ -1512,7 +1578,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             lower_buf = stream_buf.lower()
                             think_idx = -1
                             tag_len = 0
-                            for start_tag in ("<think>", "<thought>", "thinking process:", "**thinking process:**", "thought process:", "**thought process:**"):
+                            for start_tag in ("<think>", "<thought>"):
                                 pos = lower_buf.find(start_tag)
                                 if pos != -1 and (think_idx == -1 or pos < think_idx):
                                     think_idx = pos
@@ -1525,12 +1591,13 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                                     _flush_content(before_text)
                                 in_thinking = True
                                 _send_event("thinking_start")
-                                stream_buf = stream_buf[think_idx + tag_len:]
+                                _flush_thinking("<think>\n")
+                                stream_buf = stream_buf[think_idx + tag_len:].lstrip("\r\n")
                                 continue
 
                             # Check if buffer ends with a potential opening tag prefix
                             possible_prefix = False
-                            for prefix in ("<thought", "<thou", "<tho", "<think", "<thin", "<thi", "<th", "<t", "<", "**thinking", "thinking"):
+                            for prefix in ("<thought", "<thou", "<tho", "<think", "<thin", "<thi", "<th", "<t", "<"):
                                 if lower_buf.endswith(prefix) and len(stream_buf) <= 25:
                                     possible_prefix = True
                                     break
@@ -1541,26 +1608,21 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                             _flush_content(stream_buf)
                             stream_buf = ""
                         else:
-                            # Currently inside internal thinking block: swallow internal reasoning tokens
+                            # Currently inside thinking block: stream reasoning tokens
                             lower_buf = stream_buf.lower()
                             end_idx = -1
                             end_tag_len = 0
-                            for end_tag in (
-                                "</think>",
-                                "</thought>",
-                                "\n\n**response:**",
-                                "\n\nresponse:",
-                                "\n\n**answer:**",
-                                "\n\nanswer:",
-                                "\n\n**final answer:**",
-                                "\n\nfinal answer:",
-                            ):
+                            for end_tag in ("</think>", "</thought>"):
                                 pos = lower_buf.find(end_tag)
                                 if pos != -1 and (end_idx == -1 or pos < end_idx):
                                     end_idx = pos
                                     end_tag_len = len(end_tag)
 
                             if end_idx != -1:
+                                thought_chunk = stream_buf[:end_idx]
+                                if thought_chunk:
+                                    _flush_thinking(thought_chunk)
+                                _flush_thinking("\n</think>\n\n")
                                 in_thinking = False
                                 _send_event("thinking_end")
                                 # Retain content after closing tag and strip leading line breaks
@@ -1570,19 +1632,24 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
                             # Keep only suffix if it could be start of closing tag
                             matched_prefix_len = 0
-                            for prefix in ("</thought", "</thou", "</tho", "</think", "</thin", "</thi", "</th", "</t", "</", "<", "\n\n**response", "\n\n**answer", "\n\n**final"):
+                            for prefix in ("</thought", "</thou", "</tho", "</think", "</thin", "</thi", "</th", "</t", "</", "<"):
                                 if lower_buf.endswith(prefix):
-                                    matched_prefix_len = len(prefix)
-                                    break
+                                    if len(prefix) > matched_prefix_len:
+                                        matched_prefix_len = len(prefix)
 
                             if matched_prefix_len > 0:
+                                to_flush = stream_buf[:-matched_prefix_len]
+                                if to_flush:
+                                    _flush_thinking(to_flush)
                                 stream_buf = stream_buf[-matched_prefix_len:]
                             else:
+                                _flush_thinking(stream_buf)
                                 stream_buf = ""
                             break
 
             # Flush after stream finishes
             if in_thinking:
+                _flush_thinking("\n</think>\n\n")
                 _send_event("thinking_end")
                 in_thinking = False
 

@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { Copy, Check, ArrowDown, FileDown, Compass, RotateCcw, FileText, Image as ImageIcon, Brain, ChevronDown } from 'lucide-react';
 import clsx from 'clsx';
 import { MarkdownRenderer } from './MarkdownRenderer';
-import { cleanAssistantContent, extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking, extractThinkingAndResponse } from '../utils/messageProcessor';
+import { extractCurrentThinkingStep, extractSourcesFromText, isOnlyThinking, extractThinkingAndResponse } from '../utils/messageProcessor';
 import { exportResponseToDoc } from '../utils/docExport';
 
 interface ChatContainerProps {
@@ -185,43 +185,6 @@ function ThinkingDots() {
   );
 }
 
-function ThoughtAccordion({ thinking }: { thinking: string }) {
-  const [isExpanded, setIsExpanded] = useState(false);
-
-  if (!thinking || !thinking.trim()) return null;
-
-  return (
-    <div className="mb-3.5 select-none">
-      <button
-        type="button"
-        onClick={() => setIsExpanded(prev => !prev)}
-        className="inline-flex items-center gap-2 px-3 py-1.5 rounded-xl bg-slate-100 hover:bg-slate-200/80 dark:bg-white/[0.06] dark:hover:bg-white/[0.1] text-xs font-medium text-slate-600 dark:text-slate-300 border border-slate-200/80 dark:border-white/[0.08] transition-all cursor-pointer"
-        aria-expanded={isExpanded}
-      >
-        <Brain className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400 shrink-0" />
-        <span>{isExpanded ? 'Hide thought process' : 'Thought process'}</span>
-        <ChevronDown className={clsx("w-3.5 h-3.5 transition-transform duration-200 text-slate-400", isExpanded && "rotate-180")} />
-      </button>
-
-      <AnimatePresence initial={false}>
-        {isExpanded && (
-          <motion.div
-            initial={{ opacity: 0, height: 0 }}
-            animate={{ opacity: 1, height: 'auto' }}
-            exit={{ opacity: 0, height: 0 }}
-            transition={{ duration: 0.22, ease: 'easeInOut' }}
-            className="overflow-hidden mt-2"
-          >
-            <div className="p-3.5 rounded-2xl bg-slate-50 dark:bg-black/30 border border-slate-200/80 dark:border-white/[0.08] text-xs/relaxed text-slate-600 dark:text-slate-400 font-mono whitespace-pre-wrap max-h-80 overflow-y-auto selection:bg-blue-500/20 scrollbar-thin">
-              {thinking}
-            </div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
-}
-
 const ChatBubble = ({
   message,
   isTyping,
@@ -262,11 +225,30 @@ const ChatBubble = ({
     return attachedFiles.filter(f => !imageFiles.includes(f));
   }, [attachedFiles, imageFiles]);
 
-  // Clean intermediate thinking/search trace from the final rendered output and extract reasoning
+  // Clean intermediate XML thinking/search trace from the final rendered output and extract reasoning
   const { thinking: extractedThinking, response: cleanedContent } = useMemo(() => {
     if (isUser) return { thinking: '', response: message.content, isThinking: false };
     return extractThinkingAndResponse(message.content);
   }, [isUser, message.content]);
+
+  const [isThoughtExpanded, setIsThoughtExpanded] = useState(false);
+  const autoCollapsedRef = useRef(false);
+  const userManuallyToggledRef = useRef(false);
+
+  // Auto-collapse thought process once the real response starts emerging
+  useEffect(() => {
+    if (cleanedContent && cleanedContent.trim().length > 0) {
+      if (!autoCollapsedRef.current) {
+        setIsThoughtExpanded(false);
+        autoCollapsedRef.current = true;
+      }
+    } else if (isTyping && extractedThinking && !autoCollapsedRef.current && !userManuallyToggledRef.current) {
+      setIsThoughtExpanded(true);
+    } else if (!isTyping && (!cleanedContent || cleanedContent.trim().length === 0)) {
+      autoCollapsedRef.current = false;
+      userManuallyToggledRef.current = false;
+    }
+  }, [cleanedContent, isTyping, extractedThinking]);
 
   // Resolve active high-level execution state or generic status badge
   const activeStatusLabel = useMemo(() => {
@@ -423,35 +405,115 @@ const ChatBubble = ({
       ) : (
         /* AI Assistant response: rich Markdown rendering without background container */
         <div className="relative group w-full py-1 text-slate-800 dark:text-slate-100">
+          {/* Active execution status spinner or interactive toggle (Thinking..., Generating..., Searching...) */}
           {activeStatusLabel ? (
-            /* Plain & bold thinking state: wave-to-triangle spinning dots + fade status text */
-            <div className="inline-flex items-center gap-3 py-2 text-slate-800 dark:text-slate-100 select-none">
-              <ThinkingDots />
-              <AnimatePresence mode="wait">
-                <motion.span
-                  key={activeStatusLabel}
-                  initial={{ opacity: 0, y: 3 }}
-                  animate={{ opacity: 1, y: 0 }}
-                  exit={{ opacity: 0, y: -3 }}
-                  transition={{ duration: 0.22, ease: "easeInOut" }}
-                  className="text-[14px] sm:text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100"
+            <div className="mb-2 select-none">
+              {extractedThinking ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    userManuallyToggledRef.current = true;
+                    setIsThoughtExpanded(prev => !prev);
+                  }}
+                  className="group/status inline-flex items-center gap-2.5 py-1 text-slate-800 dark:text-slate-100 hover:text-blue-600 dark:hover:text-blue-400 select-none cursor-pointer transition-colors text-left"
+                  aria-expanded={isThoughtExpanded}
+                  title={isThoughtExpanded ? "Collapse thought process" : "Expand thought process"}
                 >
-                  {activeStatusLabel}
-                </motion.span>
+                  <ThinkingDots />
+                  <span className="text-[14px] sm:text-[15px] font-semibold tracking-tight">
+                    {activeStatusLabel}
+                  </span>
+                  <ChevronDown
+                    className={clsx(
+                      "w-4 h-4 text-slate-400 dark:text-slate-500 transition-transform duration-200 group-hover/status:text-blue-600 dark:group-hover/status:text-blue-400",
+                      isThoughtExpanded && "rotate-180"
+                    )}
+                  />
+                </button>
+              ) : (
+                <div className="inline-flex items-center gap-2.5 py-1 text-slate-800 dark:text-slate-100 select-none">
+                  <ThinkingDots />
+                  <AnimatePresence mode="wait">
+                    <motion.span
+                      key={activeStatusLabel}
+                      initial={{ opacity: 0, y: 3 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -3 }}
+                      transition={{ duration: 0.22, ease: "easeInOut" }}
+                      className="text-[14px] sm:text-[15px] font-semibold tracking-tight text-slate-800 dark:text-slate-100"
+                    >
+                      {activeStatusLabel}
+                    </motion.span>
+                  </AnimatePresence>
+                </div>
+              )}
+
+              <AnimatePresence initial={false}>
+                {isThoughtExpanded && extractedThinking && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeInOut' }}
+                    className="overflow-hidden mt-1 mb-2.5"
+                  >
+                    <div className="border-l-2 border-slate-300 dark:border-white/15 pl-3.5 my-1.5 text-xs sm:text-[13.5px]/relaxed text-slate-500 dark:text-slate-400 font-sans whitespace-pre-wrap max-h-96 overflow-y-auto selection:bg-blue-500/15 scrollbar-thin">
+                      {extractedThinking}
+                    </div>
+                  </motion.div>
+                )}
               </AnimatePresence>
             </div>
-          ) : !cleanedContent ? (
-            /* Friendly fallback if response is empty */
+          ) : extractedThinking ? (
+            /* Thought process toggle button after active status finishes, auto-collapsed and clickable to toggle */
+            <div className="mb-2.5 select-none">
+              <button
+                type="button"
+                onClick={() => {
+                  userManuallyToggledRef.current = true;
+                  setIsThoughtExpanded(prev => !prev);
+                }}
+                className="group/thought inline-flex items-center gap-2 py-1 text-xs sm:text-[13px] font-medium text-slate-500 hover:text-slate-800 dark:text-slate-400 dark:hover:text-slate-200 transition-colors cursor-pointer"
+                aria-expanded={isThoughtExpanded}
+                title={isThoughtExpanded ? "Collapse thought process" : "Expand thought process"}
+              >
+                <Brain className="w-3.5 h-3.5 text-blue-500/80 dark:text-blue-400/80 shrink-0" />
+                <span>{isThoughtExpanded ? 'Hide thought process' : 'Thought process'}</span>
+                <ChevronDown
+                  className={clsx(
+                    "w-3.5 h-3.5 text-slate-400 dark:text-slate-500 transition-transform duration-200 group-hover/thought:text-slate-600 dark:group-hover/thought:text-slate-300",
+                    isThoughtExpanded && "rotate-180"
+                  )}
+                />
+              </button>
+
+              <AnimatePresence initial={false}>
+                {isThoughtExpanded && (
+                  <motion.div
+                    initial={{ opacity: 0, height: 0 }}
+                    animate={{ opacity: 1, height: 'auto' }}
+                    exit={{ opacity: 0, height: 0 }}
+                    transition={{ duration: 0.2, ease: 'easeInOut' }}
+                    className="overflow-hidden mt-1 mb-2"
+                  >
+                    <div className="border-l-2 border-slate-300 dark:border-white/15 pl-3.5 my-1.5 text-xs sm:text-[13.5px]/relaxed text-slate-500 dark:text-slate-400 font-sans whitespace-pre-wrap max-h-96 overflow-y-auto selection:bg-blue-500/15 scrollbar-thin">
+                      {extractedThinking}
+                    </div>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+            </div>
+          ) : null}
+
+          {/* Main response content or friendly fallback if completely empty */}
+          {cleanedContent ? (
+            <MarkdownRenderer content={cleanedContent} />
+          ) : !activeStatusLabel && !extractedThinking ? (
             <div className="inline-flex items-center gap-2 px-3.5 py-2.5 rounded-2xl bg-amber-500/10 dark:bg-amber-500/15 border border-amber-500/30 text-amber-800 dark:text-amber-200 text-xs font-medium">
               <span className="w-2 h-2 rounded-full bg-amber-500 shrink-0" />
               <span>Model tidak memberikan respon teks. Anda dapat mengklik tombol <strong>Re-answer</strong> di bawah untuk mencoba kembali.</span>
             </div>
-          ) : (
-            <>
-              {extractedThinking && <ThoughtAccordion thinking={extractedThinking} />}
-              <MarkdownRenderer content={cleanedContent} />
-            </>
-          )}
+          ) : null}
 
           {/* Action icon buttons row: icon-only with animated hover tooltips */}
           {(!isTyping || message.content) && (

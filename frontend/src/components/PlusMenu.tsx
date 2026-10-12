@@ -105,6 +105,8 @@ export function PlusMenu({
             initial="hidden"
             animate="show"
             exit="exit"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
             style={{ transformOrigin: 'bottom left' }}
             className="absolute bottom-full left-0 mb-3 w-52 p-1.5 rounded-2xl bg-white dark:bg-[#141b2a] border border-slate-200 dark:border-slate-800 shadow-2xl shadow-black/25 z-30"
             role="menu"
@@ -112,7 +114,11 @@ export function PlusMenu({
             <MenuItem
               icon={<Paperclip className="w-4 h-4" />}
               label="Upload files"
-              onClick={() => { onUploadClick(); setOpen(false); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onUploadClick();
+                setOpen(false);
+              }}
             />
 
             {hasDynamic && (
@@ -124,7 +130,10 @@ export function PlusMenu({
                 icon={<Globe className="w-4 h-4" />}
                 label="Search web"
                 active={webSearch}
-                onClick={() => { onToggleWebSearch(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleWebSearch();
+                }}
               />
             )}
             {capabilities.tools && (
@@ -132,7 +141,10 @@ export function PlusMenu({
                 icon={<Wrench className="w-4 h-4" />}
                 label="Tools"
                 active={tools}
-                onClick={() => { onToggleTools(); }}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onToggleTools();
+                }}
               />
             )}
           </motion.div>
@@ -150,7 +162,7 @@ function MenuItem({
 }: {
   icon: React.ReactNode;
   label: string;
-  onClick: () => void;
+  onClick: (e: React.MouseEvent) => void;
   active?: boolean;
 }) {
   return (
@@ -159,7 +171,11 @@ function MenuItem({
       variants={itemVariants}
       whileHover={{ scale: 1.02 }}
       whileTap={{ scale: 0.96 }}
-      onClick={onClick}
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick(e);
+      }}
       role="menuitem"
       className={clsx(
         'w-full flex items-center gap-2.5 px-3 py-2 rounded-xl text-[13px] font-medium text-left cursor-pointer transition-colors',

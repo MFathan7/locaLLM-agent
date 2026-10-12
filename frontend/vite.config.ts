@@ -73,7 +73,7 @@ function resolveUserName(cfg: Record<string, any>, activeWs?: string): string | 
         return profileName.trim();
       }
     }
-  } catch {}
+  } catch { }
   // Check active workspace knowledge files for an author or user profile declaration
   try {
     const wsRoot = getWorkspacesDir();
@@ -249,7 +249,7 @@ function readSkillsRecursively(baseDir: string): any[] {
             path: path.relative(baseDir, fullPath).replace(/\\/g, '/'),
             enabled: true
           });
-        } catch {}
+        } catch { }
       }
     }
   }
@@ -307,6 +307,38 @@ function locallmBridgePlugin(): Plugin {
               }
               saveConfigOnDisk(merged);
 
+              // If switching away from Ollama to another backend, release Ollama models from VRAM immediately
+              const oldBackend = (current.active_backend || 'ollama').toLowerCase();
+              const newBackend = (merged.active_backend || 'ollama').toLowerCase();
+              if (oldBackend === 'ollama' && newBackend !== 'ollama') {
+                try {
+                  const ollamaHost = merged.ollama_host || current.ollama_host || 'http://127.0.0.1:11434';
+                  const psRes = await fetch(`${ollamaHost}/api/ps`, { signal: AbortSignal.timeout(1500) });
+                  if (psRes.ok) {
+                    const psData = (await psRes.json()) as any;
+                    for (const m of psData.models || []) {
+                      const mName = m.name || m.model;
+                      if (mName) {
+                        await fetch(`${ollamaHost}/api/generate`, {
+                          method: 'POST',
+                          headers: { 'Content-Type': 'application/json' },
+                          body: JSON.stringify({ model: mName, keep_alive: 0 }),
+                          signal: AbortSignal.timeout(1500)
+                        }).catch(() => {});
+                      }
+                    }
+                  }
+                  if (current.ollama_model && current.ollama_model !== 'auto') {
+                    await fetch(`${ollamaHost}/api/generate`, {
+                      method: 'POST',
+                      headers: { 'Content-Type': 'application/json' },
+                      body: JSON.stringify({ model: current.ollama_model, keep_alive: 0 }),
+                      signal: AbortSignal.timeout(1500)
+                    }).catch(() => {});
+                  }
+                } catch { }
+              }
+
               // Hot-sync to locaLLM Python API server if running
               const serverPort = merged.server_port || 8080;
               const apiKey = merged.server_api_key || '';
@@ -349,7 +381,7 @@ function locallmBridgePlugin(): Plugin {
                 if (fs.existsSync(metaFile)) {
                   try {
                     meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
-                  } catch {}
+                  } catch { }
                 }
 
                 // Read knowledge count
@@ -358,7 +390,7 @@ function locallmBridgePlugin(): Plugin {
                 if (fs.existsSync(knowDir)) {
                   try {
                     knowledgeCount = fs.readdirSync(knowDir).filter(f => f.endsWith('.md') || f.endsWith('.txt')).length;
-                  } catch {}
+                  } catch { }
                 }
 
                 // Read skills files recursively
@@ -527,7 +559,7 @@ function locallmBridgePlugin(): Plugin {
                       cfg.active_workspace = targetName;
                       saveConfigOnDisk(cfg);
                     }
-                  } catch {}
+                  } catch { }
                 }
               }
 
@@ -537,7 +569,7 @@ function locallmBridgePlugin(): Plugin {
               if (fs.existsSync(metaFile)) {
                 try {
                   meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8'));
-                } catch {}
+                } catch { }
               }
 
               meta.name = finalName;
@@ -567,7 +599,7 @@ function locallmBridgePlugin(): Plugin {
                   const dsId = (ds.id || ds.name || '').toLowerCase().replace(/[^a-z0-9_-]/g, '-');
                   const targetFile = ds.path ? path.join(skillDir, ds.path) : (dsId ? path.join(skillDir, `${dsId}.md`) : null);
                   if (targetFile && fs.existsSync(targetFile)) {
-                    try { fs.unlinkSync(targetFile); } catch {}
+                    try { fs.unlinkSync(targetFile); } catch { }
                   }
                 }
               }
@@ -592,7 +624,7 @@ function locallmBridgePlugin(): Plugin {
                         'utf-8'
                       );
                     }
-                  } catch {}
+                  } catch { }
                 }
               }
 
@@ -653,12 +685,12 @@ function locallmBridgePlugin(): Plugin {
 
           let meta: any = {};
           if (fs.existsSync(metaFile)) {
-            try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8')); } catch {}
+            try { meta = JSON.parse(fs.readFileSync(metaFile, 'utf-8')); } catch { }
           }
 
           let memData: { facts: Record<string, string> } = { facts: {} };
           if (fs.existsSync(memFile)) {
-            try { memData = JSON.parse(fs.readFileSync(memFile, 'utf-8')); } catch {}
+            try { memData = JSON.parse(fs.readFileSync(memFile, 'utf-8')); } catch { }
           }
           if (!memData.facts || typeof memData.facts !== 'object') {
             memData.facts = {};
@@ -776,7 +808,7 @@ function locallmBridgePlugin(): Plugin {
                             snippet: uStr,
                             favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
                           });
-                        } catch {}
+                        } catch { }
                       }
                     }
 
@@ -797,7 +829,7 @@ function locallmBridgePlugin(): Plugin {
                             snippet: uStr,
                             favicon: `https://www.google.com/s2/favicons?domain=${domain}&sz=32`
                           });
-                        } catch {}
+                        } catch { }
                       }
                     }
                   };
@@ -917,7 +949,7 @@ function locallmBridgePlugin(): Plugin {
                   };
                   sessionParseCache[filePath] = { mtimeMs: stats.mtimeMs, session: sessionObj };
                   sessionsList.push(sessionObj);
-                } catch {}
+                } catch { }
               }
 
               sessionsList.sort((a, b) => b.updatedAt - a.updatedAt);
@@ -990,7 +1022,7 @@ function locallmBridgePlugin(): Plugin {
                         fs.writeFileSync(memPath, JSON.stringify(memData, null, 2), 'utf-8');
                       }
                     }
-                  } catch {}
+                  } catch { }
                 }
               }
               sendJson(res, 200, { success: true });
@@ -1029,7 +1061,7 @@ function locallmBridgePlugin(): Plugin {
               const parsed = JSON.parse(pyResult.trim());
               sendJson(res, parsed.success ? 200 : 400, parsed);
             } finally {
-              try { fs.unlinkSync(tmpFile); } catch {}
+              try { fs.unlinkSync(tmpFile); } catch { }
             }
           } catch (err: any) {
             sendJson(res, 500, { success: false, error: err.message, text: '' });
@@ -1171,7 +1203,7 @@ function locallmBridgePlugin(): Plugin {
               sendJson(res, 200, models);
               return;
             }
-          } catch {}
+          } catch { }
 
           // Fallback static list
           sendJson(res, 200, [
@@ -1239,14 +1271,56 @@ function locallmBridgePlugin(): Plugin {
             return;
           }
 
-          const targetModel = body.model || cfg.default_model || 'gemma4:12b';
+          let targetModel = (body.model || cfg.default_model || '').trim();
+          let targetBackend = (body.backend || body.platform || body.provider || cfg.active_backend || 'ollama').trim();
+
+          const customPlatforms: any[] = cfg.custom_platforms || [];
+          // Match backend if model belongs to a custom platform
+          const matchedPlatform = customPlatforms.find(
+            (p: any) => (p.name && p.name.toLowerCase() === targetBackend.toLowerCase()) || p.default_model === targetModel
+          );
+          if (matchedPlatform && (targetBackend.toLowerCase() === 'ollama' || !targetBackend) && targetModel !== (cfg.ollama_model || '')) {
+            targetBackend = matchedPlatform.name;
+          }
+
+          const isCustom = targetBackend.toLowerCase() !== 'ollama';
+          const activeCustomPlatform = customPlatforms.find(
+            (p: any) => p.name && p.name.toLowerCase() === targetBackend.toLowerCase()
+          );
+
+          // Resolve model if 'auto' or empty
+          if (!targetModel || targetModel.toLowerCase() === 'auto') {
+            if (isCustom && activeCustomPlatform) {
+              targetModel = activeCustomPlatform.default_model || 'nemotron3-super';
+            } else {
+              targetModel = (cfg.ollama_model && cfg.ollama_model !== 'auto') ? cfg.ollama_model : '';
+              if (!targetModel) {
+                try {
+                  const ollamaHost = cfg.ollama_host || 'http://127.0.0.1:11434';
+                  const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
+                  if (tagsRes.ok) {
+                    const tagsData = (await tagsRes.json()) as any;
+                    const installedNames = (tagsData.models || []).map((m: any) => m.name);
+                    if (installedNames.length > 0) {
+                      targetModel = installedNames[0];
+                    }
+                  }
+                } catch { }
+              }
+              if (!targetModel || targetModel === 'auto') {
+                targetModel = 'qwen3.5:9b';
+              }
+            }
+          }
+
           const workspace = body.workspace || cfg.active_workspace || 'default';
           const sessionId = body.session_id || body.sessionId || (body.options && body.options.sessionId) || '';
 
           const payload = {
             model: targetModel,
-            backend: body.backend || body.platform || body.provider || cfg.active_backend || 'ollama',
-            provider: body.provider || cfg.active_backend || 'ollama',
+            backend: targetBackend,
+            provider: targetBackend,
+            platform: targetBackend,
             session_id: sessionId,
             messages: body.messages || [
               {
@@ -1261,7 +1335,7 @@ function locallmBridgePlugin(): Plugin {
             think: typeof body.think === 'boolean' ? body.think : (body.options?.thinking ?? undefined)
           };
 
-          // Attempt connection to Python API Gateway server
+          // 1. Attempt connection to Python API Gateway server if running
           try {
             const upstream = await fetch(`http://127.0.0.1:${serverPort}/v1/chat/completions`, {
               method: 'POST',
@@ -1269,104 +1343,81 @@ function locallmBridgePlugin(): Plugin {
                 'Content-Type': 'application/json',
                 ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}),
                 'X-Workspace': workspace,
-                'X-Backend': String(payload.backend),
+                'X-Backend': targetBackend,
                 'X-Session-ID': sessionId
               },
-              body: JSON.stringify(payload),
-              signal: AbortSignal.timeout(3000)
+              body: JSON.stringify(payload)
             });
 
-            if (!upstream.ok || !upstream.body) {
-              const errText = await upstream.text().catch(() => '');
-              throw new Error(errText || `Gateway returned HTTP ${upstream.status}`);
-            }
-
-            res.writeHead(200, {
-              'Content-Type': 'text/event-stream',
-              'Cache-Control': 'no-cache',
-              'Connection': 'keep-alive',
-              'Access-Control-Allow-Origin': '*'
-            });
-
-            const reader = upstream.body.getReader();
-            const closeHandler = () => {
-              try { reader.cancel(); } catch {}
-            };
-            req.on('close', closeHandler);
-
-            try {
-              while (true) {
-                const { done, value } = await reader.read();
-                if (done) break;
-                res.write(value);
-              }
-            } finally {
-              req.off('close', closeHandler);
-              res.end();
-            }
-            return;
-          } catch (err: any) {
-            // Graceful direct fallback: Stream directly from Ollama
-            const ollamaHost = cfg.ollama_host || 'http://127.0.0.1:11434';
-            try {
-              let effectiveModel = targetModel;
-              try {
-                const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
-                if (tagsRes.ok) {
-                  const tagsData = (await tagsRes.json()) as any;
-                  const installedNames = (tagsData.models || []).map((m: any) => m.name);
-                  if (installedNames.length > 0) {
-                    const match = installedNames.find((n: string) => n === targetModel || n.startsWith(`${targetModel}:`) || targetModel.startsWith(`${n}:`));
-                    if (match) {
-                      effectiveModel = match;
-                    } else if (!installedNames.includes(targetModel)) {
-                      effectiveModel = installedNames[0];
-                    }
-                  }
-                }
-              } catch {}
-
-              const messages = body.messages || [
-                {
-                  role: 'user',
-                  content: body.message,
-                  ...(Array.isArray(body.images) && body.images.length > 0 ? { images: body.images } : {})
-                }
-              ];
-
-              const ollamaPayload: any = {
-                model: effectiveModel,
-                messages,
-                stream: true,
-                options: {
-                  temperature: typeof body.temperature === 'number' ? body.temperature : cfg.temperature
-                }
-              };
-
-              if (typeof payload.think === 'boolean') {
-                ollamaPayload.think = payload.think;
-              }
-
-              const ollamaRes = await fetch(`${ollamaHost}/api/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(ollamaPayload)
-              });
-
-              if (ollamaRes.ok && ollamaRes.body) {
+            if (upstream.ok && upstream.body) {
+              if (!res.headersSent) {
                 res.writeHead(200, {
                   'Content-Type': 'text/event-stream',
                   'Cache-Control': 'no-cache',
                   'Connection': 'keep-alive',
                   'Access-Control-Allow-Origin': '*'
                 });
+              }
 
-                const reader = ollamaRes.body.getReader();
-                const decoder = new TextDecoder();
-                let inThinking = false;
+              const reader = upstream.body.getReader();
+              const closeHandler = () => {
+                try { reader.cancel(); } catch { }
+              };
+              req.on('close', closeHandler);
 
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  res.write(value);
+                }
+              } finally {
+                req.off('close', closeHandler);
+                res.end();
+              }
+              return;
+            }
+          } catch {
+            // Gateway is offline or unreachable, proceed to direct fallback
+          }
+
+          if (res.headersSent) return;
+
+          // 2. Direct fallback for Custom OpenAI-compatible Platform
+          if (isCustom && activeCustomPlatform && activeCustomPlatform.api_base) {
+            try {
+              const remoteUrl = `${activeCustomPlatform.api_base.replace(/\/+$/, '')}/chat/completions`;
+              const remoteHeaders: Record<string, string> = {
+                'Content-Type': 'application/json'
+              };
+              if (activeCustomPlatform.api_key && activeCustomPlatform.api_key.trim()) {
+                remoteHeaders['Authorization'] = `Bearer ${activeCustomPlatform.api_key.trim()}`;
+              }
+
+              const remoteRes = await fetch(remoteUrl, {
+                method: 'POST',
+                headers: remoteHeaders,
+                body: JSON.stringify({
+                  model: targetModel,
+                  messages: payload.messages,
+                  stream: true,
+                  temperature: typeof payload.temperature === 'number' ? payload.temperature : cfg.temperature
+                })
+              });
+
+              if (remoteRes.ok && remoteRes.body) {
+                if (!res.headersSent) {
+                  res.writeHead(200, {
+                    'Content-Type': 'text/event-stream',
+                    'Cache-Control': 'no-cache',
+                    'Connection': 'keep-alive',
+                    'Access-Control-Allow-Origin': '*'
+                  });
+                }
+
+                const reader = remoteRes.body.getReader();
                 const closeHandler = () => {
-                  try { reader.cancel(); } catch {}
+                  try { reader.cancel(); } catch { }
                 };
                 req.on('close', closeHandler);
 
@@ -1374,46 +1425,7 @@ function locallmBridgePlugin(): Plugin {
                   while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
-                    const chunkStr = decoder.decode(value, { stream: true });
-                    const lines = chunkStr.split('\n');
-                    for (const line of lines) {
-                      const trimmed = line.trim();
-                      if (!trimmed) continue;
-                      try {
-                        const parsed = JSON.parse(trimmed);
-                        if (parsed.error) {
-                          res.write(`data: ${JSON.stringify({ event: 'error', data: { message: parsed.error } })}\n\n`);
-                          continue;
-                        }
-
-                        const msg = parsed.message || {};
-                        const thinkingToken = msg.thinking || '';
-                        const contentToken = msg.content || '';
-
-                        if (thinkingToken) {
-                          if (!inThinking) {
-                            res.write(`data: ${JSON.stringify({ event: 'thinking_start' })}\n\n`);
-                            inThinking = true;
-                          }
-                          res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: thinkingToken } }] })}\n\n`);
-                        } else if (contentToken) {
-                          if (inThinking) {
-                            res.write(`data: ${JSON.stringify({ event: 'thinking_end' })}\n\n`);
-                            inThinking = false;
-                          }
-                          res.write(`data: ${JSON.stringify({ event: 'response_token', data: contentToken, choices: [{ delta: { content: contentToken } }] })}\n\n`);
-                        }
-
-                        if (parsed.done) {
-                          if (inThinking) {
-                            res.write(`data: ${JSON.stringify({ event: 'thinking_end' })}\n\n`);
-                            inThinking = false;
-                          }
-                          res.write(`data: ${JSON.stringify({ event: 'done' })}\n\n`);
-                          res.write('data: [DONE]\n\n');
-                        }
-                      } catch {}
-                    }
+                    res.write(value);
                   }
                 } finally {
                   req.off('close', closeHandler);
@@ -1421,22 +1433,161 @@ function locallmBridgePlugin(): Plugin {
                 }
                 return;
               } else {
-                const ollamaErr = await ollamaRes.text().catch(() => '');
+                const errText = await remoteRes.text().catch(() => '');
+                if (!res.headersSent) {
+                  res.writeHead(remoteRes.status || 500, {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                  });
+                  res.end(JSON.stringify({ error: errText || `Platform ${activeCustomPlatform.name} returned HTTP ${remoteRes.status}` }));
+                }
+                return;
+              }
+            } catch (remoteErr: any) {
+              if (!res.headersSent) {
+                res.writeHead(500, {
+                  'Content-Type': 'application/json',
+                  'Access-Control-Allow-Origin': '*'
+                });
+                res.end(JSON.stringify({ error: `Cannot reach custom platform ${activeCustomPlatform.name}: ${remoteErr.message}` }));
+              }
+              return;
+            }
+          }
+
+          // 3. Direct fallback for Ollama
+          const ollamaHost = cfg.ollama_host || 'http://127.0.0.1:11434';
+          try {
+            let effectiveModel = targetModel;
+            if (!effectiveModel || effectiveModel === 'auto') {
+              try {
+                const tagsRes = await fetch(`${ollamaHost}/api/tags`, { signal: AbortSignal.timeout(2000) });
+                if (tagsRes.ok) {
+                  const tagsData = (await tagsRes.json()) as any;
+                  const installedNames = (tagsData.models || []).map((m: any) => m.name);
+                  if (installedNames.length > 0) {
+                    effectiveModel = installedNames[0];
+                  }
+                }
+              } catch { }
+            }
+
+            const messages = body.messages || [
+              {
+                role: 'user',
+                content: body.message,
+                ...(Array.isArray(body.images) && body.images.length > 0 ? { images: body.images } : {})
+              }
+            ];
+
+            const ollamaPayload: any = {
+              model: effectiveModel,
+              messages,
+              stream: true,
+              options: {
+                temperature: typeof body.temperature === 'number' ? body.temperature : cfg.temperature
+              }
+            };
+
+            if (typeof payload.think === 'boolean') {
+              ollamaPayload.think = payload.think;
+            }
+
+            const ollamaRes = await fetch(`${ollamaHost}/api/chat`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify(ollamaPayload)
+            });
+
+            if (ollamaRes.ok && ollamaRes.body) {
+              if (!res.headersSent) {
+                res.writeHead(200, {
+                  'Content-Type': 'text/event-stream',
+                  'Cache-Control': 'no-cache',
+                  'Connection': 'keep-alive',
+                  'Access-Control-Allow-Origin': '*'
+                });
+              }
+
+              const reader = ollamaRes.body.getReader();
+              const decoder = new TextDecoder();
+              let inThinking = false;
+
+              const closeHandler = () => {
+                try { reader.cancel(); } catch { }
+              };
+              req.on('close', closeHandler);
+
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  const chunkStr = decoder.decode(value, { stream: true });
+                  const lines = chunkStr.split('\n');
+                  for (const line of lines) {
+                    const trimmed = line.trim();
+                    if (!trimmed) continue;
+                    try {
+                      const parsed = JSON.parse(trimmed);
+                      if (parsed.error) {
+                        res.write(`data: ${JSON.stringify({ event: 'error', data: { message: parsed.error } })}\n\n`);
+                        continue;
+                      }
+
+                      const msg = parsed.message || {};
+                      const thinkingToken = msg.thinking || '';
+                      const contentToken = msg.content || '';
+
+                      if (thinkingToken) {
+                        if (!inThinking) {
+                          res.write(`data: ${JSON.stringify({ event: 'thinking_start' })}\n\n`);
+                          inThinking = true;
+                        }
+                        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: thinkingToken } }] })}\n\n`);
+                      } else if (contentToken) {
+                        if (inThinking) {
+                          res.write(`data: ${JSON.stringify({ event: 'thinking_end' })}\n\n`);
+                          inThinking = false;
+                        }
+                        res.write(`data: ${JSON.stringify({ event: 'response_token', data: contentToken, choices: [{ delta: { content: contentToken } }] })}\n\n`);
+                      }
+
+                      if (parsed.done) {
+                        if (inThinking) {
+                          res.write(`data: ${JSON.stringify({ event: 'thinking_end' })}\n\n`);
+                          inThinking = false;
+                        }
+                        res.write(`data: ${JSON.stringify({ event: 'done' })}\n\n`);
+                        res.write('data: [DONE]\n\n');
+                      }
+                    } catch { }
+                  }
+                }
+              } finally {
+                req.off('close', closeHandler);
+                res.end();
+              }
+              return;
+            } else {
+              const ollamaErr = await ollamaRes.text().catch(() => '');
+              if (!res.headersSent) {
                 res.writeHead(ollamaRes.status || 500, {
                   'Content-Type': 'application/json',
                   'Access-Control-Allow-Origin': '*'
                 });
                 res.end(JSON.stringify({ error: ollamaErr || 'Ollama returned an error.' }));
-                return;
               }
-            } catch (fallbackErr: any) {
+              return;
+            }
+          } catch (fallbackErr: any) {
+            if (!res.headersSent) {
               res.writeHead(500, {
                 'Content-Type': 'application/json',
                 'Access-Control-Allow-Origin': '*'
               });
-              res.end(JSON.stringify({ error: `Cannot reach inference backend: ${fallbackErr.message || err.message}` }));
-              return;
+              res.end(JSON.stringify({ error: `Cannot reach inference backend: ${fallbackErr.message}` }));
             }
+            return;
           }
         }
 
@@ -1469,7 +1620,7 @@ function locallmBridgePlugin(): Plugin {
               if (gwRes.ok) {
                 result = await gwRes.json();
               }
-            } catch {}
+            } catch { }
 
             // Fallback to local python invocation if gateway offline
             if (!result) {
@@ -1487,7 +1638,7 @@ print(json.dumps({"success": ok, "message": msg, "skills": skills, "count": len(
                 timeout: 60000
               });
               if (cpRes.stdout) {
-                try { result = JSON.parse(cpRes.stdout.trim()); } catch {}
+                try { result = JSON.parse(cpRes.stdout.trim()); } catch { }
               }
             }
 
@@ -1534,7 +1685,7 @@ print(json.dumps({"success": ok, "message": msg, "skills": skills, "count": len(
               if (gwRes.ok) {
                 result = await gwRes.json();
               }
-            } catch {}
+            } catch { }
 
             // Fallback to local python invocation if gateway offline
             if (!result) {
@@ -1555,7 +1706,7 @@ print(json.dumps({"success": ok, "message": msg, "installed": installed, "count"
                 timeout: 90000
               });
               if (cpRes.stdout) {
-                try { result = JSON.parse(cpRes.stdout.trim()); } catch {}
+                try { result = JSON.parse(cpRes.stdout.trim()); } catch { }
               }
             }
 
@@ -1581,5 +1732,7 @@ export default defineConfig({
   server: {
     port: 5173,
     host: true,
+    allowedHosts: true, // <--- Tambahkan baris ini
   },
 });
+
