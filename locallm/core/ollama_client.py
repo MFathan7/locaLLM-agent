@@ -9,7 +9,10 @@ class OllamaClient:
     """Synchronous client for Ollama local API."""
 
     def __init__(self, base_url: str = "http://127.0.0.1:11434", timeout: float = 180.0):
-        self.base_url = base_url.rstrip("/")
+        url = (base_url or "http://127.0.0.1:11434").strip().rstrip("/")
+        if not url.startswith("http://") and not url.startswith("https://"):
+            url = f"http://{url}"
+        self.base_url = url
         self.timeout = timeout
         self._cached_version: Optional[str] = None
         self._cached_connected: Optional[bool] = None

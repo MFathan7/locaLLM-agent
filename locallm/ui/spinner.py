@@ -43,6 +43,55 @@ def thinking_spinner(
         yield None
 
 
+class AssistantSpinner:
+    """Persistent, non-flickering status indicator for multi-step agent and assistant turns."""
+
+    def __init__(self, console_instance: Optional[Any] = None) -> None:
+        self.console = console_instance or console
+        self._status: Optional[Status] = None
+        self._is_active: bool = False
+
+    def start(self, text: str = "locaLLM is thinking...", style: str = "bold cyan") -> None:
+        """Start the persistent status animation."""
+        if self.console.is_terminal and not self._is_active:
+            self._status = self.console.status(f"[{style}]{text}[/]", spinner="squareSnake")
+            self._status.start()
+            self._is_active = True
+
+    def update(self, text: str, style: str = "bold cyan") -> None:
+        """Seamlessly update spinner message without tearing down the widget."""
+        if self._status and self._is_active:
+            self._status.update(f"[{style}]{text}[/]")
+        elif self.console.is_terminal and not self._is_active:
+            self.start(text, style)
+
+    def print_task(self, report_markup: str) -> None:
+        """Print a completed task line cleanly above the spinner without flickering."""
+        if self._status and self._is_active:
+            self._status.stop()
+            self.console.print(report_markup)
+            self._status.start()
+        else:
+            self.console.print(report_markup)
+
+    def stop(self) -> None:
+        """Stop and tear down the spinner."""
+        if self._status and self._is_active:
+            try:
+                self._status.stop()
+            except Exception:
+                pass
+            self._is_active = False
+            self._status = None
+
+    def __enter__(self) -> "AssistantSpinner":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type: Any, exc_val: Any, exc_tb: Any) -> None:
+        self.stop()
+
+
 class TaskTracker:
     """Tracks and displays completed task lines, and erases them cleanly when ready to answer."""
 

@@ -39,8 +39,18 @@ from locallm.ui.chat_view import (
     stream_assistant_response,
 )
 from locallm.ui.completer import ChatInputCompleter
-from locallm.ui.spinner import AgentProgress, TaskTracker, thinking_spinner
+from locallm.ui.spinner import AgentProgress, AssistantSpinner, TaskTracker, thinking_spinner
 from locallm.ui.theme import QUESTIONARY_STYLE, console, get_theme_palette
+
+
+IGNORANCE_REFUSAL_PATTERNS = [
+    r"\b(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data|knowledge|access|details)\b",
+    r"\b(not\s+familiar\s+with|no\s+(direct\s+)?information\s+about|cannot\s+provide\s+information)\b",
+    r"\b(as\s+an\s+ai|my\s+knowledge\s+cutoff|training\s+cutoff|outside\s+my\s+knowledge)\b",
+    r"\b(tidak\s+(memiliki|punya)\s+(informasi|data|akses)|tidak\s+tahu|belum\s+(tahu|memiliki\s+data))\b",
+    r"\b(tidak\s+dapat\s+menemukan|tidak\s+ditemukan\s+dalam\s+basis\s+data)\b",
+    r"\b(cannot\s+browse|unable\s+to\s+browse|no\s+real[- ]time\s+access)\b",
+]
 
 
 def _create_chat_key_bindings() -> KeyBindings:
@@ -270,7 +280,7 @@ def _process_assistant_turn(
     current_tools = get_all_assistant_tools(active_ws)
 
     MAX_TOOL_STEPS = 25
-    tracker = TaskTracker()
+    spinner = AssistantSpinner()
 
     if has_tools:
         step = 0
@@ -280,27 +290,29 @@ def _process_assistant_turn(
         soft_limit_threshold = 8
         soft_limit_nudged = False
 
-        while step < MAX_TOOL_STEPS:
-            step += 1
+        spinner.start("locaLLM is thinking...")
+        try:
+            while step < MAX_TOOL_STEPS:
+                step += 1
 
-            # Kondisi 3 (Progressive System Nudge):
-            if step == soft_limit_threshold and not soft_limit_nudged:
-                soft_limit_nudged = True
-                memory.history.append({
-                    "role": "user",
-                    "content": (
-                        "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. "
-                        "Use the data and observations already gathered to synthesize the final answer immediately, or invoke 'complete_task'.]"
-                    ),
-                })
+                # Kondisi 3 (Progressive System Nudge):
+                if step == soft_limit_threshold and not soft_limit_nudged:
+                    soft_limit_nudged = True
+                    memory.history.append({
+                        "role": "user",
+                        "content": (
+                            "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. "
+                            "Use the data and observations already gathered to synthesize the final answer immediately, or invoke 'complete_task'.]"
+                        ),
+                    })
 
-            turn_msg = None
-            spinner_msg = (
-                "locaLLM is thinking..."
-                if step == 1
-                else "locaLLM is analyzing results & planning next action..."
-            )
-            with thinking_spinner(spinner_msg):
+                turn_msg = None
+                spinner_msg = (
+                    "locaLLM is thinking..."
+                    if step == 1
+                    else "locaLLM is analyzing results & planning next action..."
+                )
+                spinner.update(spinner_msg)
                 try:
                     tool_temperature = 0.2 if has_tools else config.temperature
                     turn_msg = client.chat_turn(
@@ -314,20 +326,20 @@ def _process_assistant_turn(
                 except Exception:
                     turn_msg = None
 
-            if not turn_msg:
-                break
+                if not turn_msg:
+                    break
 
-            tool_calls = turn_msg.get("tool_calls")
-            if not tool_calls and turn_msg.get("content"):
-                from locallm.core.tools import extract_fallback_tool_calls
-                tool_names = {t.get("function", {}).get("name") for t in current_tools}
-                recovered = extract_fallback_tool_calls(turn_msg.get("content", ""), tool_names)
-                if recovered:
-                    tool_calls = recovered
-                    turn_msg["tool_calls"] = recovered
-                elif any(f'"{name}"' in turn_msg.get("content", "") for name in tool_names) and step <= 2:
-                    # In-place self-healing format repair without model swap overhead
-                    with thinking_spinner("locaLLM is self-correcting tool call syntax..."):
+                tool_calls = turn_msg.get("tool_calls")
+                if not tool_calls and turn_msg.get("content"):
+                    from locallm.core.tools import extract_fallback_tool_calls
+                    tool_names = {t.get("function", {}).get("name") for t in current_tools}
+                    recovered = extract_fallback_tool_calls(turn_msg.get("content", ""), tool_names)
+                    if recovered:
+                        tool_calls = recovered
+                        turn_msg["tool_calls"] = recovered
+                    elif any(f'"{name}"' in turn_msg.get("content", "") for name in tool_names) and step <= 2:
+                        # In-place self-healing format repair without model swap overhead
+                        spinner.update("locaLLM is self-correcting tool call syntax...")
                         try:
                             repair_turn = client.chat_turn(
                                 model=target_model,
@@ -351,65 +363,67 @@ def _process_assistant_turn(
                         except Exception:
                             pass
 
-            if tool_calls:
-                # Kondisi 2 (Explicit Completion Tool):
-                # Deteksi tool penyelesaian complete_task, putus iterasi seketika dan kembalikan output
-                completion_call = next(
-                    (tc for tc in tool_calls if tc.get("function", {}).get("name") == "complete_task"),
-                    None
-                )
-                if completion_call:
-                    func_args = completion_call.get("function", {}).get("arguments", {})
-                    if isinstance(func_args, str):
-                        try:
-                            func_args = json.loads(func_args)
-                        except Exception:
-                            func_args = {}
-                    final_ans = func_args.get("final_answer") or func_args.get("answer") or ""
-                    if not final_ans and turn_msg.get("content"):
-                        final_ans = turn_msg.get("content", "")
-                    if not final_ans:
-                        final_ans = "Task completed successfully."
-
-                    tracker.clear()
-                    print_assistant_response(final_ans.strip(), stats=stats, context_limit=context_limit, model_name=target_model)
-                    memory.add_assistant_message(final_ans.strip())
-                    return
-
-                executed_any_tool = True
-                memory.history.append(turn_msg)
-                should_trip_circuit = False
-
-                for idx, tc in enumerate(tool_calls):
-                    func_name = tc.get("function", {}).get("name", "")
-                    func_args = tc.get("function", {}).get("arguments", {})
-                    tc_id = tc.get("id") or f"call_{step}_{idx}"
-                    if isinstance(func_args, str):
-                        try:
-                            func_args = json.loads(func_args)
-                        except Exception:
-                            func_args = {}
-
-                    action_label = describe_tool_action(func_name, func_args)
-
-                    # Only avoid spinner if interactive permission confirmation is needed
-                    needs_perm = (
-                        permission_policy == "ask"
-                        and session_state is not None
-                        and session_state.get("permission_override") != "always_allow"
+                if tool_calls:
+                    # Kondisi 2 (Explicit Completion Tool):
+                    # Deteksi tool penyelesaian complete_task, putus iterasi seketika dan kembalikan output
+                    completion_call = next(
+                        (tc for tc in tool_calls if tc.get("function", {}).get("name") == "complete_task"),
+                        None
                     )
-                    t_tool_start = time.time()
-                    if needs_perm:
-                        obs = execute_tool(
-                            func_name,
-                            func_args,
-                            permission_policy=permission_policy,
-                            interactive=True,
-                            session_state=session_state,
-                            workspace_name=active_ws,
+                    if completion_call:
+                        func_args = completion_call.get("function", {}).get("arguments", {})
+                        if isinstance(func_args, str):
+                            try:
+                                func_args = json.loads(func_args)
+                            except Exception:
+                                func_args = {}
+                        final_ans = func_args.get("final_answer") or func_args.get("answer") or ""
+                        if not final_ans and turn_msg.get("content"):
+                            final_ans = turn_msg.get("content", "")
+                        if not final_ans:
+                            final_ans = "Task completed successfully."
+
+                        spinner.stop()
+                        print_assistant_response(final_ans.strip(), stats=stats, context_limit=context_limit, model_name=target_model)
+                        memory.add_assistant_message(final_ans.strip())
+                        return
+
+                    executed_any_tool = True
+                    memory.history.append(turn_msg)
+                    should_trip_circuit = False
+
+                    for idx, tc in enumerate(tool_calls):
+                        func_name = tc.get("function", {}).get("name", "")
+                        func_args = tc.get("function", {}).get("arguments", {})
+                        tc_id = tc.get("id") or f"call_{step}_{idx}"
+                        if isinstance(func_args, str):
+                            try:
+                                func_args = json.loads(func_args)
+                            except Exception:
+                                func_args = {}
+
+                        action_label = describe_tool_action(func_name, func_args)
+
+                        # Only avoid spinner if interactive permission confirmation is needed
+                        needs_perm = (
+                            permission_policy == "ask"
+                            and session_state is not None
+                            and session_state.get("permission_override") != "always_allow"
                         )
-                    else:
-                        with thinking_spinner(action_label):
+                        t_tool_start = time.time()
+                        if needs_perm:
+                            spinner.stop()
+                            obs = execute_tool(
+                                func_name,
+                                func_args,
+                                permission_policy=permission_policy,
+                                interactive=True,
+                                session_state=session_state,
+                                workspace_name=active_ws,
+                            )
+                            spinner.start("locaLLM is continuing execution...")
+                        else:
+                            spinner.update(action_label)
                             obs = execute_tool(
                                 func_name,
                                 func_args,
@@ -423,63 +437,63 @@ def _process_assistant_turn(
                             if t_elapsed < 0.35:
                                 time.sleep(0.35 - t_elapsed)
 
-                    tool_report = format_live_tool_report(func_name, func_args, obs)
-                    tracker.print_task(tool_report)
+                        tool_report = format_live_tool_report(func_name, func_args, obs)
+                        spinner.print_task(tool_report)
 
-                    # Circuit breaker check: track identical consecutive failures and loops
-                    call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
-                    is_err = obs.startswith("Error:") or obs.startswith("Failed") or "Exception:" in obs or "Traceback" in obs
-                    if is_err:
-                        consecutive_failures[call_sig] = consecutive_failures.get(call_sig, 0) + 1
-                    else:
-                        consecutive_failures[call_sig] = 0
+                        # Circuit breaker check: track identical consecutive failures and loops
+                        call_sig = f"{func_name}:{json.dumps(func_args, sort_keys=True)}"
+                        is_err = obs.startswith("Error:") or obs.startswith("Failed") or "Exception:" in obs or "Traceback" in obs
+                        if is_err:
+                            consecutive_failures[call_sig] = consecutive_failures.get(call_sig, 0) + 1
+                        else:
+                            consecutive_failures[call_sig] = 0
 
-                    identical_consecutive[call_sig] = identical_consecutive.get(call_sig, 0) + 1
+                        identical_consecutive[call_sig] = identical_consecutive.get(call_sig, 0) + 1
 
-                    if consecutive_failures[call_sig] >= 2:
-                        console.print(
-                            f"[warning]Circuit breaker tripped: Tool '{func_name}' failed repeatedly with identical parameters. "
-                            f"Halting action loop to prevent token exhaustion.[/]"
-                        )
-                        obs_entry = f"{obs}\n[System Notice: Action halted by circuit breaker after 2 consecutive identical failures. Please explain the blocker to the user rather than repeating this exact call.]"
-                        should_trip_circuit = True
-                    elif identical_consecutive[call_sig] >= 2:
-                        console.print(
-                            f"[warning]Circuit breaker tripped: Tool '{func_name}' called repeatedly with identical parameters. "
-                            f"Halting action loop to prevent infinite repetition.[/]"
-                        )
-                        obs_entry = f"{obs}\n[System Notice: You have already executed this exact tool call. Do NOT call this tool again with identical arguments. Proceed directly to investigate the target or conclude with your findings.]"
-                        should_trip_circuit = True
-                    else:
-                        obs_entry = obs
+                        if consecutive_failures[call_sig] >= 2:
+                            console.print(
+                                f"[warning]Circuit breaker tripped: Tool '{func_name}' failed repeatedly with identical parameters. "
+                                f"Halting action loop to prevent token exhaustion.[/]"
+                            )
+                            obs_entry = f"{obs}\n[System Notice: Action halted by circuit breaker after 2 consecutive identical failures. Please explain the blocker to the user rather than repeating this exact call.]"
+                            should_trip_circuit = True
+                        elif identical_consecutive[call_sig] >= 2:
+                            console.print(
+                                f"[warning]Circuit breaker tripped: Tool '{func_name}' called repeatedly with identical parameters. "
+                                f"Halting action loop to prevent infinite repetition.[/]"
+                            )
+                            obs_entry = f"{obs}\n[System Notice: You have already executed this exact tool call. Do NOT call this tool again with identical arguments. Proceed directly to investigate the target or conclude with your findings.]"
+                            should_trip_circuit = True
+                        else:
+                            obs_entry = obs
 
-                    memory.history.append({
-                        "role": "tool",
-                        "tool_call_id": tc_id,
-                        "content": obs_entry,
-                    })
+                        memory.history.append({
+                            "role": "tool",
+                            "tool_call_id": tc_id,
+                            "content": obs_entry,
+                        })
 
-                if should_trip_circuit:
-                    break
+                    if should_trip_circuit:
+                        break
 
-                # Loop back: let LLM examine tool observations and plan next step or conclude
-                continue
+                    # Loop back: let LLM examine tool observations and plan next step or conclude
+                    continue
 
-            # No tool calls: model returned text answer or attempted refusal
-            content = turn_msg.get("content", "")
-            has_search_web = any(t.get("function", {}).get("name") == "search_web" for t in current_tools)
-            if step == 1 and not executed_any_tool and has_search_web and content:
-                IGNORANCE_REFUSAL_PATTERNS = [
-                    r"\b(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data|knowledge|access|details)\b",
-                    r"\b(not\s+familiar\s+with|no\s+(direct\s+)?information\s+about|cannot\s+provide\s+information)\b",
-                    r"\b(as\s+an\s+ai|my\s+knowledge\s+cutoff|training\s+cutoff|outside\s+my\s+knowledge)\b",
-                    r"\b(tidak\s+(memiliki|punya)\s+(informasi|data|akses)|tidak\s+tahu|belum\s+(tahu|memiliki\s+data))\b",
-                    r"\b(tidak\s+dapat\s+menemukan|tidak\s+ditemukan\s+dalam\s+basis\s+data)\b",
-                    r"\b(cannot\s+browse|unable\s+to\s+browse|no\s+real[- ]time\s+access)\b",
-                ]
-                import re
-                if any(re.search(pat, content, re.IGNORECASE) for pat in IGNORANCE_REFUSAL_PATTERNS):
-                    with thinking_spinner("locaLLM is automatically researching via search_web..."):
+                # No tool calls: model returned text answer or attempted refusal
+                content = turn_msg.get("content", "")
+                has_search_web = any(t.get("function", {}).get("name") == "search_web" for t in current_tools)
+                if step == 1 and not executed_any_tool and has_search_web and content:
+                    IGNORANCE_REFUSAL_PATTERNS = [
+                        r"\b(don'?t|do\s+not)\s+have\s+(any\s+)?(information|data|knowledge|access|details)\b",
+                        r"\b(not\s+familiar\s+with|no\s+(direct\s+)?information\s+about|cannot\s+provide\s+information)\b",
+                        r"\b(as\s+an\s+ai|my\s+knowledge\s+cutoff|training\s+cutoff|outside\s+my\s+knowledge)\b",
+                        r"\b(tidak\s+(memiliki|punya)\s+(informasi|data|akses)|tidak\s+tahu|belum\s+(tahu|memiliki\s+data))\b",
+                        r"\b(tidak\s+dapat\s+menemukan|tidak\s+ditemukan\s+dalam\s+basis\s+data)\b",
+                        r"\b(cannot\s+browse|unable\s+to\s+browse|no\s+real[- ]time\s+access)\b",
+                    ]
+                    import re
+                    if any(re.search(pat, content, re.IGNORECASE) for pat in IGNORANCE_REFUSAL_PATTERNS):
+                        spinner.update("locaLLM is automatically researching via search_web...")
                         try:
                             nudged_turn = client.chat_turn(
                                 model=target_model,
@@ -531,6 +545,7 @@ def _process_assistant_turn(
                                     )
                                     t_tool_start = time.time()
                                     if needs_perm:
+                                        spinner.stop()
                                         obs = execute_tool(
                                             func_name,
                                             func_args,
@@ -539,22 +554,23 @@ def _process_assistant_turn(
                                             session_state=session_state,
                                             workspace_name=active_ws,
                                         )
+                                        spinner.start("locaLLM is continuing execution...")
                                     else:
-                                        with thinking_spinner(action_label):
-                                            obs = execute_tool(
-                                                func_name,
-                                                func_args,
-                                                permission_policy=permission_policy,
-                                                interactive=True,
-                                                session_state=session_state,
-                                                workspace_name=active_ws,
-                                            )
-                                            t_elapsed = time.time() - t_tool_start
-                                            if t_elapsed < 0.35:
-                                                time.sleep(0.35 - t_elapsed)
+                                        spinner.update(action_label)
+                                        obs = execute_tool(
+                                            func_name,
+                                            func_args,
+                                            permission_policy=permission_policy,
+                                            interactive=True,
+                                            session_state=session_state,
+                                            workspace_name=active_ws,
+                                        )
+                                        t_elapsed = time.time() - t_tool_start
+                                        if t_elapsed < 0.35:
+                                            time.sleep(0.35 - t_elapsed)
 
                                     tool_report = format_live_tool_report(func_name, func_args, obs)
-                                    tracker.print_task(tool_report)
+                                    spinner.print_task(tool_report)
                                     memory.history.append({
                                         "role": "tool",
                                         "tool_call_id": tc_id,
@@ -564,18 +580,18 @@ def _process_assistant_turn(
                         except Exception:
                             pass
 
-            if content and content.strip():
-                tracker.clear()
-                print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
-                memory.add_assistant_message(content)
-                return
-            else:
-                # Empty content without tool calls: break to fallback
-                break
+                if content and content.strip():
+                    spinner.stop()
+                    print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
+                    memory.add_assistant_message(content)
+                    return
+                else:
+                    # Empty content without tool calls: break to fallback
+                    break
 
-        # If tools were executed but model finished with empty text, request a final completion summary
-        if executed_any_tool:
-            with thinking_spinner("locaLLM is summarizing completed actions..."):
+            # If tools were executed but model finished with empty text, request a final completion summary
+            if executed_any_tool:
+                spinner.update("locaLLM is summarizing completed actions...")
                 try:
                     summary_turn = client.chat_turn(
                         model=target_model,
@@ -588,14 +604,14 @@ def _process_assistant_turn(
                     )
                     content = summary_turn.get("content", "")
                     if content and content.strip():
-                        tracker.clear()
+                        spinner.stop()
                         print_assistant_response(content, stats=stats, context_limit=context_limit, model_name=target_model)
                         memory.add_assistant_message(content)
                         return
                 except Exception:
                     pass
-
-    tracker.clear()
+        finally:
+            spinner.stop()
     # Direct token streaming fallback
     stream_stats: Dict[str, Any] = {}
     tokens = client.chat_stream(

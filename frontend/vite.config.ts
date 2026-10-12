@@ -1097,7 +1097,7 @@ function locallmBridgePlugin(): Plugin {
                   const rawCaps = Array.isArray(m.capabilities) ? m.capabilities : [];
                   const lowerName = (m.name || '').toLowerCase();
                   const isThinking = rawCaps.includes('thinking') ||
-                    ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lowerName.includes(k));
+                    ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1', 'qwen'].some((k: string) => lowerName.includes(k));
 
                   return {
                     id: m.name,
@@ -1140,7 +1140,7 @@ function locallmBridgePlugin(): Plugin {
                   const models = (data.data || []).map((m: any) => {
                     const id = m.id || m.name;
                     const lowerId = (id || '').toLowerCase();
-                    const isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lowerId.includes(k));
+                    const isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1', 'qwen'].some((k: string) => lowerId.includes(k));
                     return {
                       id,
                       name: id,
@@ -1246,7 +1246,7 @@ function locallmBridgePlugin(): Plugin {
 
           if (!isThinking && modelName) {
             const lower = modelName.toLowerCase();
-            isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1'].some((k: string) => lower.includes(k));
+            isThinking = ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1', 'qwen'].some((k: string) => lower.includes(k));
           }
 
           sendJson(res, 200, {
@@ -1335,8 +1335,38 @@ function locallmBridgePlugin(): Plugin {
             think: typeof body.think === 'boolean' ? body.think : (body.options?.thinking ?? undefined)
           };
 
-          // 1. Attempt connection to Python API Gateway server if running
+          // 1. Attempt connection to Python API Gateway server (with auto-start if offline)
           try {
+            // Auto-start Python API server daemon if not yet running
+            try {
+              const probe = await fetch(`http://127.0.0.1:${serverPort}/health`, { signal: AbortSignal.timeout(350) });
+              if (!probe.ok) throw new Error('Gateway unhealthy');
+            } catch {
+              const baseDir = import.meta.dirname || path.resolve('.');
+              const repoRoot = path.resolve(baseDir, '..');
+              const isWin = process.platform === 'win32';
+              const venvPython = isWin
+                ? path.resolve(repoRoot, '.venv/Scripts/python.exe')
+                : path.resolve(repoRoot, '.venv/bin/python');
+              const pyBin = fs.existsSync(venvPython) ? venvPython : (isWin ? 'python.exe' : 'python3');
+
+              try {
+                child_process.spawn(pyBin, ['-m', 'locallm', 'serve', '--port', String(serverPort), '--detach'], {
+                  cwd: repoRoot,
+                  detached: true,
+                  stdio: 'ignore'
+                }).unref();
+
+                for (let i = 0; i < 10; i++) {
+                  await new Promise(r => setTimeout(r, 250));
+                  try {
+                    const check = await fetch(`http://127.0.0.1:${serverPort}/health`, { signal: AbortSignal.timeout(350) });
+                    if (check.ok) break;
+                  } catch { }
+                }
+              } catch { }
+            }
+
             const upstream = await fetch(`http://127.0.0.1:${serverPort}/v1/chat/completions`, {
               method: 'POST',
               headers: {
@@ -1376,9 +1406,12 @@ function locallmBridgePlugin(): Plugin {
                 res.end();
               }
               return;
+            } else if (!upstream.ok) {
+              const errText = await upstream.text().catch(() => '');
+              console.warn(`[Vite Gateway] Upstream responded with HTTP ${upstream.status}:`, errText);
             }
-          } catch {
-            // Gateway is offline or unreachable, proceed to direct fallback
+          } catch (err: any) {
+            console.warn('[Vite Gateway] Connection failed:', err?.message || err);
           }
 
           if (res.headersSent) return;

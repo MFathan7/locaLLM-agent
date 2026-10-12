@@ -53,7 +53,12 @@ def extract_search_query(prompt: str) -> str:
     m = re.match(pattern, text, flags=re.IGNORECASE)
     if m:
         candidate = text[m.end():].strip()
-        candidate = re.sub(r"^(?:for|about|tentang|mengenai|soal|de|sobre|para|sur|nach|über|regarding)\s+", "", candidate, flags=re.IGNORECASE).strip()
+        candidate = re.sub(
+            r"^(?:aku|saya|kami|me|us|please|dong|tolong|coba)?\s*(?:informasi|info|berita|kabar|data|detail|penjelasan|information|details)?\s*(?:for|about|tentang|mengenai|soal|seputar|terkait|de|sobre|para|sur|nach|über|regarding)\s+",
+            "",
+            candidate,
+            flags=re.IGNORECASE,
+        ).strip()
         if len(candidate) >= 3:
             return candidate.rstrip("?.! ")
 

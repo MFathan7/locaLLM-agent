@@ -708,7 +708,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                                 pass
                         if not is_thinking:
                             lower_id = m_id.lower()
-                            if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1")):
+                            if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1", "qwen")):
                                 is_thinking = True
 
                         model_entries.append({
@@ -766,7 +766,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
 
                 if not is_thinking and model_name:
                     lower_id = model_name.lower()
-                    if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1")):
+                    if any(k in lower_id for k in ("r1", "qwq", "thinking", "reason", "reasoner", "reasoning", "o1", "o3", "deepseek-r1", "qwen")):
                         is_thinking = True
 
                 self._send_json_response(200, {
@@ -1049,22 +1049,18 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         )
         should_search_web = web_search_enabled or is_explicit_search
 
-        if tools_enabled:
+        if should_search_web or tools_enabled:
             base_directive = (
-                "\n\nDirectives (Tools Enabled): Workspace agent tools, skills, and internet access are enabled for this session. "
-                "Never say you cannot perform tasks because you are 'just an AI'. "
-                "Consult the workspace skills catalogue and guidelines above to formulate practical execution steps, scripts, or recommended solutions."
-            )
-        elif not should_search_web:
-            base_directive = (
-                "\n\nDirectives: You are operating in conversational assistant mode. You have complete awareness of the active workspace context, persona, and skills catalogue listed above. "
-                "When answering inquiries or advising the user, refer to and explain any relevant workspace skills. "
-                "Do NOT output automated tool-call execution blocks or JSON commands unless tools are specifically enabled for this turn."
+                "\n\nDirectives (Live Web Search & Browsing Enabled): You have active access to real-time internet browsing tools (`search_web`, `fetch_web`). "
+                "When asked about current events, news, recent updates, public figures, or topics where you lack 100% verified real-time knowledge, "
+                "you MUST PROACTIVELY invoke `search_web` to retrieve current facts before answering. "
+                "Synthesize search findings into a direct, comprehensive answer and cite your sources using markdown links [Source Title](URL) directly in your response. "
+                "Never state that you cannot access the web or are just an AI."
             )
         else:
             base_directive = (
-                "\n\nDirectives: You have active live internet browsing capabilities. Synthesize the web search findings into a comprehensive, direct answer. "
-                "Do not state that you cannot access the web or are just an AI."
+                "\n\nDirectives: You are operating in conversational assistant mode. You have complete awareness of the active workspace context, persona, and skills catalogue listed above. "
+                "Answer user inquiries directly, clearly, and accurately."
             )
 
         # Resolve active workspace context
@@ -1245,35 +1241,127 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         stats: Dict[str, Any] = {}
         active_client = client or self.server.client
         try:
-            if should_search_web and last_prompt:
-                search_directive = ""
+            # Agentic web tool execution for Web GUI
+            web_tools_active = should_search_web or tools_enabled
+            if web_tools_active and last_prompt:
                 try:
+                    from locallm.core.tools import ASSISTANT_TOOLS, execute_tool
                     from locallm.core.tools.web import extract_search_query, perform_web_search
-                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
-                    search_res = perform_web_search(clean_query, max_results=5)
-                    if search_res and not search_res.startswith("Error:"):
-                        search_directive = (
-                            f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
-                            "Directives: You HAVE real-time internet search capabilities provided directly by the host environment. "
-                            "The above verified live search results were retrieved for this query. "
-                            "Never state that you are 'just an AI', 'do not have internet access', or 'cannot browse the web'. "
-                            "Thoroughly answer the user's inquiry using these search results and cite your sources using markdown links [Source Title](URL) directly in your response."
+
+                    gui_tools = [
+                        t for t in ASSISTANT_TOOLS
+                        if t.get("function", {}).get("name") in ("search_web", "fetch_web")
+                    ]
+                    executed_tools_count = 0
+                    MAX_WEB_TURNS = getattr(self.server.config, "agent_max_steps", 10)
+                    soft_limit_threshold = 6
+                    soft_limit_nudged = False
+                    step = 0
+
+                    while step < MAX_WEB_TURNS and hasattr(active_client, "chat_turn"):
+                        step += 1
+                        planning_msg = active_client.chat_turn(
+                            model=target_model,
+                            messages=messages,
+                            tools=gui_tools,
+                            temperature=0.2,
+                            num_ctx=context_window,
                         )
-                    else:
-                        search_directive = (
-                            f"\n\n[Web Search Notice for '{clean_query}']:\n(Pencarian web real-time telah dijalankan namun tidak menemukan hasil spesifik atau terjadi kendala jaringan sementara).\n"
-                            "Directives: Real-time web search was actively performed by the system for this query. "
-                            "Never claim you cannot browse the web or lack internet access. "
-                            "Answer the inquiry as accurately as possible using your knowledge base while explaining that live search returned no direct results for the specific query."
-                        )
+                        tool_calls = planning_msg.get("tool_calls") if isinstance(planning_msg, dict) else None
+
+                        if not tool_calls and isinstance(planning_msg, dict) and planning_msg.get("content"):
+                            from locallm.core.tools import extract_fallback_tool_calls
+                            recovered = extract_fallback_tool_calls(planning_msg.get("content", ""), {"search_web", "fetch_web"})
+                            if recovered:
+                                tool_calls = recovered
+
+                        if not tool_calls:
+                            content = planning_msg.get("content", "") if isinstance(planning_msg, dict) else ""
+                            from locallm.modules.assistant import IGNORANCE_REFUSAL_PATTERNS
+                            is_refusal = bool(content and any(re.search(pat, content, re.IGNORECASE) for pat in IGNORANCE_REFUSAL_PATTERNS))
+
+                            if step == 1 and (is_refusal or (should_search_web and not executed_tools_count)):
+                                nudged_turn = None
+                                try:
+                                    nudged_turn = active_client.chat_turn(
+                                        model=target_model,
+                                        messages=messages + [
+                                            {"role": "assistant", "content": content},
+                                            {
+                                                "role": "user",
+                                                "content": "You indicated that you lack current data or need search results. You have the 'search_web' tool available. Invoke 'search_web' now with a concise search query targeting this inquiry."
+                                            }
+                                        ],
+                                        tools=gui_tools,
+                                        temperature=0.2,
+                                        num_ctx=context_window,
+                                    )
+                                except Exception:
+                                    pass
+
+                                nudged_tc = nudged_turn.get("tool_calls") if isinstance(nudged_turn, dict) else None
+                                if not nudged_tc and nudged_turn and nudged_turn.get("content"):
+                                    from locallm.core.tools import extract_fallback_tool_calls
+                                    nudged_tc = extract_fallback_tool_calls(nudged_turn.get("content", ""), {"search_web", "fetch_web"})
+
+                                if nudged_tc:
+                                    tool_calls = nudged_tc
+                                else:
+                                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
+                                    search_obs = perform_web_search(clean_query, max_results=5)
+                                    executed_tools_count += 1
+                                    messages.append({
+                                        "role": "tool",
+                                        "name": "search_web",
+                                        "content": str(search_obs),
+                                    })
+                                    continue
+                            else:
+                                break
+
+                        messages.append(planning_msg)
+                        for tc in tool_calls:
+                            fn_call = tc.get("function", {}) if isinstance(tc, dict) else {}
+                            fn_name = fn_call.get("name", "")
+                            fn_args = fn_call.get("arguments", {})
+                            tc_id = tc.get("id") or f"call_{step}"
+                            if isinstance(fn_args, str):
+                                try:
+                                    fn_args = json.loads(fn_args)
+                                except Exception:
+                                    fn_args = {}
+
+                            if fn_name not in ("search_web", "fetch_web"):
+                                continue
+
+                            executed_tools_count += 1
+                            tool_res = execute_tool(fn_name, fn_args, workspace_name=workspace_name)
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": str(tool_res),
+                            })
+
+                        if step >= soft_limit_threshold and not soft_limit_nudged:
+                            soft_limit_nudged = True
+                            messages.append({
+                                "role": "user",
+                                "content": "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. Use the data and observations already gathered to synthesize the final answer immediately.]"
+                            })
+
+                    if executed_tools_count > 0:
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[System Directive: Web research is complete. Based on all verified search results and observations above, "
+                                "synthesize a comprehensive, clear, and direct answer for the user. "
+                                "Include relevant details, benchmark comparisons, tables, and cite URLs with markdown links [Source Title](URL). "
+                                "Do not invoke any more tools or state that you will search again. Answer directly now.]"
+                            )
+                        })
                 except Exception as exc:
                     self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
-                    search_directive = (
-                        f"\n\n[Web Search Notice]: Gagal menghubungi penyedia pencarian web ({exc}). "
-                        "Jawab pertanyaan user sebaik mungkin menggunakan basis pengetahuan Anda dan sebutkan bahwa pencarian web sedang mengalami kendala jaringan. "
-                        "Jangan mengklaim bahwa Anda tidak memiliki kemampuan pencarian web karena Anda hanyalah model AI."
-                    )
-                messages = self._inject_search_context(messages, search_directive)
 
             turn_msg: Optional[Dict[str, Any]] = None
             if hasattr(active_client, "chat_turn"):
@@ -1297,6 +1385,21 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             content = ""
             if turn_msg and isinstance(turn_msg, dict):
                 content = turn_msg.get("content", "")
+
+            stripped_ans = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", content, flags=re.IGNORECASE).strip()
+            if not stripped_ans and hasattr(active_client, "chat_turn"):
+                try:
+                    fb_msg = active_client.chat_turn(
+                        model=target_model,
+                        messages=messages + [{"role": "user", "content": "Please synthesize and write the direct final response now based on the findings."}],
+                        temperature=0.2,
+                        num_ctx=context_window,
+                    )
+                    fb_text = fb_msg.get("content", "") if isinstance(fb_msg, dict) else ""
+                    if fb_text:
+                        content = (content + "\n\n" + fb_text).strip() if content else fb_text.strip()
+                except Exception:
+                    pass
 
             prompt_tokens = stats.get("prompt_eval_count") or len(str(messages)) // 4
             completion_tokens = stats.get("eval_count") or len(content) // 4
@@ -1455,76 +1558,140 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             else:
                 _send_event("routing", {"model": target_model})
 
-            # Handle web search tool execution
-            if should_search_web and last_prompt:
-                search_directive = ""
+            # Handle Web GUI tools execution (focused on web browsing tools: search_web and fetch_web)
+            web_tools_active = should_search_web or tools_enabled
+            if web_tools_active and last_prompt:
                 try:
+                    from locallm.core.tools import ASSISTANT_TOOLS, execute_tool
                     from locallm.core.tools.web import extract_search_query, perform_web_search
-                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
-                    _send_event("tool_start", {"tool": "web_search", "label": f"Searching web for '{clean_query}'..."})
 
-                    search_res = perform_web_search(clean_query, max_results=5)
-                    _send_event("tool_end", {"tool": "web_search"})
+                    gui_tools = [
+                        t for t in ASSISTANT_TOOLS
+                        if t.get("function", {}).get("name") in ("search_web", "fetch_web")
+                    ]
+                    executed_tools_count = 0
+                    MAX_WEB_TURNS = getattr(self.server.config, "agent_max_steps", 10)
+                    soft_limit_threshold = 6
+                    soft_limit_nudged = False
+                    step = 0
 
-                    if search_res and not search_res.startswith("Error:"):
-                        search_directive = (
-                            f"\n\n[Web Search Results for '{clean_query}']:\n{search_res}\n\n"
-                            "Directives: You HAVE real-time internet search capabilities provided directly by the host environment. "
-                            "The above verified live search results were retrieved for this query. "
-                            "Never state that you are 'just an AI', 'do not have internet access', or 'cannot browse the web'. "
-                            "Thoroughly answer the user's inquiry using these search results and cite your sources using markdown links [Source Title](URL) directly in your response."
-                        )
-                    else:
-                        search_directive = (
-                            f"\n\n[Web Search Notice for '{clean_query}']:\n(Pencarian web real-time telah dijalankan namun tidak menemukan hasil spesifik atau terjadi kendala jaringan sementara).\n"
-                            "Directives: Real-time web search was actively performed by the system for this query. "
-                            "Never claim you cannot browse the web or lack internet access. "
-                            "Answer the inquiry as accurately as possible using your knowledge base while explaining that live search returned no direct results for the specific query."
-                        )
-                except Exception as exc:
-                    self._log_request_event("WARN", path, 500, detail=f"Web search error: {exc}")
-                    _send_event("tool_end", {"tool": "web_search", "error": str(exc)})
-                    search_directive = (
-                        f"\n\n[Web Search Notice]: Gagal menghubungi penyedia pencarian web ({exc}). "
-                        "Jawab pertanyaan user sebaik mungkin menggunakan basis pengetahuan Anda dan sebutkan bahwa pencarian web sedang mengalami kendala jaringan. "
-                        "Jangan mengklaim bahwa Anda tidak memiliki kemampuan pencarian web karena Anda hanyalah model AI."
-                    )
-                messages = self._inject_search_context(messages, search_directive)
-
-            # Handle workspace agent tools execution
-            elif tools_enabled:
-                try:
-                    from locallm.core.tools import get_all_assistant_tools, execute_tool
-                    available_tools = get_all_assistant_tools(workspace_name)
-                    if available_tools and hasattr(active_client, "chat_turn"):
+                    while step < MAX_WEB_TURNS and hasattr(active_client, "chat_turn"):
+                        step += 1
                         planning_msg = active_client.chat_turn(
                             model=target_model,
                             messages=messages,
-                            tools=available_tools,
-                            temperature=temperature,
+                            tools=gui_tools,
+                            temperature=0.2,
                             num_ctx=context_window,
                         )
                         tool_calls = planning_msg.get("tool_calls") if isinstance(planning_msg, dict) else None
-                        if tool_calls:
-                            for tc in tool_calls:
-                                fn_call = tc.get("function", {}) if isinstance(tc, dict) else {}
-                                fn_name = fn_call.get("name", "")
-                                fn_args = fn_call.get("arguments", {})
-                                if isinstance(fn_args, str):
-                                    try:
-                                        fn_args = json.loads(fn_args)
-                                    except Exception:
-                                        fn_args = {}
-                                _send_event("tool_start", {"tool": fn_name, "label": f"Running {fn_name}..."})
-                                tool_res = execute_tool(fn_name, fn_args, workspace_name=workspace_name)
-                                _send_event("tool_end", {"tool": fn_name})
-                                messages.append({
-                                    "role": "tool",
-                                    "name": fn_name,
-                                    "content": str(tool_res),
-                                })
+
+                        if not tool_calls and isinstance(planning_msg, dict) and planning_msg.get("content"):
+                            from locallm.core.tools import extract_fallback_tool_calls
+                            recovered = extract_fallback_tool_calls(planning_msg.get("content", ""), {"search_web", "fetch_web"})
+                            if recovered:
+                                tool_calls = recovered
+
+                        if not tool_calls:
+                            content = planning_msg.get("content", "") if isinstance(planning_msg, dict) else ""
+                            from locallm.modules.assistant import IGNORANCE_REFUSAL_PATTERNS
+                            is_refusal = bool(content and any(re.search(pat, content, re.IGNORECASE) for pat in IGNORANCE_REFUSAL_PATTERNS))
+
+                            if step == 1 and (is_refusal or (should_search_web and not executed_tools_count)):
+                                nudged_turn = None
+                                try:
+                                    _send_event("tool_start", {"tool": "web_search", "label": "Planning web search query..."})
+                                    nudged_turn = active_client.chat_turn(
+                                        model=target_model,
+                                        messages=messages + [
+                                            {"role": "assistant", "content": content},
+                                            {
+                                                "role": "user",
+                                                "content": "You indicated that you lack current data or need search results. You have the 'search_web' tool available. Invoke 'search_web' now with a concise search query targeting this inquiry."
+                                            }
+                                        ],
+                                        tools=gui_tools,
+                                        temperature=0.2,
+                                        num_ctx=context_window,
+                                    )
+                                except Exception:
+                                    pass
+
+                                nudged_tc = nudged_turn.get("tool_calls") if isinstance(nudged_turn, dict) else None
+                                if not nudged_tc and nudged_turn and nudged_turn.get("content"):
+                                    from locallm.core.tools import extract_fallback_tool_calls
+                                    nudged_tc = extract_fallback_tool_calls(nudged_turn.get("content", ""), {"search_web", "fetch_web"})
+
+                                if nudged_tc:
+                                    tool_calls = nudged_tc
+                                else:
+                                    clean_query = extract_search_query(last_prompt) or last_prompt.strip()
+                                    _send_event("tool_start", {"tool": "web_search", "label": f"Searching web for '{clean_query}'..."})
+                                    search_obs = perform_web_search(clean_query, max_results=5)
+                                    _send_event("tool_end", {"tool": "web_search"})
+                                    executed_tools_count += 1
+                                    messages.append({
+                                        "role": "tool",
+                                        "name": "search_web",
+                                        "content": str(search_obs),
+                                    })
+                                    continue
+                            else:
+                                break
+
+                        messages.append(planning_msg)
+                        for tc in tool_calls:
+                            fn_call = tc.get("function", {}) if isinstance(tc, dict) else {}
+                            fn_name = fn_call.get("name", "")
+                            fn_args = fn_call.get("arguments", {})
+                            tc_id = tc.get("id") or f"call_{step}"
+                            if isinstance(fn_args, str):
+                                try:
+                                    fn_args = json.loads(fn_args)
+                                except Exception:
+                                    fn_args = {}
+
+                            if fn_name not in ("search_web", "fetch_web"):
+                                continue
+
+                            executed_tools_count += 1
+                            if fn_name == "search_web":
+                                q = fn_args.get("query", "")
+                                label = f"Searching web for '{q}'..." if q else "Searching web..."
+                            else:
+                                u = fn_args.get("url", "")
+                                label = f"Fetching content from {u}..." if u else "Fetching web content..."
+
+                            _send_event("tool_start", {"tool": fn_name, "label": label})
+                            tool_res = execute_tool(fn_name, fn_args, workspace_name=workspace_name)
+                            _send_event("tool_end", {"tool": fn_name})
+
+                            messages.append({
+                                "role": "tool",
+                                "tool_call_id": tc_id,
+                                "name": fn_name,
+                                "content": str(tool_res),
+                            })
+
+                        if step >= soft_limit_threshold and not soft_limit_nudged:
+                            soft_limit_nudged = True
+                            messages.append({
+                                "role": "user",
+                                "content": "[System Warning: Observation budget is almost exhausted. Do not invoke further exploration, search, or repetitive inspection tools. Use the data and observations already gathered to synthesize the final answer immediately.]"
+                            })
+
+                    if executed_tools_count > 0:
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "[System Directive: Web research is complete. Based on all verified search results and observations above, "
+                                "synthesize a comprehensive, clear, and direct answer for the user. "
+                                "Include relevant details, benchmark comparisons, tables, and cite URLs with markdown links [Source Title](URL). "
+                                "Do not invoke any more tools or state that you will search again. Answer directly now.]"
+                            )
+                        })
                 except Exception as tool_exc:
-                    self._log_request_event("WARN", path, 500, detail=f"Tool evaluation error: {tool_exc}")
+                    self._log_request_event("WARN", path, 500, detail=f"Web tool evaluation error: {tool_exc}")
 
             # Stream generated tokens with typed reasoning execution events
             in_thinking = False
@@ -1656,6 +1823,23 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             if stream_buf:
                 _flush_content(stream_buf)
 
+            # Check if accumulated_content only has thinking tags and no actual response text
+            full_text = "".join(accumulated_content).strip()
+            stripped_ans = re.sub(r"<(?:think|thought)>[\s\S]*?</(?:think|thought)>", "", full_text, flags=re.IGNORECASE).strip()
+            if not stripped_ans and hasattr(active_client, "chat_turn"):
+                try:
+                    fb_msg = active_client.chat_turn(
+                        model=target_model,
+                        messages=messages + [{"role": "user", "content": "Please synthesize and write the direct final response now based on the findings."}],
+                        temperature=0.2,
+                        num_ctx=context_window,
+                    )
+                    fb_text = fb_msg.get("content", "") if isinstance(fb_msg, dict) else ""
+                    if fb_text:
+                        _flush_content("\n\n" + fb_text.strip())
+                except Exception as fb_exc:
+                    self._log_request_event("WARN", path, 500, detail=f"Fallback streaming synthesis error: {fb_exc}")
+
             if not response_started:
                 _send_event("response_start")
                 response_started = True
@@ -1700,7 +1884,6 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             try:
                 err_msg = str(exc)
                 if "Inference execution failed" in err_msg and "{" in err_msg:
-                    import re
                     m = re.search(r"'message':\s*'([^']+)'", err_msg)
                     if m:
                         err_msg = m.group(1).split("\n")[0]

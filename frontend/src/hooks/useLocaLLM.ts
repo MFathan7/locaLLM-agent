@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import type { LocaLLMConfig, ChatSession, Message, Workspace, WorkspaceSkill, ModelInfo, SendOptions, AttachedFile, ExecutionState, SessionNotification } from '../types';
 import { api } from '../services/api';
-import { extractSourcesFromText, generateSmartTitleFallback, sanitizeChatTitle } from '../utils/messageProcessor';
+import { extractSourcesFromText, generateSmartTitleFallback, sanitizeChatTitle, extractThinkingAndResponse } from '../utils/messageProcessor';
 
 function getUrlParams(): { session: string | null; workspace: string | null } {
   try {
@@ -642,12 +642,12 @@ export function useLocaLLM() {
               case 'tool_start': {
                 nextState = 'tool';
                 const toolName = (evt.data?.tool || '').toLowerCase();
-                if (toolName === 'web_search') {
-                  nextLabel = 'Searching...';
+                if (evt.data?.label) {
+                  nextLabel = evt.data.label;
+                } else if (toolName === 'web_search' || toolName === 'search_web') {
+                  nextLabel = 'Searching web...';
                 } else if (toolName.includes('python') || toolName.includes('code') || toolName.includes('terminal')) {
                   nextLabel = 'Running Python...';
-                } else if (evt.data?.label) {
-                  nextLabel = evt.data.label;
                 } else {
                   nextLabel = `Running ${evt.data?.tool || 'tool'}...`;
                 }
@@ -768,8 +768,12 @@ export function useLocaLLM() {
       return;
     }
 
-    if (!assistantContent.trim()) {
-      assistantContent = 'Tidak ada respon yang diterima dari model. Silakan coba ajukan pertanyaan kembali atau gunakan model lain.';
+    const parsedResp = extractThinkingAndResponse(assistantContent);
+    if (!assistantContent.trim() || (!parsedResp.response.trim() && parsedResp.thinking.trim())) {
+      const fallbackNote = (!parsedResp.response.trim() && parsedResp.thinking.trim())
+        ? '\n\nModel menyelesaikan proses penalaran namun tidak menghasilkan teks jawaban akhir. Silakan klik regenerasi atau ajukan ulang pertanyaan.'
+        : 'Tidak ada respon yang diterima dari model. Silakan coba ajukan pertanyaan kembali atau gunakan model lain.';
+      assistantContent = (assistantContent ? assistantContent + fallbackNote : fallbackNote);
       setSessions(prev => prev.map(s => {
         if (s.id !== currentSessionId) return s;
         const msgs = [...s.messages];
@@ -838,7 +842,8 @@ export function useLocaLLM() {
         userOptions = {
           files: [],
           webSearch: Boolean(uMsg.options?.webSearch),
-          tools: Boolean(uMsg.options?.tools)
+          tools: Boolean(uMsg.options?.tools),
+          thinking: typeof uMsg.options?.thinking === 'boolean' ? uMsg.options.thinking : undefined
         };
         break;
       }
@@ -913,12 +918,12 @@ export function useLocaLLM() {
               case 'tool_start': {
                 nextState = 'tool';
                 const toolName = (evt.data?.tool || '').toLowerCase();
-                if (toolName === 'web_search') {
-                  nextLabel = 'Searching...';
+                if (evt.data?.label) {
+                  nextLabel = evt.data.label;
+                } else if (toolName === 'web_search' || toolName === 'search_web') {
+                  nextLabel = 'Searching web...';
                 } else if (toolName.includes('python') || toolName.includes('code') || toolName.includes('terminal')) {
                   nextLabel = 'Running Python...';
-                } else if (evt.data?.label) {
-                  nextLabel = evt.data.label;
                 } else {
                   nextLabel = `Running ${evt.data?.tool || 'tool'}...`;
                 }
@@ -982,8 +987,12 @@ export function useLocaLLM() {
       setTypingSessionIds(prev => prev.filter(id => id !== currentSessionId));
     }
 
-    if (!assistantContent.trim()) {
-      assistantContent = 'Tidak ada respon yang diterima dari model. Silakan periksa koneksi atau coba klik kembali.';
+    const parsedRegen = extractThinkingAndResponse(assistantContent);
+    if (!assistantContent.trim() || (!parsedRegen.response.trim() && parsedRegen.thinking.trim())) {
+      const fallbackNote = (!parsedRegen.response.trim() && parsedRegen.thinking.trim())
+        ? '\n\nModel menyelesaikan proses penalaran namun tidak menghasilkan teks jawaban akhir. Silakan klik regenerasi atau ajukan ulang pertanyaan.'
+        : 'Tidak ada respon yang diterima dari model. Silakan periksa koneksi atau coba klik kembali.';
+      assistantContent = (assistantContent ? assistantContent + fallbackNote : fallbackNote);
     }
 
     setSessions(prev => prev.map(s => {

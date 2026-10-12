@@ -187,6 +187,7 @@ def is_api_server_running(
     max_cache_age: float = 3.0,
 ) -> bool:
     """Check if the local OpenAI-compatible API Gateway server is actively listening."""
+    import socket
     now = time.time()
     cache_key = f"api_server_{host}_{port}"
     if cache_key in _service_cache:
@@ -194,7 +195,7 @@ def is_api_server_running(
         if now - ts < max_cache_age:
             return val
 
-    # Fast HTTP probe on /health
+    # 1. Fast HTTP probe on /health
     try:
         url = f"http://{host}:{port}/health"
         with httpx.Client(timeout=0.6) as client:
@@ -205,18 +206,17 @@ def is_api_server_running(
     except Exception:
         pass
 
-    # Process table check fallback for locallm serve
-    for proc in psutil.process_iter(["name", "cmdline"]):
-        try:
-            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
-            if "locallm" in cmdline and "serve" in cmdline:
-                _service_cache[cache_key] = (True, now)
-                return True
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            continue
+    # 2. Direct TCP socket connection probe
+    try:
+        with socket.create_connection((host, int(port)), timeout=0.3):
+            _service_cache[cache_key] = (True, now)
+            return True
+    except Exception:
+        pass
 
     _service_cache[cache_key] = (False, now)
     return False
+
 
 
 def start_api_server_service(

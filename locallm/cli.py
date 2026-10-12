@@ -354,7 +354,7 @@ def main(argv: Optional[List[str]] = None) -> None:
     from locallm.core.workspace import ensure_default_workspace
     ensure_default_workspace()
 
-    if getattr(args, "host", None):
+    if getattr(args, "host", None) and getattr(args, "command", "") != "serve":
         config.ollama_host = args.host
     if getattr(args, "model", None):
         config.default_model = args.model

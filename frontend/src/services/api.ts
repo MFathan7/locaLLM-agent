@@ -204,7 +204,7 @@ export const api = {
       console.warn('Failed to check model thinking capability in background:', e);
     }
     const lower = modelId.toLowerCase();
-    return ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3'].some(k => lower.includes(k));
+    return ['r1', 'qwq', 'thinking', 'reason', 'reasoner', 'reasoning', 'o1', 'o3', 'deepseek-r1', 'qwen'].some(k => lower.includes(k));
   },
 
   getConfig: async (): Promise<LocaLLMConfig> => {
