@@ -36,9 +36,10 @@ class TestAPIServerService(unittest.TestCase):
 
         self.assertTrue(is_api_server_running("127.0.0.1", 8080, max_cache_age=0.0))
 
+    @patch("socket.create_connection", side_effect=OSError("offline"))
     @patch("httpx.Client")
     @patch("psutil.process_iter")
-    def test_is_api_server_running_offline(self, mock_iter, mock_client_cls):
+    def test_is_api_server_running_offline(self, mock_iter, mock_client_cls, mock_socket):
         mock_client = MagicMock()
         mock_client_cls.return_value.__enter__.return_value = mock_client
         mock_client.get.side_effect = Exception("offline")

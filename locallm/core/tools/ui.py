@@ -18,10 +18,33 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
         short_q = (query_text[:35] + "...") if len(query_text) > 35 else query_text
         return f"locaLLM is searching the web for '{short_q}'..." if short_q else "locaLLM is searching the web..."
 
+    elif name == "search_knowledge":
+        query_text = args.get("query", "").strip()
+        short_q = (query_text[:35] + "...") if len(query_text) > 35 else query_text
+        return f"locaLLM is searching knowledge base for '{short_q}'..." if short_q else "locaLLM is searching knowledge base..."
+
+    elif name == "index_knowledge":
+        return "locaLLM is indexing workspace knowledge base..."
+
+    elif name == "dispatch_agent_team":
+        task_text = args.get("task", "").strip()
+        short_t = (task_text[:35] + "...") if len(task_text) > 35 else task_text
+        return f"locaLLM is deploying Multi-Agent Team for '{short_t}'..." if short_t else "locaLLM is deploying Multi-Agent Team..."
+
     elif name == "write_file":
         path = args.get("path", "")
         name_str = Path(path).name if path else ""
         return f"locaLLM is writing file '{name_str or path}'..." if (name_str or path) else "locaLLM is writing file..."
+
+    elif name == "patch_file":
+        path = args.get("path", "")
+        name_str = Path(path).name if path else ""
+        return f"locaLLM is patching '{name_str or path}'..." if (name_str or path) else "locaLLM is patching file..."
+
+    elif name == "check_syntax":
+        path = args.get("path", "")
+        name_str = Path(path).name if path else ""
+        return f"locaLLM is checking syntax of '{name_str or path}'..." if (name_str or path) else "locaLLM is checking syntax..."
 
     elif name == "list_directory":
         path = args.get("path", ".")
@@ -39,7 +62,8 @@ def describe_tool_action(name: str, arguments: Optional[Dict[str, Any]] = None) 
         return f"locaLLM is locating path '{name_str or path}'..." if (name_str or path) else "locaLLM is locating path..."
 
     elif name == "execute_command":
-        cmd = args.get("command", "").strip()
+        cmd_raw = args.get("command") or args.get("cmd") or args.get("cli") or ""
+        cmd = str(cmd_raw).strip()
         short_cmd = (cmd[:35] + "...") if len(cmd) > 35 else cmd
         return f"locaLLM is running command: {short_cmd}..." if short_cmd else "locaLLM is running system command..."
 
@@ -107,6 +131,14 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
         content = args.get("content", "")
         return f"  [bold {palette.success}]✔[/] [{palette.success}]Written file:[/] [bold {palette.primary}]{path}[/] [dim]({len(content)} chars)[/]"
 
+    elif name == "patch_file":
+        path = args.get("path", "")
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Patched file:[/] [bold {palette.primary}]{path}[/]"
+
+    elif name == "check_syntax":
+        path = args.get("path", "")
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Syntax check:[/] [bold {palette.primary}]{path}[/]"
+
     elif name == "list_directory":
         path = args.get("path", ".")
         return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Inspected directory:[/] [bold {palette.primary}]{path}[/]"
@@ -120,7 +152,8 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
         return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Resolved path:[/] [bold {palette.primary}]{path}[/]"
 
     elif name == "execute_command":
-        cmd = args.get("command", "").strip()
+        cmd_raw = args.get("command") or args.get("cmd") or args.get("cli") or ""
+        cmd = str(cmd_raw).strip()
         short_cmd = (cmd[:40] + "...") if len(cmd) > 40 else cmd
         return f"  [bold {palette.success}]✔[/] [{palette.success}]Executed:[/] [bold {palette.primary}]{short_cmd}[/]"
 
@@ -134,6 +167,19 @@ def format_live_tool_report(name: str, arguments: Optional[Dict[str, Any]], obse
         query_text = args.get("query", "").strip()
         short_q = (query_text[:40] + "...") if len(query_text) > 40 else query_text
         return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Searched web:[/] [bold {palette.primary}]{short_q}[/]"
+
+    elif name == "search_knowledge":
+        query_text = args.get("query", "").strip()
+        short_q = (query_text[:40] + "...") if len(query_text) > 40 else query_text
+        return f"  [bold {palette.primary}]✔[/] [{palette.primary}]Knowledge search:[/] [bold {palette.primary}]{short_q}[/]"
+
+    elif name == "index_knowledge":
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Indexed knowledge base[/]"
+
+    elif name == "dispatch_agent_team":
+        task_text = args.get("task", "").strip()
+        short_t = (task_text[:40] + "...") if len(task_text) > 40 else task_text
+        return f"  [bold {palette.success}]✔[/] [{palette.success}]Multi-Agent Team completed:[/] [bold {palette.primary}]{short_t}[/]"
 
     elif name == "get_weather":
         loc = args.get("location", "")

@@ -15,7 +15,7 @@ if sys.platform == "win32":
 from locallm.config import load_config
 from locallm.core.ollama_client import OllamaClient
 from locallm.core.openai_client import get_inference_client
-from locallm.modules.agent import AgentEngine, run_agent_interactive
+from locallm.modules.agent import AgentEngine, run_agent_interactive, run_agent_menu
 from locallm.modules.assistant import run_assistant
 from locallm.modules.automation import execute_prompt
 from locallm.modules.models_manager import run_models_manager
@@ -113,6 +113,12 @@ def build_parser() -> argparse.ArgumentParser:
         description="Execute multi-step autonomous tasks using a ReAct reasoning loop. The model can plan, read/write files, fetch web content, and execute shell commands with security confirmation.",
     )
     agent_parser.add_argument("--task", "-t", type=str, default=None, help="Agent task instruction to run non-interactively")
+    agent_parser.add_argument(
+        "--multi", "-m",
+        action="store_true",
+        default=False,
+        help="Run hierarchical multi-agent team coordination (Supervisor + Coder + Researcher + Auditor)",
+    )
     agent_parser.add_argument(
         "--max-steps", "-s",
         type=int,
@@ -415,13 +421,26 @@ def main(argv: Optional[List[str]] = None) -> None:
             run_whatsapp_bot(config, client)
     elif cmd == "agent":
         max_steps_arg = getattr(args, "max_steps", None) or getattr(config, "agent_max_steps", 25)
+        is_multi = getattr(args, "multi", False)
         if args.task:
             render_banner(config, client)
-            engine = AgentEngine(config, client, max_steps=max_steps_arg, interactive=False)
-            engine.run_task(args.task)
+            if is_multi:
+                from locallm.core.orchestrator.cli_ui import run_multi_agent_cli
+                run_multi_agent_cli(args.task, config, client)
+            else:
+                engine = AgentEngine(config, client, max_steps=max_steps_arg, interactive=False)
+                engine.run_task(args.task)
         else:
             render_banner(config, client)
-            run_agent_interactive(config, client)
+            if is_multi:
+                import questionary
+                from locallm.ui.theme import QUESTIONARY_STYLE
+                t_in = questionary.text("Enter goal for Multi-Agent Team:", style=QUESTIONARY_STYLE).ask()
+                if t_in and t_in.strip():
+                    from locallm.core.orchestrator.cli_ui import run_multi_agent_cli
+                    run_multi_agent_cli(t_in.strip(), config, client)
+            else:
+                run_agent_menu(config, client)
     elif cmd == "serve":
         if getattr(args, "detach", False):
             from locallm.core.service_manager import start_api_server_service

@@ -8,6 +8,8 @@ from prompt_toolkit.document import Document
 
 SLASH_COMMANDS: Dict[str, str] = {
     "/help": "Show command guide and keyboard shortcuts",
+    "/multi": "Deploy multi-agent team (Supervisor, Coder, Researcher, Auditor)",
+    "/team": "Deploy multi-agent team (Supervisor, Coder, Researcher, Auditor)",
     "/top": "Launch live real-time VRAM & hardware telemetry HUD",
     "/header": "Refresh and display chat header & hardware telemetry",
     "/model": "Inspect active model, switch model, or toggle router",

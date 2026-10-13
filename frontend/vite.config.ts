@@ -1754,6 +1754,36 @@ print(json.dumps({"success": ok, "message": msg, "installed": installed, "count"
           return;
         }
 
+        // 8. Forward /api/agent/run and /api/agent/status to Python gateway server
+        if (pathname === '/api/agent/run' || pathname === '/api/agent/status') {
+          const cfg = loadConfigOnDisk();
+          const serverPort = cfg.server_port || 8080;
+          const apiKey = cfg.server_api_key || '';
+          try {
+            const forwardUrl = `http://127.0.0.1:${serverPort}${req.url}`;
+            const fHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+              ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+            };
+            let fBody: any = undefined;
+            if (req.method === 'POST') {
+              fBody = JSON.stringify(await parseJsonBody(req));
+            }
+            const gwRes = await fetch(forwardUrl, {
+              method: req.method,
+              headers: fHeaders,
+              body: fBody,
+              signal: AbortSignal.timeout(60000)
+            });
+            const data = await gwRes.json();
+            sendJson(res, gwRes.status, data);
+            return;
+          } catch (err: any) {
+            sendJson(res, 502, { error: `Failed to communicate with agent gateway: ${err.message}` });
+            return;
+          }
+        }
+
         next();
       });
     }

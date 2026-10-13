@@ -31,29 +31,50 @@ def get_current_directory_fn(context: Optional[Dict[str, Any]] = None, **kwargs:
 
 
 def execute_command_fn(
-    command: str,
+    command: Optional[str] = None,
     timeout: int = 15,
     context: Optional[Dict[str, Any]] = None,
     **kwargs: Any,
 ) -> str:
     """Run shell command safely in subprocess with output capture and timeout."""
-    cmd = command.strip()
+    cmd_raw = command or kwargs.get("cmd") or kwargs.get("cli") or kwargs.get("script") or kwargs.get("args") or ""
+    cmd = str(cmd_raw).strip()
     if not cmd:
         return "Error: Empty command."
     try:
         flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
-        ws_name = (context or {}).get("workspace_name")
+
+        # Determine working directory: prefer explicit cwd -> sandbox boundary -> active project CWD -> workspace fallback
         run_cwd = None
-        if ws_name:
+        specified_dir = kwargs.get("cwd") or kwargs.get("working_dir") or kwargs.get("directory")
+        if specified_dir:
+            cand = Path(os.path.expanduser(os.path.expandvars(str(specified_dir).strip())))
+            if cand.is_dir():
+                run_cwd = str(cand.resolve())
+
+        if not run_cwd and context and context.get("boundary_dir"):
+            cand = Path(str(context["boundary_dir"]))
+            if cand.is_dir():
+                run_cwd = str(cand.resolve())
+
+        if not run_cwd:
             try:
-                from locallm.core.workspace import get_workspace_dir
-                ws_dir = get_workspace_dir(ws_name)
-                if ws_dir.is_dir():
-                    run_cwd = str(ws_dir.resolve())
+                cand = Path.cwd().resolve()
+                if cand.is_dir():
+                    run_cwd = str(cand)
             except Exception:
                 pass
+
         if not run_cwd:
-            run_cwd = str(Path.cwd().resolve())
+            ws_name = (context or {}).get("workspace_name")
+            if ws_name:
+                try:
+                    from locallm.core.workspace import get_workspace_dir
+                    ws_dir = get_workspace_dir(ws_name)
+                    if ws_dir.is_dir():
+                        run_cwd = str(ws_dir.resolve())
+                except Exception:
+                    pass
 
         res = subprocess.run(
             cmd,

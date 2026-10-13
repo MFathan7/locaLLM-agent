@@ -50,12 +50,12 @@ def resolve_smart_path(
 
         if cand_path.is_absolute() and cand_path.exists():
             candidate = cand_path.resolve()
+        elif (Path.cwd() / cand_path).exists():
+            candidate = (Path.cwd() / cand_path).resolve()
         elif (ws_dir / cand_path).exists():
             candidate = (ws_dir / cand_path).resolve()
         elif (ws_files / cand_path).exists():
             candidate = (ws_files / cand_path).resolve()
-        elif (Path.cwd() / cand_path).exists():
-            candidate = (Path.cwd() / cand_path).resolve()
         else:
             home = Path.home()
             norm = clean.replace("\\", "/").strip("/")
@@ -72,9 +72,13 @@ def resolve_smart_path(
                     candidate = cand_path.resolve()
                 matched_alias = True
             elif norm_lower == "files" or norm_lower.startswith("files/"):
-                subpath = norm[len("files"):].lstrip("/")
-                ws_files.mkdir(parents=True, exist_ok=True)
-                candidate = (ws_files / subpath).resolve()
+                cwd_files = Path.cwd() / cand_path
+                if cwd_files.exists():
+                    candidate = cwd_files.resolve()
+                else:
+                    subpath = norm[len("files"):].lstrip("/")
+                    ws_files.mkdir(parents=True, exist_ok=True)
+                    candidate = (ws_files / subpath).resolve()
                 matched_alias = True
             elif norm_lower == "images" or norm_lower.startswith("images/"):
                 subpath = norm[len("images"):].lstrip("/")
@@ -130,6 +134,9 @@ def resolve_smart_path(
 
                     cwd = Path.cwd()
                     ws_candidates = [
+                        # Local project in CWD
+                        cwd / clean_rel,
+                        cwd / ".locallm" / clean_rel,
                         # Workspace files & images
                         ws_files / clean_rel,
                         ws_images / clean_rel,
@@ -207,13 +214,25 @@ def resolve_smart_path(
 
 
 def read_file_fn(
-    path: str,
+    path: str = "",
     offset: int = 0,
     max_chars: int = 4000,
     boundary_dir: Optional[Path] = None,
     context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
 ) -> str:
     """Read file content with optional pagination offset, max_chars limit, and skill awareness."""
+    path = (
+        path
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("target_path")
+        or kwargs.get("file")
+        or kwargs.get("filename")
+        or ""
+    )
+    if not path:
+        return "Error: File path is required."
     ws_name = (context or {}).get("workspace_name")
     try:
         file_path = resolve_smart_path(path, boundary_dir=boundary_dir, workspace_name=ws_name)
@@ -284,12 +303,30 @@ def read_file_fn(
 
 
 def write_file_fn(
-    path: str,
-    content: str,
+    path: str = "",
+    content: str = "",
     boundary_dir: Optional[Path] = None,
     context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
 ) -> str:
     """Write text content to disk, automatically creating parent directories."""
+    path = (
+        path
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("target_path")
+        or kwargs.get("file")
+        or kwargs.get("filename")
+        or ""
+    )
+    content = (
+        content
+        or kwargs.get("text")
+        or kwargs.get("code")
+        or kwargs.get("body")
+        or kwargs.get("file_content")
+        or ""
+    )
     if not path:
         return "Error: File path is required."
     ws_name = (context or {}).get("workspace_name")
@@ -297,11 +334,283 @@ def write_file_fn(
         file_path = resolve_smart_path(path, boundary_dir=boundary_dir, workspace_name=ws_name)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         file_path.write_text(content, encoding="utf-8", errors="replace")
-        return f"Successfully wrote {len(content)} characters to '{file_path}'."
+        syntax_ok, syntax_msg = validate_code_syntax(file_path, content)
+        syntax_note = f" [{syntax_msg}]" if not syntax_ok else ""
+        return f"Successfully wrote {len(content)} characters to '{file_path}'.{syntax_note}"
     except PermissionError as exc:
         return f"Error: {exc}"
     except Exception as exc:
         return f"Error writing file '{path}': {exc}"
+
+
+def validate_code_syntax(path: Path, content: str) -> tuple[bool, str]:
+    """Validate syntax of code or structured files without executing them."""
+    ext = path.suffix.lower()
+    if ext == ".py":
+        try:
+            compile(content, str(path), "exec")
+            return True, "Valid Python syntax."
+        except SyntaxError as exc:
+            line_str = f"line {exc.lineno}" if exc.lineno else "unknown line"
+            snippet = f": '{exc.text.strip()}'" if exc.text else ""
+            return False, f"Python SyntaxError at {line_str}: {exc.msg}{snippet}"
+    elif ext == ".json":
+        import json
+        try:
+            json.loads(content)
+            return True, "Valid JSON format."
+        except Exception as exc:
+            return False, f"JSON syntax error: {exc}"
+    elif ext in (".yaml", ".yml"):
+        try:
+            import yaml
+            yaml.safe_load(content)
+            return True, "Valid YAML format."
+        except Exception as exc:
+            return False, f"YAML syntax error: {exc}"
+    elif ext in (".js", ".ts", ".mjs"):
+        import shutil
+        import subprocess
+        if shutil.which("node"):
+            try:
+                proc = subprocess.run(
+                    ["node", "--check"],
+                    input=content,
+                    text=True,
+                    capture_output=True,
+                    timeout=5,
+                )
+                if proc.returncode == 0:
+                    return True, "Valid JavaScript syntax."
+                else:
+                    err_lines = [l for l in proc.stderr.splitlines() if l.strip() and not l.startswith("Warning")]
+                    return False, f"JavaScript syntax error: {err_lines[0] if err_lines else 'Check failed'}"
+            except Exception:
+                pass
+    return True, "Syntax check not applicable or passed."
+
+
+def patch_file_fn(
+    path: str = "",
+    target_content: str = "",
+    replacement_content: str = "",
+    allow_multiple: bool = False,
+    boundary_dir: Optional[Path] = None,
+    context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> str:
+    """Perform a surgical search-and-replace edit on an existing file with syntax verification."""
+    # Resolve aliases commonly emitted by local LLMs
+    path = (
+        path
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("target_path")
+        or kwargs.get("file")
+        or kwargs.get("filename")
+        or ""
+    )
+    target_content = (
+        target_content
+        or kwargs.get("search")
+        or kwargs.get("find")
+        or kwargs.get("target")
+        or kwargs.get("old_content")
+        or kwargs.get("old_string")
+        or kwargs.get("old_text")
+        or kwargs.get("original_content")
+        or kwargs.get("pattern")
+        or ""
+    )
+    replacement_content = (
+        replacement_content
+        or kwargs.get("replace")
+        or kwargs.get("replacement")
+        or kwargs.get("new_content")
+        or kwargs.get("new_string")
+        or kwargs.get("new_text")
+        or kwargs.get("updated_content")
+        or ""
+    )
+
+    if not path:
+        return "Error: File path is required."
+    if not target_content:
+        return "Error: target_content cannot be empty. Specify the exact lines to replace."
+
+    ws_name = (context or {}).get("workspace_name")
+    try:
+        file_path = resolve_smart_path(path, boundary_dir=boundary_dir, workspace_name=ws_name)
+    except PermissionError as exc:
+        return f"Error: {exc}"
+
+    if not file_path.exists():
+        return f"Error: File '{file_path}' does not exist. Use write_file to create a new file first."
+    if file_path.is_dir():
+        return f"Error: '{file_path}' is a directory, not a file."
+
+    try:
+        original = file_path.read_text(encoding="utf-8", errors="replace")
+    except Exception as exc:
+        return f"Error reading '{file_path}': {exc}"
+
+    # 1. Exact string matching
+    matched = False
+    new_content = ""
+    if target_content in original:
+        occurrences = original.count(target_content)
+        if occurrences > 1 and not allow_multiple:
+            return (
+                f"Error: target_content was found {occurrences} times in '{file_path}'. "
+                f"Please include more surrounding context lines to make the target unique, "
+                f"or set allow_multiple=True."
+            )
+        new_content = original.replace(target_content, replacement_content, 1 if not allow_multiple else -1)
+        matched = True
+    else:
+        # 2. Linebreak-normalized matching (\r\n vs \n)
+        norm_orig = original.replace("\r\n", "\n")
+        norm_target = target_content.replace("\r\n", "\n")
+        norm_repl = replacement_content.replace("\r\n", "\n")
+        if norm_target in norm_orig:
+            occurrences = norm_orig.count(norm_target)
+            if occurrences > 1 and not allow_multiple:
+                return (
+                    f"Error: target_content was found {occurrences} times in '{file_path}' (after newline normalization). "
+                    f"Please include more surrounding context lines to make the target unique."
+                )
+            new_content = norm_orig.replace(norm_target, norm_repl, 1 if not allow_multiple else -1)
+            matched = True
+        else:
+            orig_lines = original.splitlines()
+            target_lines = target_content.splitlines()
+
+            # 3. Trailing-whitespace relaxed line-by-line matching
+            target_stripped = [l.rstrip() for l in target_lines]
+            target_len = len(target_stripped)
+            match_indices = []
+
+            for i in range(len(orig_lines) - target_len + 1):
+                window = [orig_lines[i + j].rstrip() for j in range(target_len)]
+                if window == target_stripped:
+                    match_indices.append(i)
+
+            if len(match_indices) == 1 or (len(match_indices) > 1 and allow_multiple):
+                matched = True
+                curr_lines = list(orig_lines)
+                repl_lines = replacement_content.splitlines()
+                for start_idx in reversed(match_indices if allow_multiple else [match_indices[0]]):
+                    curr_lines[start_idx : start_idx + target_len] = repl_lines
+                nl = "\r\n" if "\r\n" in original else "\n"
+                new_content = nl.join(curr_lines)
+                if original.endswith(nl) or original.endswith("\n"):
+                    new_content += nl
+            elif len(match_indices) > 1 and not allow_multiple:
+                return (
+                    f"Error: target_content matched {len(match_indices)} locations with relaxed whitespace. "
+                    f"Provide more surrounding lines for unique resolution."
+                )
+
+            # 4. Indentation-relaxed line-by-line matching (handles leading whitespace variations from local LLMs)
+            if not matched and target_lines:
+                target_stripped_all = [l.strip() for l in target_lines]
+                if any(target_stripped_all):
+                    match_indices = []
+                    for i in range(len(orig_lines) - target_len + 1):
+                        window = [orig_lines[i + j].strip() for j in range(target_len)]
+                        if window == target_stripped_all:
+                            match_indices.append(i)
+
+                    if len(match_indices) == 1 or (len(match_indices) > 1 and allow_multiple):
+                        matched = True
+                        curr_lines = list(orig_lines)
+                        repl_lines = replacement_content.splitlines()
+                        for start_idx in reversed(match_indices if allow_multiple else [match_indices[0]]):
+                            # Preserve base indentation from original code
+                            orig_base_indent = ""
+                            if orig_lines[start_idx].strip():
+                                orig_base_indent = orig_lines[start_idx][: len(orig_lines[start_idx]) - len(orig_lines[start_idx].lstrip())]
+                            target_base_indent = ""
+                            if target_lines[0].strip():
+                                target_base_indent = target_lines[0][: len(target_lines[0]) - len(target_lines[0].lstrip())]
+
+                            adjusted_repl = []
+                            for r_line in repl_lines:
+                                if r_line.strip() and r_line.startswith(target_base_indent):
+                                    adjusted_repl.append(orig_base_indent + r_line[len(target_base_indent):])
+                                else:
+                                    adjusted_repl.append(r_line)
+
+                            curr_lines[start_idx : start_idx + target_len] = adjusted_repl
+                        nl = "\r\n" if "\r\n" in original else "\n"
+                        new_content = nl.join(curr_lines)
+                        if original.endswith(nl) or original.endswith("\n"):
+                            new_content += nl
+
+    if not matched:
+        return (
+            f"Error: Could not find target_content in '{file_path}'. "
+            f"The lines did not match the file contents. "
+            f"Please invoke 'read_file' on '{path}' first to see the exact current file content and lines before attempting to patch."
+        )
+
+    # 4. Syntax verification guard
+    syntax_ok, syntax_msg = validate_code_syntax(file_path, new_content)
+    if not syntax_ok:
+        return f"Patch rejected: Syntax error detected in new content: {syntax_msg}. File was not modified. Please fix syntax."
+
+    try:
+        file_path.write_text(new_content, encoding="utf-8")
+        tgt_count = len(target_content.splitlines())
+        repl_count = len(replacement_content.splitlines())
+        return (
+            f"Successfully patched '{file_path}'. "
+            f"Replaced {tgt_count} line(s) with {repl_count} line(s). "
+            f"[{syntax_msg}]"
+        )
+    except PermissionError as exc:
+        return f"Error: {exc}"
+    except Exception as exc:
+        return f"Error writing patch to '{file_path}': {exc}"
+
+
+def check_syntax_fn(
+    path: str = "",
+    boundary_dir: Optional[Path] = None,
+    context: Optional[Dict[str, Any]] = None,
+    **kwargs: Any,
+) -> str:
+    """Validate syntax of a code or structured data file."""
+    path = (
+        path
+        or kwargs.get("file_path")
+        or kwargs.get("filepath")
+        or kwargs.get("target_path")
+        or kwargs.get("file")
+        or kwargs.get("filename")
+        or ""
+    )
+    if not path:
+        return "Error: File path is required."
+    ws_name = (context or {}).get("workspace_name")
+    try:
+        file_path = resolve_smart_path(path, boundary_dir=boundary_dir, workspace_name=ws_name)
+    except PermissionError as exc:
+        return f"Error: {exc}"
+
+    if not file_path.exists():
+        return f"Error: File '{file_path}' does not exist."
+    if file_path.is_dir():
+        return f"Error: '{file_path}' is a directory."
+
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="replace")
+        ok, msg = validate_code_syntax(file_path, content)
+        if ok:
+            return f"✔ Syntax check passed for '{file_path}': {msg}"
+        return f"✘ Syntax check failed for '{file_path}': {msg}"
+    except Exception as exc:
+        return f"Error checking syntax of '{file_path}': {exc}"
 
 
 def list_directory_fn(
@@ -535,3 +844,54 @@ tool(
     is_privileged=True,
     categories={"assistant", "telegram", "whatsapp"},
 )(resolve_path_fn)
+
+
+tool(
+    name="patch_file",
+    description="Perform a surgical search-and-replace edit on an existing file without rewriting the whole file. Provide the exact existing lines to find (target_content) and the new lines to replace them with (replacement_content). Always use patch_file instead of write_file when editing existing files.",
+    parameters={
+        "type": "object",
+        "required": ["path", "target_content", "replacement_content"],
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "File path to patch",
+            },
+            "target_content": {
+                "type": "string",
+                "description": "The exact existing lines of code or text to find and replace",
+            },
+            "replacement_content": {
+                "type": "string",
+                "description": "The new replacement lines of code or text",
+            },
+            "allow_multiple": {
+                "type": "boolean",
+                "description": "If true, replace all occurrences. If false, fails if target_content appears more than once (default: false)",
+            },
+        },
+    },
+    is_mutating=True,
+    is_privileged=True,
+    categories={"assistant", "telegram", "whatsapp"},
+)(patch_file_fn)
+
+
+tool(
+    name="check_syntax",
+    description="Validate syntax of code or structured data files (Python compilation, JSON format, YAML format, Node.js syntax) without executing them.",
+    parameters={
+        "type": "object",
+        "required": ["path"],
+        "properties": {
+            "path": {
+                "type": "string",
+                "description": "File path to validate",
+            },
+        },
+    },
+    is_mutating=False,
+    is_privileged=True,
+    categories={"assistant", "telegram", "whatsapp"},
+)(check_syntax_fn)
+

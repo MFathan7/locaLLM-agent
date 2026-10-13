@@ -385,6 +385,7 @@ def print_help_commands() -> None:
     palette = get_theme_palette()
     commands = [
         ("/help", "Show this slash command cheat-sheet"),
+        ("/multi", "Deploy multi-agent team (Supervisor, Coder, Researcher, Auditor)"),
         ("/top", "Open real-time system & VRAM monitor HUD"),
         ("/header", "Refresh and display chat header & hardware telemetry"),
         ("/model", "Switch active model on the fly"),

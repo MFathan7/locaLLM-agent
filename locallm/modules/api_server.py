@@ -65,6 +65,10 @@ def clear_api_request_logs() -> None:
         _API_REQUEST_LOGS.clear()
 
 
+_BACKGROUND_AGENT_TASKS: Dict[str, Dict[str, Any]] = {}
+_BACKGROUND_TASKS_LOCK = threading.Lock()
+
+
 def is_port_in_use(port: int, host: str = "127.0.0.1") -> bool:
     """Check if a specific network port is currently occupied."""
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
@@ -546,6 +550,21 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             self._log_request_event("GET", path, 401)
             return
 
+        if path in ("/api/agent/status", "/v1/agent/status"):
+            query_params = {}
+            if "?" in self.path:
+                from urllib.parse import parse_qs
+                query_params = parse_qs(self.path.split("?", 1)[1])
+            task_id = query_params.get("task_id", [""])[0] or ""
+            with _BACKGROUND_TASKS_LOCK:
+                if task_id in _BACKGROUND_AGENT_TASKS:
+                    self._send_json_response(200, _BACKGROUND_AGENT_TASKS[task_id])
+                elif not task_id:
+                    self._send_json_response(200, {"tasks": list(_BACKGROUND_AGENT_TASKS.values())[-25:]})
+                else:
+                    self._send_json_response(404, {"error": f"Agent task '{task_id}' not found."})
+            return
+
         if path in ("/api/config", "/v1/config"):
             try:
                 from locallm.config import load_config
@@ -985,6 +1004,105 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json_response(500, {"success": False, "error": str(exc)})
             return
 
+        # Agent execution endpoint (for n8n, webhooks, and external platforms)
+        if path in ("/api/agent/run", "/v1/agent/run"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                task = str(payload.get("task", "")).strip()
+                if not task:
+                    self._send_json_response(400, {"error": "Field 'task' is required."})
+                    return
+
+                workspace = str(payload.get("workspace", "")).strip() or self.server.workspace or "default"
+                agent_workspaces = payload.get("agent_workspaces") if isinstance(payload.get("agent_workspaces"), dict) else None
+                is_async = bool(payload.get("async", False))
+                webhook_url = str(payload.get("webhook_url", "")).strip()
+
+                from locallm.core.orchestrator import SupervisorOrchestrator
+                with self.server._client_lock:
+                    active_client = self.server.client
+
+                if is_async:
+                    task_id = f"task_{uuid.uuid4().hex[:10]}"
+                    with _BACKGROUND_TASKS_LOCK:
+                        _BACKGROUND_AGENT_TASKS[task_id] = {
+                            "task_id": task_id,
+                            "task": task,
+                            "workspace": workspace,
+                            "agent_workspaces": agent_workspaces or {},
+                            "status": "running",
+                            "created_at": datetime.now().isoformat(),
+                            "events": [],
+                            "active_agent": "Supervisor",
+                            "active_event": "start",
+                            "latest_message": f"Starting task: {task[:90]}",
+                            "result": None,
+                            "error": None,
+                        }
+
+                    def _run_agent_bg():
+                        def _on_event(agent: str, event_type: str, message: str):
+                            with _BACKGROUND_TASKS_LOCK:
+                                if task_id in _BACKGROUND_AGENT_TASKS:
+                                    task_obj = _BACKGROUND_AGENT_TASKS[task_id]
+                                    if "events" not in task_obj:
+                                        task_obj["events"] = []
+                                    task_obj["events"].append({
+                                        "agent": agent,
+                                        "event_type": event_type,
+                                        "message": message,
+                                        "timestamp": datetime.now().isoformat(),
+                                    })
+                                    task_obj["active_agent"] = agent
+                                    task_obj["active_event"] = event_type
+                                    task_obj["latest_message"] = message
+
+                        try:
+                            orch = SupervisorOrchestrator(self.server.config, active_client)
+                            bb = orch.run(task, workspace_name=workspace, on_event=_on_event, agent_workspaces=agent_workspaces)
+                            res = bb.to_result_dict()
+                            with _BACKGROUND_TASKS_LOCK:
+                                _BACKGROUND_AGENT_TASKS[task_id]["status"] = "completed"
+                                _BACKGROUND_AGENT_TASKS[task_id]["result"] = res
+                                _BACKGROUND_AGENT_TASKS[task_id]["completed_at"] = datetime.now().isoformat()
+                            if webhook_url:
+                                try:
+                                    import httpx
+                                    httpx.post(webhook_url, json={"task_id": task_id, "status": "completed", "data": res}, timeout=15.0)
+                                except Exception:
+                                    pass
+                        except Exception as exc:
+                            with _BACKGROUND_TASKS_LOCK:
+                                _BACKGROUND_AGENT_TASKS[task_id]["status"] = "failed"
+                                _BACKGROUND_AGENT_TASKS[task_id]["error"] = str(exc)
+                            if webhook_url:
+                                try:
+                                    import httpx
+                                    httpx.post(webhook_url, json={"task_id": task_id, "status": "failed", "error": str(exc)}, timeout=15.0)
+                                except Exception:
+                                    pass
+
+                    threading.Thread(target=_run_agent_bg, daemon=True).start()
+                    self._send_json_response(202, {
+                        "task_id": task_id,
+                        "status": "queued",
+                        "workspace": workspace,
+                        "webhook_configured": bool(webhook_url),
+                    })
+                    self._log_request_event("POST", path, 202, detail=f"Started async agent {task_id}")
+                else:
+                    orch = SupervisorOrchestrator(self.server.config, active_client)
+                    bb = orch.run(task, workspace_name=workspace, agent_workspaces=agent_workspaces)
+                    res = bb.to_result_dict()
+                    self._send_json_response(200, res)
+                    self._log_request_event("POST", path, 200, detail=f"Completed agent task ({len(bb.modified_files)} files modified)")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+                self._log_request_event("POST", path, 500, detail=str(exc))
+            return
+
         if path not in ("/v1/chat/completions", "/chat/completions", "/api/chat"):
             self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
             self._log_request_event("POST", path, 404)
@@ -1049,7 +1167,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         )
         should_search_web = web_search_enabled or is_explicit_search
 
-        if should_search_web or tools_enabled:
+        if should_search_web:
             base_directive = (
                 "\n\nDirectives (Live Web Search & Browsing Enabled): You have active access to real-time internet browsing tools (`search_web`, `fetch_web`). "
                 "When asked about current events, news, recent updates, public figures, or topics where you lack 100% verified real-time knowledge, "
@@ -1060,12 +1178,51 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         else:
             base_directive = (
                 "\n\nDirectives: You are operating in conversational assistant mode. You have complete awareness of the active workspace context, persona, and skills catalogue listed above. "
-                "Answer user inquiries directly, clearly, and accurately."
+                "User-defined workspace instructions and custom rules take absolute precedence. Answer user inquiries directly, clearly, and accurately."
             )
 
         # Resolve active workspace context
         req_ws = self.headers.get("X-Workspace", "").strip() or self.server.workspace
         ws_context = load_workspace_context(req_ws) + base_directive
+
+        # Support model='agent:multi' or 'multi-agent' for 1-click n8n OpenAI Agent node integration
+        if model_req.lower() in ("agent:multi", "multi-agent"):
+            try:
+                from locallm.core.orchestrator import SupervisorOrchestrator
+                with self.server._client_lock:
+                    active_client = self.server.client
+                orch = SupervisorOrchestrator(self.server.config, active_client)
+                blackboard = orch.run(last_prompt, workspace_name=req_ws)
+                cmpl_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+                created_ts = int(time.time())
+                ans = blackboard.final_answer or "Task concluded."
+                resp_payload = {
+                    "id": cmpl_id,
+                    "object": "chat.completion",
+                    "created": created_ts,
+                    "model": model_req,
+                    "choices": [
+                        {
+                            "index": 0,
+                            "message": {
+                                "role": "assistant",
+                                "content": ans,
+                            },
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": len(last_prompt.split()),
+                        "completion_tokens": len(ans.split()),
+                        "total_tokens": len(last_prompt.split()) + len(ans.split()),
+                    },
+                }
+                self._send_json_response(200, resp_payload)
+                self._log_request_event("POST", path, 200, detail="Multi-agent orchestrator completion")
+                return
+            except Exception as exc:
+                self._send_openai_error(500, f"Multi-agent orchestration error: {exc}")
+                return
 
         # Inject workspace context into system messages
         processed_messages = self._prepare_messages_with_context(messages, ws_context)

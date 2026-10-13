@@ -293,31 +293,49 @@ def route_prompt(
     tool_models: List[str] = []
     fast_models: List[str] = []
 
-    for name in model_names:
-        lower = name.lower()
-        features: List[str] = []
-        if hasattr(client, "get_model_features"):
-            try:
-                features = client.get_model_features(name)
-            except Exception:
-                features = []
+    # Dynamic multidimensional model capability profiling
+    from locallm.core.orchestrator.profiler import profile_model
+    profiles_by_name = {
+        m_dict.get("name", ""): profile_model(m_dict)
+        for m_dict in raw_models
+        if isinstance(m_dict, dict) and m_dict.get("name")
+    }
 
-        if "Reasoning" in features or any(k in lower for k in ("r1", "qwq", "thinking", "reason")):
-            reasoning_models.append(name)
-        if any(k in lower for k in ("coder", "code", "dev", "starcoder")):
-            coder_models.append(name)
-        if "Vision" in features or any(k in lower for k in ("vision", "vl", "llava")):
-            vision_models.append(name)
-        if "Tools" in features or any(k in lower for k in ("tool", "hermes", "function", "gemma", "llama", "qwen", "mistral")):
-            tool_models.append(name)
-        if "Reasoning" not in features or any(k in lower for k in ("3b", "7b", "8b", "mini", "flash", "hermes")):
-            fast_models.append(name)
+    reasoning_models = [
+        name for name in model_names
+        if profiles_by_name.get(name) and profiles_by_name[name].reasoning_score >= 3.0
+    ]
+    reasoning_models.sort(key=lambda m: (-profiles_by_name[m].reasoning_score, -model_size_map.get(m, 0)))
 
-    # Generic, capability- and capacity-based priority sorting (descending by size/weights)
-    reasoning_models.sort(key=lambda m: (0 if any(k in m.lower() for k in ("r1", "qwq", "qwen")) else 1, -model_size_map.get(m, 0)))
-    coder_models.sort(key=lambda m: -model_size_map.get(m, 0))
-    tool_models.sort(key=lambda m: -model_size_map.get(m, 0))
-    fast_models.sort(key=lambda m: (0 if any(k in m.lower() for k in ("hermes", "mini", "3b", "7b", "8b")) else 1, model_size_map.get(m, 0)))
+    coder_models = [
+        name for name in model_names
+        if profiles_by_name.get(name) and profiles_by_name[name].coding_score >= 2.0
+    ]
+    coder_models.sort(key=lambda m: (-profiles_by_name[m].coding_score, -model_size_map.get(m, 0)))
+
+    vision_models = [
+        name for name in model_names
+        if profiles_by_name.get(name) and profiles_by_name[name].vision_score > 0
+    ]
+    vision_models.sort(key=lambda m: (-profiles_by_name[m].vision_score, -model_size_map.get(m, 0)))
+
+    tool_models = [
+        name for name in model_names
+        if profiles_by_name.get(name) and profiles_by_name[name].tool_score >= 3.0
+    ]
+    tool_models.sort(key=lambda m: (-profiles_by_name[m].tool_score, -model_size_map.get(m, 0)))
+
+    fast_models = [
+        m for m in model_names
+        if (
+            profiles_by_name.get(m)
+            and profiles_by_name[m].speed_score >= 6.5
+            and profiles_by_name[m].reasoning_score < 6.5
+            and not any(k in m.lower() for k in ("coder", "code", "dev", "r1", "qwq", "thinking"))
+        )
+        or (model_size_map.get(m, 0) > 0 and model_size_map.get(m, 0) <= 5 * 1024**3 and not any(k in m.lower() for k in ("coder", "code", "dev", "r1", "qwq", "thinking")))
+    ]
+    fast_models.sort(key=lambda m: (-profiles_by_name[m].speed_score if m in profiles_by_name else 0))
 
     def _pick_first_fitting(candidates: List[str]) -> Optional[str]:
         """Return the highest-ranked candidate that fits inside available VRAM."""

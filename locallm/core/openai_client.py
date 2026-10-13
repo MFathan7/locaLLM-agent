@@ -17,7 +17,7 @@ class OpenAIClient:
         self,
         api_base: str = "http://127.0.0.1:8000/v1",
         api_key: str = "",
-        timeout: float = 180.0,
+        timeout: float = 300.0,
     ):
         self.api_base = api_base.rstrip("/")
         self.api_key = api_key.strip() or "not-needed"
@@ -357,16 +357,18 @@ class OpenAIClient:
 
 def get_inference_client(config: LocaLLMConfig) -> Union[OllamaClient, OpenAIClient]:
     """Factory to instantiate the appropriate inference client for the active backend."""
+    req_timeout = getattr(config, "request_timeout", 300.0) or 300.0
     active = config.active_backend.strip().lower()
     if active == "ollama":
-        return OllamaClient(base_url=config.ollama_host)
+        return OllamaClient(base_url=config.ollama_host, timeout=req_timeout)
 
     custom_platform = get_custom_platform(config, active)
     if custom_platform:
         return OpenAIClient(
             api_base=custom_platform.api_base,
             api_key=custom_platform.api_key,
+            timeout=req_timeout,
         )
 
     # Fallback to Ollama
-    return OllamaClient(base_url=config.ollama_host)
+    return OllamaClient(base_url=config.ollama_host, timeout=req_timeout)

@@ -59,6 +59,12 @@ class LocaLLMConfig(BaseModel):
         le=262144,
         description="Context window limit in tokens (default: 8192)",
     )
+    request_timeout: float = Field(
+        default=300.0,
+        ge=10.0,
+        le=1800.0,
+        description="Inference HTTP request timeout in seconds (default: 300.0)",
+    )
     system_prompt: str = Field(
         default="You are locaLLM, a helpful, fast, and intelligent local AI assistant.",
         description="Default system prompt instructions",

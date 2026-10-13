@@ -6,8 +6,11 @@ from typing import Any, Dict, List, Optional, Set
 from locallm.core.tools.base import BaseTool, FunctionTool, ToolRegistry, registry, tool
 import locallm.core.tools.filesystem  # noqa: F401
 from locallm.core.tools.filesystem import resolve_smart_path
+import locallm.core.tools.knowledge  # noqa: F401
+from locallm.core.tools.knowledge import index_knowledge_fn, search_knowledge_fn
 import locallm.core.tools.memory  # noqa: F401
 import locallm.core.tools.messaging  # noqa: F401
+import locallm.core.tools.orchestrator  # noqa: F401
 from locallm.core.tools.parser import extract_fallback_tool_calls
 import locallm.core.tools.system  # noqa: F401
 from locallm.core.tools.ui import describe_tool_action, format_live_tool_report
@@ -171,12 +174,14 @@ def execute_tool(
             from locallm.ui.theme import QUESTIONARY_STYLE, console
 
             console.print(f"\n[bold yellow]✦ Permission Request:[/] Agent requests permission to execute [bold cyan]{name}[/]")
-            if name == "write_file":
-                console.print(f"  [#aaaaaa]Path:[/] [bold]{arguments.get('path', '')}[/]")
+            if name in ("write_file", "patch_file"):
+                target_p = arguments.get("path") or arguments.get("file_path") or ""
+                console.print(f"  [#aaaaaa]Path:[/] [bold]{target_p}[/]")
             elif name == "create_directory":
                 console.print(f"  [#aaaaaa]Directory:[/] [bold]{arguments.get('path', '')}[/]")
             elif name == "execute_command":
-                console.print(f"  [#aaaaaa]Command:[/] [bold]{arguments.get('command', '')}[/]")
+                cmd_val = arguments.get('command') or arguments.get('cmd') or arguments.get('cli') or ''
+                console.print(f"  [#aaaaaa]Command:[/] [bold]{cmd_val}[/]")
 
             ans = questionary.select(
                 f"Authorize agent to execute {name}?",
@@ -253,4 +258,6 @@ __all__ = [
     "describe_tool_action",
     "format_live_tool_report",
     "extract_fallback_tool_calls",
+    "search_knowledge_fn",
+    "index_knowledge_fn",
 ]

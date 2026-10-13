@@ -8,7 +8,7 @@
 
 > **Developer-first autonomous local AI platform, interactive terminal cockpit, and modern Liquid Glass Web UI powered by Ollama and OpenAI-compatible inference backends (vLLM, LocalAI, text-generation-webui).**
 
-`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant**, a **Modern Liquid Glass Web UI**, a **Dual-Tier Long-Term Memory Engine**, a **Multi-Step ReAct Coding Agent**, **24/7 Telegram & WhatsApp Bots**, **Zero-Bleed Project Workspaces**, and a **Hardware-Aware Model Manager**.
+`locaLLM` transforms raw local models into production-ready autonomous capabilities: an **Interactive AI Assistant & Open Code Cockpit**, a **Modern Liquid Glass Web UI**, a **Visual LocaLLM Agent Workflow Studio (Signal Flow DAG with Live Pipeline Execution)**, a **Multi-Agent Coordination Team (Supervisor, Coder, Researcher, Auditor)**, an **Agentic Coding Engine with Surgical File Patching & AST Syntax Guard**, a **Zero-Dependency Vector Knowledge Base & Hybrid RAG Engine**, a **Dual-Tier Long-Term Memory Engine**, an **OpenAI & n8n Automation Bridge (Sync & Async Webhooks)**, **24/7 Telegram & WhatsApp Bots**, **Zero-Bleed Project Workspaces**, and a **Hardware-Aware Model Manager**.
 
 ---
 
@@ -108,23 +108,27 @@ locallm
 # 2. Launch the Real-Time VRAM & System Monitor HUD
 locallm top
 
-# 3. Start an Interactive Chat / Coding Agent session with Smart Auto-Routing & Typing Effect
+# 3. Start an Interactive Chat / Open Code session with Smart Auto-Routing & Typing Effect
 locallm chat --model auto
 
-# 4. Launch the Autonomous Coding Agent interactively (or with --task for scripts)
+# 4. Launch the Autonomous Coding Agent interactively (Single ReAct or Multi-Agent Team)
 locallm agent
 locallm agent --task "Analyze README.md and summarize project architecture"
 
-# 5. Start OpenAI-Compatible HTTP API Gateway (/v1/chat/completions)
+# 5. Launch Hierarchical Multi-Agent Coordination directly
+locallm agent --multi
+locallm agent --multi --task "Refactor auth middleware and verify test coverage"
+
+# 6. Start OpenAI & n8n Compatible HTTP API Gateway (/v1/chat/completions)
 locallm serve --port 8080
 
-# 6. Check GPU VRAM and model compatibility
+# 7. Check GPU VRAM and model compatibility
 locallm models
 
-# 7. Start Ollama and LocaLLM API server in the background
+# 8. Start Ollama and LocaLLM API server in the background
 locallm start
 
-# 8. Stop background services cleanly
+# 9. Stop background services cleanly
 locallm stop
 ```
 
@@ -207,6 +211,10 @@ locallm stop
   - Dynamic workspace icon picker with automatic theme-aware contrast validation.
   - Native toggle switch for **Workspace Auto-Memory Extraction**, allowing granular control over per-project episodic memory learning.
   - Auto-sorted chat sessions by last activity timestamp for effortless history tracking.
+- **Visual Agent Workflow Studio Navigation**:
+  - Dedicated "Visual Agent Workflow" button positioned neatly above Workflows in the desktop sidebar, featuring an outbound arrow icon (`ArrowUpRight`) that opens the visual DAG studio at `/workflow` in a new tab without disruptive decorative backgrounds.
+- **Collapsible Workspace Accordion**:
+  - Compact sidebar navigation with an automatic collapse/expand toggle when workspace counts exceed 5 projects, preserving vertical real estate.
 - **Resilient React Error Boundary**:
   - Built-in crash protection wrapping the application root with a Liquid Glass recovery screen, diagnostic details, and one-click session restore, completely eliminating white-screen state collapses.
 
@@ -235,12 +243,96 @@ locallm stop
 - **Server-Sent Events (SSE) Streaming**: Chunked token emission matching the OpenAI SSE streaming protocol with live usage metrics.
 - **Header Telemetry Badge & Lifecycle**: Displayed dynamically in the telemetry banner (`API :8080`), with complete daemon control via CLI (`locallm serve`) or `Settings -> API Server Gateway`.
 
+### 🤝 Multi-Agent Coordination & Smart Capability Routing
+- **Hierarchical Supervisor-Specialist Architecture**: Combines a lead Supervisor with targeted specialist agents to tackle complex, multi-stage engineering tasks:
+  - **Supervisor / Orchestrator**: Analyzes objectives, decomposes projects into ordered sub-tasks, assigns execution to the optimal specialist, and aggregates final deliverables.
+  - **Coder Specialist**: Generates surgical patches, writes modular functions, and implements logic with exact language syntax.
+  - **Research Specialist**: Explores filesystems, indexes documentation, extracts knowledge base chunks, and fetches technical references.
+  - **Auditor / Tester Specialist**: Runs syntax checkers, executes unit tests, reviews unified code diffs, and inspects security vulnerabilities.
+- **Dynamic Multidimensional Capability Profiler (`profiler.py`)**:
+  - Dynamically profiles every locally installed model across 5 critical dimensions: `coding_score`, `reasoning_score`, `context_score`, `tool_score`, and `speed_score`.
+  - Completely eliminates rigid, hardcoded model name checks. Any model family (Qwen 2.5/3.5, Gemma 4, GLM-4.6, Hermes 3, Llama 3, DeepSeek, etc.) is evaluated dynamically and assigned to its strongest specialist role.
+- **Shared Blackboard State Architecture (`blackboard.py`)**:
+  - Solves the local VRAM context explosion problem: rather than stuffing every specialist's entire context history into a single bloated prompt, each specialist operates within an isolated context window.
+  - Specialists exchange findings, architectural blueprints, file diffs, test logs, and task statuses through an in-memory, thread-safe Shared Blackboard.
+- **CLI Visual Orchestration HUD (`cli_ui.py`)**:
+  - Real-time progress rendering in the terminal cockpit showing the active specialist, execution step counts, and task handoffs (`Supervisor -> Coder: implement handler`, `Supervisor -> Auditor: verify syntax`).
+- **Flexible Invocation Modes**:
+  - Launch via interactive console menu: `Autonomous Agent -> Multi-Agent Team (Multi)`.
+  - Launch via CLI flag: `locallm agent --multi` (or headless with `locallm agent --multi --task "..."`).
+  - Launch from chat session: `/multi <task>` or `/team <task>`.
+
+### 🔀 LocaLLM Agent Workflow Studio (Signal Flow Visual DAG)
+- **Signal Flow Architectural Canvas**:
+  - Full-screen visual node orchestration studio accessible at `/workflow` (or directly via the sidebar button in a new tab).
+  - **4-Phase Sequential Journey**: Horizontal timeline demarcating pipeline progression across the canvas:
+    - *Phase 1: Intake & Context*: Captures the user objective, prompt constraints, or external webhook payloads.
+    - *Phase 2: Planning & Policy Governance*: Supervisor decomposition coupled with safety circuit breakers and human approval gates.
+    - *Phase 3: Specialist Execution*: Autonomous specialist execution (Research Specialist, Coder Specialist, and Auditor Specialist).
+    - *Phase 4: Evidence & Blackboard*: Central state sink consolidating unified diffs, test logs, and final deliverables.
+  - **5-Lane Structured Taxonomy**:
+    - `ui`: User objective intake and external triggers.
+    - `agent`: Supervisor planner and specialist agent runtime.
+    - `policy`: Safety guards, permission barriers, and anti-loop circuit breakers.
+    - `tools`: Execution capabilities (terminal commands, filesystem operators, web fetch).
+    - `evidence`: Blackboard state sink and trace event stream.
+- **Freeform Canvas Panning & Precision Navigation**:
+  - Drag and pan the canvas background freely with the mouse (`cursor-grab` / `cursor-grabbing`) to navigate large multi-agent DAGs.
+  - Granular zoom scaling from 50% to 180% with synchronized dot-matrix grid movements.
+  - Instant one-click **Reset View (100%)** button to recenter the canvas.
+- **Per-Agent Workspace Context Binding**:
+  - Each agent node displays a dedicated workspace badge (`📁 ws: <name>`) directly on its canvas card.
+  - Granular selection via the **Activity & Agent Properties Drawer**: configure individual specialists to operate within specific workspaces (e.g. Research Specialist exploring `docs_ws` while Coder Specialist modifies files in `app_ws`).
+  - The backend supervisor orchestrator dispatches tools, skills, knowledge indexes, and memory isolated to each agent's assigned workspace.
+- **Dual Execution Engine (Real Live Engine vs Local Step Sim)**:
+  - **Live Engine (Real)**: Directly triggers background multi-agent execution via `POST /api/agent/run` (`async: true`) and polls real-time execution states via `/api/agent/status`.
+  - Active nodes pulse with an amber indicator (`amber-500` ping), cubic bezier connection lines animate with traveling signal waves, and completed nodes transition to emerald green (`emerald-500`).
+  - Integrated **Live Event Log Drawer**: Slides up to display a chronological audit trail of agent turns, tool invocations, and live output streams.
+  - **Step Sim Mode**: Deterministic local simulation mode to test and demonstrate pipeline topologies without GPU inference load.
+- **JSON Schema Workflow Export**:
+  - Export complete workflow configurations with nodes, lanes, edges, and configurations into standardized `locallm-agent-workflow.json` files for version control and sharing.
+- **Calm, High-Contrast Theming (Dark & Light Mode)**:
+  - Glare-free light theme built with soft slate surfaces (`#f1f5f9`), bold text contrast (`text-slate-900`/`text-slate-700`), and balanced grid dots.
+  - Explicitly styled dark mode select menus and options ensuring zero text wash-out across all browsers and operating systems.
+
+### 💻 Agentic Coding & Surgical Code Patching (Open Code Cockpit)
+- **Surgical File Patching (`patch_file`)**:
+  - Performs targeted search-and-replace block edits instead of full-file rewrites.
+  - Prevents model hallucination, truncations, and accidental code destruction in large files.
+  - Emits clear unified line diff previews before applying changes.
+- **Built-in AST & Syntax Verification Guard (`check_syntax`)**:
+  - Automatically verifies syntax before and after code modifications across Python (via standard library AST), JavaScript, TypeScript, JSON, HTML, and CSS.
+  - Pinpoints line numbers and syntax error messages to immediately alert the agent to fix malformed code before committing.
+- **Interactive `@` File Auto-Completion**:
+  - Integrated into the interactive CLI prompt via `prompt_toolkit`.
+  - Typing `@` displays a dynamic auto-completion popup listing project files across workspace and repository directories, allowing instant file injection into prompts.
+- **Terminal Open Code Experience**:
+  - Combines full conversational interaction with hands-on tool execution. Read files, edit lines surgically, check AST syntax, run tests via `execute_command`, and verify results directly from the terminal prompt.
+
+### 📚 Local Knowledge Base & Zero-Dependency Agentic RAG Engine
+- **Zero External Dependencies**:
+  - No bloated vector databases or heavy external embedding frameworks required.
+  - Powered by pure-Python BM25Okapi ranking (`bm25.py`) with term-frequency saturation, document length normalization, and token cleaning.
+- **Structural Markdown Chunker (`chunker.py`)**:
+  - Intelligent heading-aware document splitting respecting `#`, `##`, `###`, and `####` structural hierarchies.
+  - Protects code blocks (```` ``` ````) and Markdown tables from being sliced mid-structure.
+  - Configurable chunk size (default 600 words) with sliding overlap (100 words).
+- **Isolated SQLite Storage Engine (`store.py`)**:
+  - High-performance, embedded SQLite storage per workspace (`knowledge_index.db`).
+  - Stores document metadata, chunk text, token counts, headings, and schema migrations.
+- **Progressive Disclosure Strategy**:
+  - Injects a compact topic catalog (~150 tokens) into system prompt instructions, alerting the model to available knowledge topics without consuming precious context tokens.
+  - When specific questions arise, the model uses `search_knowledge` to retrieve only the most relevant passages on demand, preserving 95% of the LLM context window.
+- **Native Knowledge Tools**:
+  - `search_knowledge(query, top_k)`: Ranked retrieval with BM25Okapi relevance scores and chunk headings.
+  - `index_knowledge(directory, file_patterns)`: Scans and indexes workspace docs, runbooks, and API specs into SQLite.
+
 ### 🤖 Unified Autonomous Coding Agent & Interactive Assistant
 - **Consolidated Coding Agent Cockpit**: Interactive assistant (`locallm chat` and `locallm agent`) combines full conversational memory with multi-step autonomous execution (`MAX_TOOL_STEPS = 25`).
 - **Autonomous Agent in Main Menu**: Directly accessible from the main interactive console menu or via `locallm agent` for dedicated multi-step goals.
 - **Smart Task Termination & Early Exit Logic**: Evaluates multi-step execution on each turn and stops early when the user's objective is completed, preventing wasteful tool loops from spinning needlessly through the maximum iteration limit.
 - **Hybrid Chat & Agent Mode**: In Assistant Chat, models seamlessly transition into autonomous action when given actionable tasks (such as inspecting code, auditing targets, or running commands) without conversational stalling or asking repetitive clarification questions.
-- **Strict Workspace Sandboxing & Confinement**: All tools (`list_directory`, `read_file`, `write_file`, `execute_command`, `get_current_directory`) are strictly locked into the active workspace directory (`~/.locallm/workspaces/<workspace_name>/`). Resolving `.` or relative paths always maps inside the workspace, preventing accidental leakage of host user files (`~`).
+- **Strict Workspace Sandboxing & Confinement**: All tools (`list_directory`, `read_file`, `write_file`, `patch_file`, `check_syntax`, `execute_command`, `get_current_directory`) are strictly locked into the active workspace directory (`~/.locallm/workspaces/<workspace_name>/`). Resolving `.` or relative paths always maps inside the workspace, preventing accidental leakage of host user files (`~`).
 - **Anti-Loop Circuit Breaker**: Proactively halts repetitive identical tool invocations (if the exact same call is repeated twice consecutively), preventing infinite token-draining loops.
 - **Focused Tool Sampling Temperature (`0.2`)**: Employs deterministic low-temperature sampling during tool turns to avoid conversational drift or hallucinations.
 - **Direct Execution Authority**: The agent autonomously scaffolds directories, creates and refactors files, executes shell commands, inspects project repositories, and queries web documentation.
@@ -250,7 +342,7 @@ locallm stop
   - `deny`: Read-only execution mode blocking all filesystem modifications and shell execution.
 - **Telegram Bot (`locallm telegram`)**: 24/7 bot daemon with per-user conversation memory, user ID whitelisting, Markdown-to-HTML formatting, and photo/document delivery tools.
 - **WhatsApp Bot (`locallm whatsapp`)**: Terminal QR code pairing via Baileys bridge, multi-user memory, phone whitelist, group chat support, and automatic 15-digit LID resolution.
-- **Cross-Channel Parity**: Uniform context telemetry (`• Context: 2,681/8,192 (32.7%) • Speed: 37.8 tok/s`) and slash commands (`/stats`, `/model`, `/clear`, `/sessions`, `/help`) across CLI, Telegram, and WhatsApp.
+- **Cross-Channel Parity**: Uniform context telemetry (`• Context: 2,681/8,192 (32.7%) • Speed: 37.8 tok/s`) and slash commands (`/stats`, `/model`, `/clear`, `/sessions`, `/help`, `/multi`) across CLI, Telegram, and WhatsApp.
 
 ### 🧠 Dual-Tier Long-Term Memory System (Global & Workspace-Scoped)
 - **Tier 1: Cross-Workspace Global User Memory (`~/.locallm/global_memory.json`)**:
@@ -351,8 +443,11 @@ When launching `locallm`, the terminal displays the real-time telemetry header b
 
 ```text
 Main Menu:
-  ├── Assistant             -> Interactive chat & agent with autonomous tool execution, strict workspace sandboxing, & typing effect
-  ├── Autonomous Agent      -> Dedicated autonomous ReAct loop for multi-step goals (files, terminal commands, web research)
+  ├── Assistant             -> Interactive chat & Open Code coding assistant with surgical patching, @ auto-complete, & typing effect
+  ├── Autonomous Agent      -> Autonomous agent execution (Single ReAct Agent or Multi-Agent Team)
+  │     ├── Single ReAct Agent      -> Single-model ReAct loop for sequential goals
+  │     ├── Multi-Agent Team (Multi) -> Hierarchical team (Supervisor, Coder, Researcher, Auditor) with shared blackboard
+  │     └── Back                    -> Return to Main Menu
   ├── Workspaces            -> Isolated environments: Switch, Create, Edit AGENTS.md, Skills, Delete, Back
   ├── Integrations          -> Channels & external bot runners
   │     ├── Telegram        -> 24/7 Telegram bot: Start, Configure Token, Whitelist, Back
@@ -386,9 +481,10 @@ Main Menu:
 | :--- | :--- | :--- |
 | `locallm` | Open interactive main menu with real-time hardware telemetry header | `locallm` |
 | `locallm top` | Launch auto-refreshing real-time system & VRAM monitor HUD | `locallm top --refresh 0.5` |
-| `locallm chat` | Launch interactive coding assistant session with typing effect | `locallm chat --model auto` |
-| `locallm agent` | Launch interactive coding agent (or with `--task` for headless execution) | `locallm agent` / `locallm agent --task "Scaffold FastAPI app"` |
-| `locallm serve` | Start OpenAI-compatible HTTP API Gateway server (`/v1/chat/completions`) | `locallm serve --port 8080 --host 0.0.0.0` |
+| `locallm chat` | Launch interactive Open Code assistant session with surgical patching and `@` file auto-completion | `locallm chat --model auto` |
+| `locallm agent` | Launch interactive coding agent (Single ReAct or Multi-Agent Team selector) | `locallm agent` / `locallm agent --task "Scaffold FastAPI app"` |
+| `locallm agent --multi` | Launch hierarchical multi-agent team (Supervisor, Coder, Researcher, Auditor) | `locallm agent --multi --task "Build and audit test suite"` |
+| `locallm serve` | Start OpenAI & n8n compatible HTTP API Gateway server (`/v1/chat/completions`) | `locallm serve --port 8080 --host 0.0.0.0` |
 | `locallm run "<prompt>"` | Single-shot prompt execution (piping / scripts) | `locallm run "Summarize commit history"` |
 | `locallm models` | Inspect models and physical VRAM fit | `locallm models` |
 | `locallm status` | View backend connectivity, GPU VRAM & active model | `locallm status` |
@@ -407,6 +503,82 @@ Main Menu:
 | `--workspace`, `-w` | Target workspace context for persona and tools | Active workspace |
 | `--model`, `-m` | Override default model served | Active model |
 | `--no-auto-port` | Disable automatic collision fallback | `False` |
+
+### 🌐 External Platform & n8n Integration Guide
+
+`locaLLM` seamlessly integrates with external automation platforms such as **n8n**, **Flowise**, **LangChain**, and custom microservices. Two integration patterns are supported:
+
+#### Pattern 1: Synchronous 1-Click Drop-in via OpenAI Node
+
+Any platform with an OpenAI chat completion node can trigger full multi-agent coordination simply by specifying `model: "agent:multi"` or `model: "agent:auto"`:
+
+```bash
+curl -X POST http://127.0.0.1:8080/v1/chat/completions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "model": "agent:multi",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Audit all endpoints in api_server.py and verify syntax"
+      }
+    ]
+  }'
+```
+
+In **n8n**:
+1. Add an **OpenAI** node (or standard **HTTP Request** node).
+2. Set **Base URL** to `http://127.0.0.1:8080/v1`.
+3. Set **Model** to `agent:multi`.
+4. Send your user prompt. The multi-agent coordinator (Supervisor, Coder, Researcher, Auditor) will execute the task and return the final aggregated response.
+
+#### Pattern 2: Asynchronous Task Execution with Webhook Callbacks
+
+For long-running engineering tasks, scripts, or distributed workflows, use the dedicated `/api/agent/run` endpoint:
+
+**Trigger Async Task with Webhook Callback:**
+```bash
+curl -X POST http://127.0.0.1:8080/api/agent/run \
+  -H "Content-Type: application/json" \
+  -d '{
+    "task": "Refactor database migrations and write unit tests",
+    "workspace": "web_pentest",
+    "async": true,
+    "webhook_url": "https://n8n.example.com/webhook/locallm-finished"
+  }'
+```
+
+**Immediate Response (HTTP 202 Accepted):**
+```json
+{
+  "task_id": "task_9f81a7b2c0",
+  "status": "queued",
+  "workspace": "web_pentest",
+  "webhook_configured": true
+}
+```
+
+**Query Execution Status Manually (`GET /api/agent/status`):**
+```bash
+curl http://127.0.0.1:8080/api/agent/status?task_id=task_9f81a7b2c0
+```
+
+**Webhook Callback Payload Sent to n8n:**
+When execution concludes, `locaLLM` automatically dispatches an HTTP POST payload to your configured webhook URL:
+```json
+{
+  "task_id": "task_9f81a7b2c0",
+  "status": "completed",
+  "data": {
+    "status": "completed",
+    "goal": "Refactor database migrations and write unit tests",
+    "output": "Successfully refactored migrations and verified all test suites.",
+    "modified_files": ["migrations/002_add_roles.sql", "tests/test_migrations.py"],
+    "steps": 6,
+    "total_duration_seconds": 14.8
+  }
+}
+```
 
 ### Workspace Management
 
@@ -445,6 +617,8 @@ During interactive chat (`locallm chat`), Telegram bot, or WhatsApp bot conversa
 | `/top` | `/monitor`, `top`, `monitor` | Opens real-time system & VRAM monitor HUD on the fly from inside chat. |
 | `/stats` | `stats`, `context`, `telemetry` | Renders active model, context tokens used/limit, speed (`tok/s`), and history depth. |
 | `/model` | `model` | Displays active model and features. Use `/model auto` to toggle dynamic routing. |
+| `/multi [task]` | `/team`, `multi-agent`, `team` | Dispatches task to hierarchical multi-agent coordination team (Supervisor, Coder, Researcher, Auditor). |
+| `@<filename>` | `@file` | Real-time project file auto-completion powered by prompt_toolkit to inject file paths or content directly into context. |
 | `/new` | `new session` | Archives current conversation and starts a fresh, isolated chat session. |
 | `/sessions` | `sessions` | Lists, switches, or deletes saved chat session histories for the active workspace. |
 | `/delete` | `/del`, `/rm` | Interactive dialog to delete the current session, specific saved chats, or all chat sessions. |
@@ -485,11 +659,16 @@ Native tools execute silently behind high-contrast spinners (`▘▀▝▐▗▄
 
 | Tool | Action Description | Safety & Highlights |
 | :--- | :--- | :--- |
-| `create_directory` | Creates directories recursively | Scaffolds parent directories automatically anywhere on the filesystem. |
+| `patch_file` | Surgical code patcher | Replaces targeted code blocks via search-and-replace blocks without overwriting full files. Emits unified diff previews. |
+| `check_syntax` | AST & syntax verification guard | Validates syntax for Python (AST), JavaScript, TypeScript, JSON, HTML, and CSS before and after edits. |
 | `write_file` | Writes or overwrites files | Auto-creates parent directories; outputs written character count. |
 | `read_file` | Reads file contents | UTF-8 safe with line numbers and token budget guards. |
 | `list_directory` | Lists directory contents | Folder-first listing (`[DIR]` before `[FILE]`); expands aliases (`~`, `downloads`, `desktop`). |
+| `create_directory` | Creates directories recursively | Scaffolds parent directories automatically anywhere on the filesystem. |
 | `execute_command` | Executes shell commands | Adheres strictly to permission policy (`ask`, `always_allow`, `deny`). |
+| `search_knowledge` | Agentic RAG search | Ranked BM25Okapi search across indexed workspace markdown docs and project specifications. |
+| `index_knowledge` | Knowledge base indexer | Parses, chunks, and indexes workspace documentation into SQLite (`knowledge_index.db`). |
+| `dispatch_agent_team` | Multi-agent team dispatcher | Decomposes tasks and delegates work to specialist agents with shared blackboard tracking. |
 | `search_web` | Searches the web | Multi-engine support (`auto`, `duckduckgo`, `bing`, `custom`) to prevent network blocking. |
 | `fetch_web` | Fetches webpage text | Markdown converter; direct raw `README.md` download for GitHub URLs. |
 | `get_weather` | Real-time weather reporting | Plain-text weather via wttr.in with Windows console charmap safety. |

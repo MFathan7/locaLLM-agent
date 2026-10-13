@@ -50,20 +50,30 @@ class AssistantSpinner:
         self.console = console_instance or console
         self._status: Optional[Status] = None
         self._is_active: bool = False
+        self._last_text: str = ""
 
     def start(self, text: str = "locaLLM is thinking...", style: str = "bold cyan") -> None:
-        """Start the persistent status animation."""
-        if self.console.is_terminal and not self._is_active:
+        """Start the persistent status animation or print milestone in non-interactive mode."""
+        self._last_text = text
+        if self.console.is_terminal and getattr(self.console, "is_interactive", False) and not self._is_active:
             self._status = self.console.status(f"[{style}]{text}[/]", spinner="squareSnake")
             self._status.start()
             self._is_active = True
+        elif not self._is_active:
+            self.console.print(f"[{style}]▘ {text}[/]")
+            self._is_active = True
 
     def update(self, text: str, style: str = "bold cyan") -> None:
-        """Seamlessly update spinner message without tearing down the widget."""
+        """Seamlessly update spinner message or print progress in fallback mode."""
+        if text == self._last_text:
+            return
+        self._last_text = text
         if self._status and self._is_active:
             self._status.update(f"[{style}]{text}[/]")
-        elif self.console.is_terminal and not self._is_active:
+        elif self.console.is_terminal and getattr(self.console, "is_interactive", False) and not self._is_active:
             self.start(text, style)
+        else:
+            self.console.print(f"[{style}]▘ {text}[/]")
 
     def print_task(self, report_markup: str) -> None:
         """Print a completed task line cleanly above the spinner without flickering."""
@@ -81,8 +91,8 @@ class AssistantSpinner:
                 self._status.stop()
             except Exception:
                 pass
-            self._is_active = False
-            self._status = None
+        self._is_active = False
+        self._status = None
 
     def __enter__(self) -> "AssistantSpinner":
         self.start()

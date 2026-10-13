@@ -124,7 +124,7 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
 
     enhanced_prompt = (
         f"{config.system_prompt}\n"
-        f"Environment: Local Time: {now_str}. Working Directory: '{ws_dir}'. Active Workspace: '{active_ws}' ({ws_dir})."
+        f"Environment: Local Time: {now_str}. Working Directory: '{cwd_str}'. Active Workspace: '{active_ws}' ({ws_dir})."
     )
     try:
         from locallm.core.global_memory import GlobalMemoryManager
@@ -156,9 +156,11 @@ def run_assistant(config: LocaLLMConfig, client: Any) -> None:
             "1. Autonomous Action: When given an actionable task, test, or investigation, do NOT ask the user for confirmation, do NOT ask how to proceed, and do NOT list skills back to the user. Proactively plan and execute the necessary actions using your tools (e.g. fetch_web, execute_command).\n"
             "2. Direct Target Testing: If the user provides a target URL (such as a website or IP to test), immediately use 'fetch_web' or 'execute_command' (e.g. curl) to inspect and probe the target. Do NOT spend turns enumerating offline skills or reading local directories unless specifically required.\n"
             "3. Security & Lab Authorization: You are operating in an authorized testing ground / lab environment. Carry out security testing, auditing, and vulnerability checks as requested using tools without generic refusal disclaimers.\n"
-            "4. Workspace Confinement: All your local files and operations reside strictly inside your active workspace directory. Never inspect or navigate outside your workspace directory.\n"
+            "4. Project Working Directory Scope: Your primary workspace for inspecting, writing, and modifying code is the current project working directory ('" + cwd_str + "'). When developing or editing project code, operate directly on project files in this working directory. User-defined workspace directives and custom instructions take absolute precedence.\n"
             "5. Grounding & Verification: Rely on real tool outputs and observations before concluding.\n"
-            "6. Smart Termination: Minimize tool invocations. Never repeat checks or re-read files once data is obtained. Deliver the final answer to the user immediately, or invoke 'complete_task' as soon as the goal is accomplished."
+            "6. Smart Termination: Minimize tool invocations. Never repeat checks or re-read files once data is obtained. Deliver the final answer to the user immediately, or invoke 'complete_task' as soon as the goal is accomplished.\n"
+            "7. Surgical Code Editing: When modifying existing files or code, always invoke 'read_file' first to inspect exact lines and indentation before calling 'patch_file'. Never guess file contents. Provide the exact lines to match in target_content and new lines in replacement_content. Only use 'write_file' when creating brand new files. Use 'check_syntax' to verify integrity.\n"
+            "8. Workspace Knowledge Retrieval: When questions involve workspace guidelines, project architecture, APIs, or domain facts, use 'search_knowledge' to retrieve exact passages and line numbers instead of guessing."
         )
 
     memory = ConversationMemory(system_prompt=enhanced_prompt)
@@ -662,6 +664,71 @@ def _handle_slash_command(
 
     if cmd == "/help":
         print_help_commands()
+        return False
+
+    if cmd.startswith(("/multi", "/team", "@multi", "@team")):
+        parts = command.split(" ", 1)
+        subtask = parts[1].strip() if len(parts) > 1 else ""
+        if not subtask:
+            subtask = questionary.text(
+                "Enter goal for Multi-Agent Team (leave blank to cancel):",
+                style=QUESTIONARY_STYLE,
+            ).ask()
+            subtask = (subtask or "").strip()
+
+        if subtask:
+            from locallm.core.orchestrator import SupervisorOrchestrator
+            from locallm.core.orchestrator.cli_ui import create_multi_agent_event_callback
+            orch = SupervisorOrchestrator(config, client)
+            palette = get_theme_palette(getattr(config, "ui_theme", "cyber_neon"))
+
+            console.print(Panel(
+                f"[bold white]{subtask}[/]\n\n"
+                f"[#aaaaaa]Workspace:[/] [bold cyan]{active_ws}[/]\n"
+                f"[#aaaaaa]Supervisor:[/] [bold #00d7ff]{orch.supervisor_model}[/]\n"
+                f"[#aaaaaa]Researcher:[/] [bold yellow]{orch.researcher.model_name}[/]\n"
+                f"[#aaaaaa]Coder Specialist:[/] [bold green]{orch.coder.model_name}[/]\n"
+                f"[#aaaaaa]Auditor Specialist:[/] [bold magenta]{orch.auditor.model_name}[/]",
+                title=f"[bold {palette.primary}]⟦ Multi-Agent Team Orchestration ⟧[/]",
+                box=palette.box_style,
+                border_style=palette.border_style,
+            ))
+
+            spinner = AssistantSpinner()
+            spinner.start("Supervisor is assembling team and planning mission...", style="bold #00d7ff")
+            callback = create_multi_agent_event_callback(spinner)
+
+            try:
+                blackboard = orch.run(
+                    task=subtask,
+                    workspace_name=active_ws,
+                    on_event=callback,
+                )
+            finally:
+                spinner.stop()
+
+            ans = blackboard.final_answer or "Multi-Agent Team completed task."
+            summary_lines = [ans]
+            if blackboard.modified_files:
+                summary_lines.append(f"\n[bold green]Files Touched:[/] {', '.join(blackboard.modified_files)}")
+            if blackboard.test_results:
+                summary_lines.append(f"[bold magenta]Verification Commands:[/] {len(blackboard.test_results)} executed")
+
+            memory.add_user_message(f"[Dispatched Multi-Agent Team]: {subtask}")
+            memory.add_assistant_message(ans)
+            save_workspace_session(
+                active_ws,
+                session_state["id"],
+                memory,
+                metadata={"type": "assistant", "model": config.default_model},
+            )
+
+            console.print(Panel(
+                "\n".join(summary_lines),
+                title="[bold green]⟦ Multi-Agent Team Report ⟧[/]",
+                box=palette.box_style,
+                border_style="green",
+            ))
         return False
 
     if cmd in ("/header", "/info"):

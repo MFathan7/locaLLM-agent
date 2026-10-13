@@ -13,6 +13,7 @@ import { ConfirmModal } from './components/ConfirmModal';
 import { WorkspaceModal } from './components/WorkspaceModal';
 import { ModelPicker } from './components/ModelPicker';
 import { NotificationToast } from './components/NotificationToast';
+import { WorkflowStudio } from './components/WorkflowStudio';
 import { useLocaLLM } from './hooks/useLocaLLM';
 import { Menu, PanelLeftOpen, Search, Trash2 } from 'lucide-react';
 import { motion, AnimatePresence, LayoutGroup, useSpring, useTransform } from 'motion/react';
@@ -174,6 +175,17 @@ function App() {
       ...(isOllama ? { ollama_model: model.id } : {})
     });
   };
+
+  // Visual Agent Workflow Studio view detection
+  const isWorkflowPage = typeof window !== 'undefined' && (
+    window.location.pathname === '/workflow' ||
+    window.location.pathname === '/workflows' ||
+    new URLSearchParams(window.location.search).get('page') === 'workflow'
+  );
+
+  if (isWorkflowPage) {
+    return <WorkflowStudio workspaces={workspaces} activeWorkspace={activeWorkspace} />;
+  }
 
   return (
     <div className="relative flex h-[100dvh] w-full overflow-hidden text-slate-800 dark:text-slate-100">

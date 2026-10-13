@@ -8,7 +8,10 @@ import {
   X,
   Search,
   MoreVertical,
-  Edit3
+  Edit3,
+  ArrowUpRight,
+  Workflow,
+  ChevronDown
 } from 'lucide-react';
 import type { ChatSession, Workspace } from '../types';
 import { motion, AnimatePresence } from 'motion/react';
@@ -59,6 +62,23 @@ export function Sidebar({
   const [newWsName, setNewWsName] = useState('');
   const [menuOpenWs, setMenuOpenWs] = useState<string | null>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const [isWorkspacesExpanded, setIsWorkspacesExpanded] = useState(false);
+
+  const hasMoreThan5Workspaces = workspaces.length > 5;
+  const visibleWorkspaces = useMemo(() => {
+    if (!hasMoreThan5Workspaces || isWorkspacesExpanded) {
+      return workspaces;
+    }
+    const first5 = workspaces.slice(0, 5);
+    const activeInFirst5 = first5.some(w => w.name === activeWorkspace);
+    if (!activeInFirst5) {
+      const activeWsObj = workspaces.find(w => w.name === activeWorkspace);
+      if (activeWsObj) {
+        return [...first5.slice(0, 4), activeWsObj];
+      }
+    }
+    return first5;
+  }, [workspaces, hasMoreThan5Workspaces, isWorkspacesExpanded, activeWorkspace]);
 
   const validSortedSessions = useMemo(() => {
     return sessions
@@ -139,6 +159,25 @@ export function Sidebar({
       </div>
 
       <div className="flex-1 overflow-y-auto px-2.5 pb-2 space-y-3">
+        {/* Visual Agent Workflow Page Button */}
+        <div>
+          <a
+            href="/workflow"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="group relative w-full h-9 px-3 flex items-center justify-between rounded-2xl text-[13px] text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors cursor-pointer select-none"
+            title="Open Visual Agent Workflow in new tab"
+          >
+            <div className="flex items-center gap-2.5 min-w-0 flex-1">
+              <Workflow className="w-4 h-4 text-slate-500 dark:text-slate-400 group-hover:text-slate-800 dark:group-hover:text-slate-100 transition-colors shrink-0" />
+              <span className="truncate text-[13px] font-medium text-slate-700 dark:text-slate-300 group-hover:text-slate-900 dark:group-hover:text-white">
+                Visual Agent Workflow
+              </span>
+            </div>
+            <ArrowUpRight className="w-3.5 h-3.5 text-slate-400 group-hover:text-slate-700 dark:group-hover:text-slate-200 transition-colors shrink-0 ml-1" />
+          </a>
+        </div>
+
         {/* Workspace */}
         <section className={clsx('relative', menuOpenWs ? 'z-30' : 'z-10')}>
           <div className="px-2 py-1 flex items-center justify-between text-[11px] font-semibold tracking-wider text-slate-600 dark:text-slate-400 uppercase">
@@ -182,7 +221,7 @@ export function Sidebar({
 
           {/* The liquid droplet (layoutId) slides between workspaces */}
           <div className="mt-0.5 space-y-0.5">
-            {workspaces.map((ws) => {
+            {visibleWorkspaces.map((ws) => {
               const isActive = activeWorkspace === ws.name;
               const isDefault = ws.name.toLowerCase() === 'default';
               const isMenuOpen = menuOpenWs === ws.name;
@@ -300,6 +339,26 @@ export function Sidebar({
               );
             })}
           </div>
+
+          {hasMoreThan5Workspaces && (
+            <button
+              type="button"
+              onClick={() => setIsWorkspacesExpanded(v => !v)}
+              className="w-full mt-1.5 py-1.5 px-2.5 flex items-center justify-center gap-1.5 rounded-xl text-[11px] font-medium text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-slate-100 hover:bg-black/[0.04] dark:hover:bg-white/[0.06] transition-colors cursor-pointer select-none"
+            >
+              <span>
+                {isWorkspacesExpanded
+                  ? 'Show less'
+                  : `+${workspaces.length - 5} more workspaces`}
+              </span>
+              <ChevronDown
+                className={clsx(
+                  'w-3.5 h-3.5 transition-transform duration-200',
+                  isWorkspacesExpanded && 'rotate-180'
+                )}
+              />
+            </button>
+          )}
         </section>
 
         <div className="mx-2 h-px bg-black/[0.08] dark:bg-white/[0.08]" />

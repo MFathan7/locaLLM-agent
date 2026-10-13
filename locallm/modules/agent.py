@@ -67,10 +67,11 @@ class ReActAgent:
             "1. Autonomous Action: Use tools directly to inspect the environment, fetch web data, read/write files, and execute commands. Never instruct the user to perform manual work when tools can perform the action.\n"
             "2. Grounding: Verify facts through tool output before concluding.\n"
             "3. Smart Termination & Stopping Condition: Minimize tool invocations. Execute only the essential tools necessary to complete the goal. Once the required information is gathered or the action is taken, NEVER perform redundant inspections, repetitive searches, or re-read files. Immediately call 'complete_task' with your final summary or return your final answer directly in text to terminate execution.\n"
-            "4. Read-Only vs Mutating Discipline: If the user's objective only asks to find, locate, search, check, or report file paths, existence, or metadata, NEVER invoke write_file, create_directory, or modifying commands. Use resolve_path, list_directory, or read_file exclusively.\n"
-            "5. Autonomous Verification & Self-Testing: When creating or modifying code, scripts, or configurations, never conclude without verification. Use execute_command to run actual tests (pytest, unittest, etc.), compilation/syntax checks, or standalone validation scripts. Test real edge cases with proper assertions, never do superficial tests. If errors occur, diagnose the traceback, fix the code, and re-test until it passes cleanly.\n"
+            "4. Surgical Code Editing vs Rewriting: When modifying existing files or code, always prefer 'patch_file' over 'write_file'. Provide the exact lines in target_content and the updated lines in replacement_content. Only use 'write_file' when creating completely new files. If the user only asks to inspect, locate, or read files, never invoke mutating tools.\n"
+            "5. Autonomous Verification & Self-Testing: When creating or modifying code, scripts, or configurations, never conclude without verification. Use 'check_syntax' to validate file integrity and 'execute_command' to run actual tests (pytest, unittest, etc.). If errors occur, diagnose the traceback, fix the code with 'patch_file', and re-test until it passes cleanly.\n"
             "6. Linguistic & Intent Disambiguation: If the task is translation, phrasing, or grammar advice, provide the translation directly. Do NOT execute web searches or technical commands on the text to be translated.\n"
-            "7. Workspace Storage Organization: Save generated documents and scripts inside the workspace 'files/' directory (e.g. files/output.txt), and visual assets or diagrams in 'images/' (e.g. images/chart.png). Always look inside these directories when retrieving previously created files or images."
+            "7. Project & Working Directory Scope: Create and edit project code, scripts, and configurations directly in the active project working directory. Workspace internal directories ('files/', 'images/') are reserved for standalone exports or user-directed isolation.\n"
+            "8. Knowledge Base Retrieval: For questions or tasks requiring domain knowledge, guidelines, architectural patterns, or workspace facts, invoke 'search_knowledge' to retrieve targeted excerpts and line numbers from indexed knowledge files."
         )
         # Supplementary Global User Memory
         try:
@@ -409,7 +410,8 @@ def run_agent_menu(config: LocaLLMConfig, client: Any) -> None:
         choice = questionary.select(
             "Agent & Automation:",
             choices=[
-                "Run Agent Task",
+                "Run Single Agent Task",
+                "Run Multi-Agent Team (Supervisor + Coder + Researcher + Auditor)",
                 f"Permission Policy (Current: {policy})",
                 "Back",
             ],
@@ -419,9 +421,15 @@ def run_agent_menu(config: LocaLLMConfig, client: Any) -> None:
         if choice is None or choice == "Back":
             break
 
-        if choice == "Run Agent Task":
+        if choice == "Run Single Agent Task":
             run_agent_interactive(config, client)
             questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
+        elif choice.startswith("Run Multi-Agent Team"):
+            t = questionary.text("Enter goal for Multi-Agent Team (leave blank to cancel):", style=QUESTIONARY_STYLE).ask()
+            if t and t.strip():
+                from locallm.core.orchestrator.cli_ui import run_multi_agent_cli
+                run_multi_agent_cli(t.strip(), config, client)
+                questionary.text("Press Enter to return...", style=QUESTIONARY_STYLE).ask()
         elif choice.startswith("Permission Policy"):
             configure_permission_policy(config)
 

@@ -62,13 +62,13 @@ Follow a strict Test-Driven Verification cycle for all code generation, refactor
   - You MUST PROACTIVELY invoke `search_web` on your first turn to research verified information before answering.
   - Exception: Do not trigger `search_web` for translation or linguistic phrasing tasks (see Linguistic & Intent Disambiguation).
 
-## Workspace Storage & Asset Organization
-- Each workspace provides dedicated internal directories for all files and media assets:
-  - **`files/`**: Store all generated reports, exported code, documents, data files, and logs here (relative path `files/<filename>`).
-  - **`images/`**: Store and retrieve all generated images, visual assets, diagrams, charts, and screenshots here (relative path `images/<filename>`).
-- When saving, creating, or looking up previous files and images:
-  - ALWAYS prioritize the workspace `files/` and `images/` directories.
-  - NEVER search or save files into random user directories (such as user home, OS desktop, or system root) unless explicitly instructed with an absolute path.
+## Working Directory & Project File Management
+- The active working directory (current project root) is the primary location for source code, repositories, configuration files, and project assets.
+- When creating or modifying project code, scripts, or configurations, work directly within the project tree using relative paths or explicit file targets (using `patch_file` for edits and `write_file` for new files).
+- Workspace Internal Storage:
+  - Workspace internal folders (`files/` or `images/`) are reserved for standalone exports or user-directed isolation.
+  - Never confine general coding tasks or project modifications to `files/` unless explicitly instructed to export or isolate them there.
+
 
 ## Tool Observation Synthesis
 - Never cite internal function names (e.g. `get_current_time`, `search_web`) or raw schema parameters to the user.
@@ -555,35 +555,50 @@ def load_workspace_context(name: str) -> str:
                 meta = json.load(f)
                 custom_inst = meta.get("custom_instructions", "").strip()
                 if custom_inst and custom_inst not in persona_text:
-                    sections.append(f"[Workspace Instructions]\n{custom_inst}")
+                    sections.append(f"[User-Defined Custom Instructions - Highest Priority]\n{custom_inst}")
         except Exception:
             pass
 
-    # 3. Knowledge documents (.md, .txt) - Progressive disclosure (compact snippets)
+    # 3. Knowledge documents (.md, .txt) - Agentic RAG index and progressive retrieval
     knowledge_dir = ws_path / "knowledge"
     if knowledge_dir.exists() and knowledge_dir.is_dir():
-        k_entries: List[str] = []
         k_files = [f for f in knowledge_dir.rglob("*") if f.is_file() and f.suffix.lower() in (".md", ".txt")]
-        for file in sorted(k_files, key=lambda p: str(p.relative_to(knowledge_dir)).lower()):
+        if k_files:
             try:
-                content = file.read_text(encoding="utf-8", errors="replace").strip()
-                if content:
-                    rel_name = str(file.relative_to(knowledge_dir)).replace("\\", "/")
-                    abs_path = str(file.resolve())
-                    snippet = (
-                        content
-                        if len(content) <= 400
-                        else (
-                            content[:400]
-                            + f"\n... [Use read_file('{rel_name}') or read_file('{abs_path}') for full document]"
-                        )
+                from locallm.core.rag.engine import get_rag_engine
+                rag_engine = get_rag_engine()
+                rag_engine.index_workspace(workspace_name=clean_name)
+                summary = rag_engine.get_knowledge_summary(workspace_name=clean_name)
+
+                total_chars = sum(f.stat().st_size for f in k_files)
+                if total_chars <= 8000:
+                    for f in k_files[:10]:
+                        try:
+                            f_content = f.read_text(encoding="utf-8", errors="replace").strip()
+                            if f_content:
+                                sections.append(f"[Knowledge: {f.name}]\n{f_content}")
+                        except Exception:
+                            pass
+                elif summary:
+                    sections.append(
+                        f"{summary}\n\n"
+                        "Directives: For domain facts, workspace documentation, project guidelines, or architecture details, "
+                        "call 'search_knowledge(query=...)' to retrieve relevant passages with source line numbers."
                     )
-                    k_entries.append(f"--- Document: {rel_name} ---\nPath: {abs_path}\n{snippet}")
+                else:
+                    file_names = [str(f.relative_to(knowledge_dir)).replace("\\", "/") for f in k_files[:10]]
+                    sections.append(
+                        f"[Workspace Knowledge Base: {len(k_files)} documents]\n"
+                        f"Files: {', '.join(file_names)}\n"
+                        "Use search_knowledge(query=...) to inspect contents."
+                    )
             except Exception:
-                continue
-        if k_entries:
-            combined_k = "\n\n".join(k_entries)
-            sections.append(f"[Workspace Knowledge Base]\n{combined_k[:4000]}")
+                file_names = [str(f.relative_to(knowledge_dir)).replace("\\", "/") for f in k_files[:10]]
+                sections.append(
+                    f"[Workspace Knowledge Base: {len(k_files)} documents]\n"
+                    f"Files: {', '.join(file_names)}\n"
+                    "Use search_knowledge(query=...) to inspect contents."
+                )
 
     # 4. Agent Skills (.md, .txt) - Progressive disclosure (compact snippets)
     skills_dir = ws_path / "skills"
@@ -768,6 +783,7 @@ def load_workspace_context(name: str) -> str:
     ws_images_res = str((ws_path / "images").resolve())
     ws_skills_res = str((ws_path / "skills").resolve())
     ws_know_res = str((ws_path / "knowledge").resolve())
+    cwd_res = str(Path.cwd().resolve())
 
     now_dt = datetime.now()
     now_str = now_dt.strftime("%A, %Y-%m-%d %H:%M:%S")
@@ -775,13 +791,14 @@ def load_workspace_context(name: str) -> str:
     header = (
         f"Current Real-World Date & Time: {now_str}\n"
         f"Active Workspace: '{clean_name}'\n"
+        f"Current Project Working Directory (CWD): {cwd_res}\n"
         f"Workspace Directory: {ws_dir_res}\n"
         f"Workspace Files Directory: {ws_files_res}\n"
         f"Workspace Images Directory: {ws_images_res}\n"
         f"Workspace Skills Directory: {ws_skills_res}\n"
         f"Workspace Knowledge Directory: {ws_know_res}\n"
-        "Storage & Asset Directive: Save and retrieve all workspace documents, outputs, scripts, and data in the workspace `files/` directory, and visual assets, photos, diagrams, or generated pictures in the `images/` directory. Do not save files or search outside the workspace or working directory unless specifically directed.\n"
-        "Skill Tool Notice: When consulting workspace skills or workflows, invoke `read_skill(skill_name='<id>')` or `list_skills()`. File tools (`read_file`, `write_file`, `list_directory`) also resolve relative to working directory or workspace."
+        "Execution Directive: Operate primarily within the Current Project Working Directory (CWD) for all project files, code development, and script execution. User-defined directives, personas, and custom rules take absolute precedence over default guidance.\n"
+        "Skill Tool Notice: When consulting workspace skills or workflows, invoke `read_skill(skill_name='<id>')` or `list_skills()`. File tools (`read_file`, `patch_file`, `write_file`, `list_directory`) operate relative to CWD."
     )
     body = "\n\n".join(sections)
     return f"{header}\n\n{body}"
@@ -1192,6 +1209,11 @@ def add_workspace_document(workspace_name: str, doc_name: str, content: str) -> 
     try:
         clean_content = sanitize_workspace_content(content.strip())
         target_file.write_text(clean_content, encoding="utf-8", errors="replace")
+        try:
+            from locallm.core.rag.engine import get_rag_engine
+            get_rag_engine().index_workspace(workspace_name=clean_ws)
+        except Exception:
+            pass
         return True, f"Knowledge document '{safe_name}' saved to workspace '{clean_ws}'."
     except Exception as exc:
         return False, f"Failed to write document '{safe_name}': {exc}"
