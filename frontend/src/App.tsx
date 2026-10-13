@@ -184,7 +184,17 @@ function App() {
   );
 
   if (isWorkflowPage) {
-    return <WorkflowStudio workspaces={workspaces} activeWorkspace={activeWorkspace} />;
+    return (
+      <WorkflowStudio
+        workspaces={workspaces}
+        activeWorkspace={activeWorkspace}
+        models={models}
+        config={config}
+        onUpdateConfig={updateConfig}
+        isConfigSyncing={isConfigSyncing}
+        onRefreshModels={refreshModels}
+      />
+    );
   }
 
   return (
