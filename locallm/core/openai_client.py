@@ -135,7 +135,7 @@ class OpenAIClient:
             if isinstance(c, list):
                 text_bits = [p.get("text", "") for p in c if isinstance(p, dict) and p.get("type") == "text"]
                 clean_text = "\n".join(b for b in text_bits if b)
-                note = f"\n\n[Catatan Sistem: File gambar dilampirkan, namun model '{model}' merupakan model teks/kode murni dan tidak mendukung input visual langsung. Harap jawab berdasarkan instruksi teks pengguna.]"
+                note = f"\n\n[System Note: An image file is attached, but model '{model}' is a text/code model and does not support direct visual input. Please respond based on the user's text instructions.]"
                 text_only.append({
                     "role": msg.get("role", "user"),
                     "content": (clean_text + note) if clean_text else note.strip()

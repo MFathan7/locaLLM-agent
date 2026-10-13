@@ -1680,7 +1680,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 event_obj["choices"] = [
                     {
                         "index": 0,
-                        "delta": {"content": f"\n\n[Gagal memproses respon: {err_detail}]"},
+                        "delta": {"content": f"\n\n[Failed to process response: {err_detail}]"},
                         "finish_reason": "error",
                     }
                 ]

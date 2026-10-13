@@ -44,7 +44,8 @@ import {
   Redo2,
   Lock,
   HelpCircle,
-  BookOpen
+  BookOpen,
+  Target
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ThemeToggle } from './ThemeToggle';
@@ -147,11 +148,11 @@ export const NODE_HEIGHT = 64;
 
 // Default Archify Swimlanes Layout
 export const INITIAL_LANES: WorkflowLaneConfig[] = [
-  { id: 'ui', num: '01', label: 'User Interface & Intake', y: 70, height: 125, variant: 'default' },
-  { id: 'agent', num: '02', label: 'Agent Runtime', y: 215, height: 145, variant: 'default' },
-  { id: 'policy', num: '03', label: 'Policy & Safety Governance', y: 380, height: 125, variant: 'exception' },
-  { id: 'tools', num: '04', label: 'Tool Execution', y: 525, height: 145, variant: 'default' },
-  { id: 'evidence', num: '05', label: 'Evidence & Blackboard', y: 690, height: 125, variant: 'default' }
+  { id: 'ui', num: '01', label: 'User Interface', y: 70, height: 130, variant: 'default' },
+  { id: 'agent', num: '02', label: 'Agent Runtime', y: 220, height: 145, variant: 'default' },
+  { id: 'policy', num: '03', label: 'Policy & Recovery', y: 385, height: 130, variant: 'exception' },
+  { id: 'tools', num: '04', label: 'Tool Execution', y: 535, height: 145, variant: 'default' },
+  { id: 'evidence', num: '05', label: 'Evidence & Context Store', y: 700, height: 130, variant: 'default' }
 ];
 
 // Helper to recalculate sequential positions and numbers for dynamic lanes
@@ -167,10 +168,10 @@ export function computeLanePositions(laneList: WorkflowLaneConfig[]): WorkflowLa
 
 // Archify Signal Flow Phase Demarcations
 const SIGNAL_FLOW_PHASES: WorkflowPhase[] = [
-  { id: 'intake', label: '01: Intake & Context', fromX: 30, toX: 250, variant: 'default' },
-  { id: 'reasoning', label: '02: Planning & Policy Governance', fromX: 260, toX: 790, variant: 'emphasis' },
-  { id: 'execution', label: '03: Specialist Execution', fromX: 800, toX: 1090, variant: 'security' },
-  { id: 'evidence', label: '04: Evidence & Blackboard', fromX: 1100, toX: 1470, variant: 'dashed' }
+  { id: 'intake', label: '01: Intake & Request', fromX: 30, toX: 430, variant: 'default' },
+  { id: 'reasoning', label: '02: Planning & Policy Gate', fromX: 440, toX: 890, variant: 'emphasis' },
+  { id: 'execution', label: '03: Tool Execution & Verification', fromX: 900, toX: 1360, variant: 'security' },
+  { id: 'evidence', label: '04: Evidence & Synthesis', fromX: 1370, toX: 1680, variant: 'dashed' }
 ];
 
 // Archify Semantic Type Styling Specifications
@@ -233,170 +234,337 @@ const WORKFLOW_PRESETS: {
   nodes: WorkflowNode[];
   edges: WorkflowEdge[];
 }[] = [
-  {
-    id: 'swarm-coordinator',
-    name: 'Multi-Agent Swarm (Standard)',
-    description: 'Hierarchical task decomposition with research, coding, safety gate and blackboard sink',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'user-intake',
-        lane: 'ui',
-        type: 'frontend',
-        title: 'User Objective',
-        subtitle: 'Task prompt and instructions',
-        tag: 'intake',
-        x: 50,
-        y: 101,
-        status: 'idle',
-        config: { query: 'Analyze project codebase and generate optimization plan', workspace: 'default' }
-      },
-      {
-        id: 'supervisor-planner',
-        lane: 'agent',
-        type: 'backend',
-        title: 'Supervisor Planner',
-        subtitle: 'Hierarchical task decomposition',
-        tag: 'context-aware',
-        x: 270,
-        y: 255,
-        status: 'idle',
-        config: { directive: 'Decompose task, delegate to specialists, and maintain blackboard state', timeout: 300 }
-      },
-      {
-        id: 'policy-gate',
-        lane: 'policy',
-        type: 'security',
-        title: 'Policy Guard',
-        subtitle: 'Circuit breaker & safety consent',
-        tag: 'policy-gate',
-        x: 530,
-        y: 410,
-        status: 'idle',
-        config: { policy: 'ask', circuit_breaker: 'max 2 consecutive identical failures' }
-      },
-      {
-        id: 'researcher-agent',
-        lane: 'agent',
-        type: 'messagebus',
-        title: 'Research Specialist',
-        subtitle: 'Workspace exploration & search',
-        tag: 'researcher',
-        x: 530,
-        y: 230,
-        status: 'idle',
-        config: { tools: ['search_web', 'fetch_web', 'read_file', 'list_directory'], timeout: 300 }
-      },
-      {
-        id: 'coder-agent',
-        lane: 'agent',
-        type: 'backend',
-        title: 'Coder Specialist',
-        subtitle: 'Code implementation & self-testing',
-        tag: 'code-exec',
-        x: 790,
-        y: 265,
-        status: 'idle',
-        config: { tools: ['patch_file', 'write_file', 'check_syntax', 'execute_command'], timeout: 300 }
-      },
-      {
-        id: 'blackboard-state',
-        lane: 'evidence',
-        type: 'database',
-        title: 'Blackboard State',
-        subtitle: 'Synthesizes findings & diffs',
-        tag: 'trace-evidence',
-        x: 1140,
-        y: 720,
-        status: 'idle',
-        config: { directive: 'Consolidate specialist observations and output final response' }
-      }
-    ],
-    edges: [
-      { id: 'e1', from: 'user-intake', to: 'supervisor-planner', label: 'prompt', variant: 'emphasis' },
-      { id: 'e2', from: 'supervisor-planner', to: 'policy-gate', label: 'safety check', variant: 'security' },
-      { id: 'e3', from: 'supervisor-planner', to: 'researcher-agent', label: 'research task', variant: 'default' },
-      { id: 'e4', from: 'policy-gate', to: 'coder-agent', label: 'authorized', variant: 'emphasis' },
-      { id: 'e5', from: 'researcher-agent', to: 'coder-agent', label: 'findings', variant: 'dashed' },
-      { id: 'e6', from: 'coder-agent', to: 'blackboard-state', label: 'code diffs', variant: 'emphasis' },
-      { id: 'e7', from: 'researcher-agent', to: 'blackboard-state', label: 'evidence', variant: 'dashed' }
-    ]
-  },
-  {
-    id: 'code-audit-fix',
-    name: 'Code Review & Audit Pipeline',
-    description: 'Inspects code health, runs automated tests, applies fixes and records audit diffs',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'intake-audit',
-        lane: 'ui',
-        type: 'frontend',
-        title: 'Audit Target',
-        subtitle: 'Directory or module specification',
-        tag: 'intake',
-        x: 50,
-        y: 101,
-        status: 'idle',
-        config: { query: 'Run pytest and audit test failures in project', workspace: 'default' }
-      },
-      {
-        id: 'auditor-node',
-        lane: 'agent',
-        type: 'backend',
-        title: 'Auditor Specialist',
-        subtitle: 'Runs diagnostic commands and pytest',
-        tag: 'auditor',
-        x: 310,
-        y: 255,
-        status: 'idle',
-        config: { tools: ['check_syntax', 'execute_command'] }
-      },
-      {
-        id: 'shell-runner',
-        lane: 'tools',
-        type: 'messagebus',
-        title: 'Shell Command Runner',
-        subtitle: 'Executes pytest command',
-        tag: 'subprocess',
-        x: 580,
-        y: 565,
-        status: 'idle',
-        config: { command: 'pytest' }
-      },
-      {
-        id: 'coder-fixer',
-        lane: 'agent',
-        type: 'backend',
-        title: 'Coder Specialist',
-        subtitle: 'Patches syntax errors and fixes bugs',
-        tag: 'code-exec',
-        x: 840,
-        y: 255,
-        status: 'idle',
-        config: { tools: ['patch_file', 'write_file', 'check_syntax'] }
-      },
-      {
-        id: 'audit-evidence',
-        lane: 'evidence',
-        type: 'database',
-        title: 'Trace Event Log',
-        subtitle: 'Audited log of passed checks and diffs',
-        tag: 'event-stream',
-        x: 1140,
-        y: 720,
-        status: 'idle',
-        config: {}
-      }
-    ],
-    edges: [
-      { id: 'ae1', from: 'intake-audit', to: 'auditor-node', label: 'start audit', variant: 'emphasis' },
-      { id: 'ae2', from: 'auditor-node', to: 'shell-runner', label: 'execute pytest', variant: 'default' },
-      { id: 'ae3', from: 'shell-runner', to: 'coder-fixer', label: 'failures', variant: 'security' },
-      { id: 'ae4', from: 'coder-fixer', to: 'audit-evidence', label: 'verified diffs', variant: 'emphasis' }
-    ]
-  }
-];
+    {
+      id: 'agent-tool-call-loop',
+      name: 'Agent Tool-Call Loop',
+      description: 'Autonomous tool execution cycle with planning loop, policy approval gate, and trace feedback',
+      lanes: INITIAL_LANES,
+      nodes: [
+        {
+          id: 'user',
+          lane: 'ui',
+          type: 'external',
+          title: 'User Intake',
+          subtitle: 'Asks for work & submits prompt',
+          tag: 'objective',
+          x: 50,
+          y: 102,
+          status: 'idle',
+          config: { query: 'Analyze repository and execute automated test repair loop', workspace: 'default' }
+        },
+        {
+          id: 'chat',
+          lane: 'ui',
+          type: 'frontend',
+          title: 'Chat Surface',
+          subtitle: 'Thread state & attachments',
+          tag: 'thread',
+          x: 270,
+          y: 102,
+          status: 'idle',
+          config: { workspace: 'default' }
+        },
+        {
+          id: 'planner',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Agent Planner',
+          subtitle: 'Context-aware next step plan',
+          tag: 'context-aware',
+          x: 490,
+          y: 255,
+          status: 'idle',
+          config: { directive: 'Reason over objectives, inspect evidence, and plan discrete tool calls', timeout: 300 }
+        },
+        {
+          id: 'router',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Tool Router',
+          subtitle: 'Select capabilities & dispatch',
+          tag: 'router',
+          x: 720,
+          y: 255,
+          status: 'idle',
+          config: { tools: ['shell', 'browser', 'filesystem', 'mcp'] }
+        },
+        {
+          id: 'approval',
+          lane: 'policy',
+          type: 'security',
+          title: 'Approval Gate',
+          subtitle: 'Scope check & user consent',
+          tag: 'block-risky',
+          x: 720,
+          y: 415,
+          status: 'idle',
+          config: { policy: 'ask_risky', circuit_breaker: 'max 2 retries' }
+        },
+        {
+          id: 'blocked',
+          lane: 'policy',
+          type: 'security',
+          title: 'Blocked Guard',
+          subtitle: 'Wait, halt or reject action',
+          tag: 'guardrail',
+          x: 940,
+          y: 415,
+          status: 'idle',
+          config: { on_deny: 'escalate_to_user' }
+        },
+        {
+          id: 'retry',
+          lane: 'policy',
+          type: 'messagebus',
+          title: 'Retry Path',
+          subtitle: 'Revise request & recovery loop',
+          tag: 'recovery',
+          x: 1160,
+          y: 415,
+          status: 'idle',
+          config: { backoff: 'exponential' }
+        },
+        {
+          id: 'tool',
+          lane: 'tools',
+          type: 'messagebus',
+          title: 'Tool Call Executor',
+          subtitle: 'Shell / Browser / Filesystem / MCP',
+          tag: 'structured-exec',
+          x: 940,
+          y: 565,
+          status: 'idle',
+          config: { tools: ['execute_command', 'read_file', 'search_web'] }
+        },
+        {
+          id: 'external',
+          lane: 'tools',
+          type: 'cloud',
+          title: 'External API & OS',
+          subtitle: 'Network service & subprocess',
+          tag: 'runtime',
+          x: 1160,
+          y: 565,
+          status: 'idle',
+          config: { timeout: 60 }
+        },
+        {
+          id: 'store',
+          lane: 'evidence',
+          type: 'database',
+          title: 'Context Store',
+          subtitle: 'Repository memory & state sink',
+          tag: 'memory',
+          x: 270,
+          y: 730,
+          status: 'idle',
+          config: { index: 'bm25_vector' }
+        },
+        {
+          id: 'trace',
+          lane: 'evidence',
+          type: 'database',
+          title: 'Trace Log',
+          subtitle: 'Structured events & output logs',
+          tag: 'evidence',
+          x: 490,
+          y: 730,
+          status: 'idle',
+          config: { sink: 'sqlite_audit' }
+        },
+        {
+          id: 'final',
+          lane: 'ui',
+          type: 'backend',
+          title: 'Final Reply',
+          subtitle: 'Synthesized answer & diff receipt',
+          tag: 'synthesis',
+          x: 1410,
+          y: 102,
+          status: 'idle',
+          config: { stream: true }
+        }
+      ],
+      edges: [
+        { id: 'e-user-chat', from: 'user', to: 'chat', label: 'request', variant: 'default' },
+        { id: 'e-chat-planner', from: 'chat', to: 'planner', label: 'plan request', variant: 'emphasis' },
+        { id: 'e-planner-router', from: 'planner', to: 'router', label: 'dispatch', variant: 'default' },
+        { id: 'e-router-approval', from: 'router', to: 'approval', label: 'safety check', variant: 'security' },
+        { id: 'e-approval-tool', from: 'approval', to: 'tool', label: 'approved', variant: 'emphasis' },
+        { id: 'e-approval-blocked', from: 'approval', to: 'blocked', label: 'denied', variant: 'security' },
+        { id: 'e-blocked-retry', from: 'blocked', to: 'retry', label: 'revise', variant: 'dashed' },
+        { id: 'e-retry-planner', from: 'retry', to: 'planner', label: 'recovery loop', variant: 'dashed' },
+        { id: 'e-tool-external', from: 'tool', to: 'external', label: 'invoke', variant: 'default' },
+        { id: 'e-external-trace', from: 'external', to: 'trace', label: 'record evidence', variant: 'dashed' },
+        { id: 'e-store-trace', from: 'store', to: 'trace', label: 'trace + memory', variant: 'dashed' },
+        { id: 'e-trace-planner', from: 'trace', to: 'planner', label: 'tool loopback', variant: 'emphasis' },
+        { id: 'e-external-final', from: 'external', to: 'final', label: 'final reply', variant: 'emphasis' }
+      ]
+    },
+    {
+      id: 'swarm-coordinator',
+      name: 'Multi-Agent Swarm (Standard)',
+      description: 'Hierarchical task decomposition with research, coding, safety gate and blackboard sink',
+      lanes: INITIAL_LANES,
+      nodes: [
+        {
+          id: 'user-intake',
+          lane: 'ui',
+          type: 'frontend',
+          title: 'User Objective',
+          subtitle: 'Task prompt and instructions',
+          tag: 'intake',
+          x: 50,
+          y: 101,
+          status: 'idle',
+          config: { query: 'Analyze project codebase and generate optimization plan', workspace: 'default' }
+        },
+        {
+          id: 'supervisor-planner',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Supervisor Planner',
+          subtitle: 'Hierarchical task decomposition',
+          tag: 'context-aware',
+          x: 270,
+          y: 255,
+          status: 'idle',
+          config: { directive: 'Decompose task, delegate to specialists, and maintain blackboard state', timeout: 300 }
+        },
+        {
+          id: 'policy-gate',
+          lane: 'policy',
+          type: 'security',
+          title: 'Policy Guard',
+          subtitle: 'Circuit breaker & safety consent',
+          tag: 'policy-gate',
+          x: 530,
+          y: 410,
+          status: 'idle',
+          config: { policy: 'ask', circuit_breaker: 'max 2 consecutive identical failures' }
+        },
+        {
+          id: 'researcher-agent',
+          lane: 'agent',
+          type: 'messagebus',
+          title: 'Research Specialist',
+          subtitle: 'Workspace exploration & search',
+          tag: 'researcher',
+          x: 530,
+          y: 230,
+          status: 'idle',
+          config: { tools: ['search_web', 'fetch_web', 'read_file', 'list_directory'], timeout: 300 }
+        },
+        {
+          id: 'coder-agent',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Coder Specialist',
+          subtitle: 'Code implementation & self-testing',
+          tag: 'code-exec',
+          x: 790,
+          y: 265,
+          status: 'idle',
+          config: { tools: ['patch_file', 'write_file', 'check_syntax', 'execute_command'], timeout: 300 }
+        },
+        {
+          id: 'blackboard-state',
+          lane: 'evidence',
+          type: 'database',
+          title: 'Blackboard State',
+          subtitle: 'Synthesizes findings & diffs',
+          tag: 'trace-evidence',
+          x: 1140,
+          y: 720,
+          status: 'idle',
+          config: { directive: 'Consolidate specialist observations and output final response' }
+        }
+      ],
+      edges: [
+        { id: 'e1', from: 'user-intake', to: 'supervisor-planner', label: 'prompt', variant: 'emphasis' },
+        { id: 'e2', from: 'supervisor-planner', to: 'policy-gate', label: 'safety check', variant: 'security' },
+        { id: 'e3', from: 'supervisor-planner', to: 'researcher-agent', label: 'research task', variant: 'default' },
+        { id: 'e4', from: 'policy-gate', to: 'coder-agent', label: 'authorized', variant: 'emphasis' },
+        { id: 'e5', from: 'researcher-agent', to: 'coder-agent', label: 'findings', variant: 'dashed' },
+        { id: 'e6', from: 'coder-agent', to: 'blackboard-state', label: 'code diffs', variant: 'emphasis' },
+        { id: 'e7', from: 'researcher-agent', to: 'blackboard-state', label: 'evidence', variant: 'dashed' }
+      ]
+    },
+    {
+      id: 'code-audit-fix',
+      name: 'Code Review & Audit Pipeline',
+      description: 'Inspects code health, runs automated tests, applies fixes and records audit diffs',
+      lanes: INITIAL_LANES,
+      nodes: [
+        {
+          id: 'intake-audit',
+          lane: 'ui',
+          type: 'frontend',
+          title: 'Audit Target',
+          subtitle: 'Directory or module specification',
+          tag: 'intake',
+          x: 50,
+          y: 101,
+          status: 'idle',
+          config: { query: 'Run pytest and audit test failures in project', workspace: 'default' }
+        },
+        {
+          id: 'auditor-node',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Auditor Specialist',
+          subtitle: 'Runs diagnostic commands and pytest',
+          tag: 'auditor',
+          x: 310,
+          y: 255,
+          status: 'idle',
+          config: { tools: ['check_syntax', 'execute_command'] }
+        },
+        {
+          id: 'shell-runner',
+          lane: 'tools',
+          type: 'messagebus',
+          title: 'Shell Command Runner',
+          subtitle: 'Executes pytest command',
+          tag: 'subprocess',
+          x: 580,
+          y: 565,
+          status: 'idle',
+          config: { command: 'pytest' }
+        },
+        {
+          id: 'coder-fixer',
+          lane: 'agent',
+          type: 'backend',
+          title: 'Coder Specialist',
+          subtitle: 'Patches syntax errors and fixes bugs',
+          tag: 'code-exec',
+          x: 840,
+          y: 255,
+          status: 'idle',
+          config: { tools: ['patch_file', 'write_file', 'check_syntax'] }
+        },
+        {
+          id: 'audit-evidence',
+          lane: 'evidence',
+          type: 'database',
+          title: 'Trace Event Log',
+          subtitle: 'Audited log of passed checks and diffs',
+          tag: 'event-stream',
+          x: 1140,
+          y: 720,
+          status: 'idle',
+          config: {}
+        }
+      ],
+      edges: [
+        { id: 'ae1', from: 'intake-audit', to: 'auditor-node', label: 'start audit', variant: 'emphasis' },
+        { id: 'ae2', from: 'auditor-node', to: 'shell-runner', label: 'execute pytest', variant: 'default' },
+        { id: 'ae3', from: 'shell-runner', to: 'coder-fixer', label: 'failures', variant: 'security' },
+        { id: 'ae4', from: 'coder-fixer', to: 'audit-evidence', label: 'verified diffs', variant: 'emphasis' }
+      ]
+    }
+  ];
 
 // Activity catalog grouped strictly by LocaLLM 5 Lane Taxonomy with rich operational documentation
 const ACTIVITY_CATALOG: {
@@ -404,308 +572,308 @@ const ACTIVITY_CATALOG: {
   laneTitle: string;
   items: ActivityCatalogItem[];
 }[] = [
-  {
-    lane: 'ui',
-    laneTitle: 'Lane 1: User Interface & Intake',
-    items: [
-      {
-        lane: 'ui',
-        type: 'frontend' as const,
-        title: 'User Objective Input',
-        subtitle: 'Interactive task entrypoint for agent flow',
-        tag: 'intake',
-        icon: Sparkles,
-        color: 'text-cyan-600 dark:text-cyan-400',
-        defaultConfig: { query: 'Analyze project codebase', workspace: 'default' },
-        doc: {
-          role: 'Intake & Task Entrypoint',
-          description: 'Titik awal alur kerja (workflow intake). Mengambil tujuan, instruksi awal, atau prompt dari pengguna untuk diproses oleh pipeline multi-agen.',
-          inputs: ['Teks prompt instruksi pengguna', 'Workspace target yang dipilih'],
-          outputs: ['Prompt terstruktur yang siap diteruskan ke Supervisor Planner atau Agen Spesialis'],
-          configFields: [
-            { param: 'query', desc: 'Instruksi atau tujuan utama yang akan dikerjakan.', defaultValue: 'Analyze project codebase' },
-            { param: 'workspace', desc: 'Ruang kerja target untuk konteks file.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Tempatkan di awal Swimlane 1 (UI & Intake), hubungkan langsung ke Supervisor Planner di Swimlane 2.'
+    {
+      lane: 'ui',
+      laneTitle: 'Lane 1: User Interface & Intake',
+      items: [
+        {
+          lane: 'ui',
+          type: 'frontend' as const,
+          title: 'User Objective Input',
+          subtitle: 'Interactive task entrypoint for agent flow',
+          tag: 'intake',
+          icon: Sparkles,
+          color: 'text-cyan-600 dark:text-cyan-400',
+          defaultConfig: { query: 'Analyze project codebase', workspace: 'default' },
+          doc: {
+            role: 'Intake & Task Entrypoint',
+            description: 'Primary workflow intake entrypoint. Captures the initial user objective, prompt, and task scope to be ingested by the multi-agent pipeline.',
+            inputs: ['User prompt and mission instructions', 'Target project workspace selection'],
+            outputs: ['Structured task payload ready for routing to Supervisor Planner or Specialists'],
+            configFields: [
+              { param: 'query', desc: 'Primary objective or task directive to execute.', defaultValue: 'Analyze project codebase' },
+              { param: 'workspace', desc: 'Target project workspace for file and context operations.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Place at the beginning of Lane 1 (UI & Intake) and wire directly to Supervisor Planner in Lane 2.'
+          }
+        },
+        {
+          lane: 'ui',
+          type: 'external' as const,
+          title: 'Webhook Trigger',
+          subtitle: 'External HTTP payload trigger (e.g. GitHub/n8n)',
+          tag: 'webhook',
+          icon: Globe,
+          color: 'text-slate-600 dark:text-slate-400',
+          defaultConfig: { endpoint: '/api/v1/webhook', workspace: 'default' },
+          doc: {
+            role: 'External HTTP Trigger',
+            description: 'Automated external trigger via HTTP POST. Receives JSON payloads from external systems such as GitHub Actions, n8n, or internal webhook dispatchers.',
+            inputs: ['HTTP POST request with JSON payload'],
+            outputs: ['Normalized event payload formatted for agent execution'],
+            configFields: [
+              { param: 'endpoint', desc: 'REST endpoint path for receiving incoming webhook requests.', defaultValue: '/api/v1/webhook' },
+              { param: 'workspace', desc: 'Target workspace associated with the incoming event.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Connect to Supervisor Planner to automatically trigger workflow runs on incoming webhook events.'
+          }
         }
-      },
-      {
-        lane: 'ui',
-        type: 'external' as const,
-        title: 'Webhook Trigger',
-        subtitle: 'External HTTP payload trigger (e.g. GitHub/n8n)',
-        tag: 'webhook',
-        icon: Globe,
-        color: 'text-slate-600 dark:text-slate-400',
-        defaultConfig: { endpoint: '/api/v1/webhook', workspace: 'default' },
-        doc: {
-          role: 'External HTTP Trigger',
-          description: 'Pemicu otomatisasi eksternal berbasis HTTP POST. Menerima payload JSON dari layanan luar seperti GitHub Actions, n8n, atau webhook internal.',
-          inputs: ['HTTP POST request dengan payload JSON'],
-          outputs: ['Payload data yang telah dinormalisasi untuk diproses oleh agen'],
-          configFields: [
-            { param: 'endpoint', desc: 'Jalur endpoint REST untuk menerima payload.', defaultValue: '/api/v1/webhook' },
-            { param: 'workspace', desc: 'Workspace yang diasosiasikan dengan event ini.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Hubungkan ke Supervisor Planner untuk memproses payload secara otomatis saat webhook terpanggil.'
+      ]
+    },
+    {
+      lane: 'agent',
+      laneTitle: 'Lane 2: Agent Runtime',
+      items: [
+        {
+          lane: 'agent',
+          type: 'backend' as const,
+          title: 'Supervisor Planner',
+          subtitle: 'Decomposes mission, delegates subtasks, and synthesizes',
+          tag: 'orchestrator',
+          icon: Bot,
+          color: 'text-emerald-600 dark:text-emerald-400',
+          defaultConfig: { directive: 'Plan and coordinate subtasks', workspace: 'default' },
+          doc: {
+            role: 'Coordinator & Planner',
+            description: 'Central orchestration engine in the multi-agent architecture. Decomposes high-level missions into sequenced subtasks, delegates them to specialists, and synthesizes overall findings.',
+            inputs: ['Objective from Intake or Webhook', 'Shared Blackboard state and context'],
+            outputs: ['Sequenced execution plan', 'Subtask delegations for Coder, Researcher, and Auditor specialists'],
+            configFields: [
+              { param: 'directive', desc: 'Strategic operating instructions guiding the supervisor.', defaultValue: 'Plan and coordinate subtasks' },
+              { param: 'workspace', desc: 'Target project workspace for execution.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Accept intake wires from User Objective or Webhook, and dispatch downstream wires to Research Specialist or Coder Specialist.'
+          }
+        },
+        {
+          lane: 'agent',
+          type: 'messagebus' as const,
+          title: 'Research Specialist',
+          subtitle: 'Retrieval agent for files, web data, and skills',
+          tag: 'researcher',
+          icon: Search,
+          color: 'text-orange-600 dark:text-orange-400',
+          defaultConfig: { tools: ['search_web', 'fetch_web', 'read_file'], workspace: 'default' },
+          doc: {
+            role: 'Context Retrieval Agent',
+            description: 'Dedicated exploration and retrieval agent. Inspects workspace repository files, gathers technical documentation, and searches for technical references via live web search.',
+            inputs: ['Search directives from Supervisor', 'Target keywords or file paths'],
+            outputs: ['Relevant code snippets, web search summaries, and dependency context'],
+            configFields: [
+              { param: 'tools', desc: 'Enabled tools for the research specialist (search_web, fetch_web, read_file).', defaultValue: "['search_web', 'fetch_web', 'read_file']" },
+              { param: 'workspace', desc: 'Target workspace for file inspection.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Execute before Coder Specialist so code authoring is informed by accurate file context and dependencies.'
+          }
+        },
+        {
+          lane: 'agent',
+          type: 'backend' as const,
+          title: 'Coder Specialist',
+          subtitle: 'Code editing with patch_file and terminal self-testing',
+          tag: 'coder',
+          icon: Terminal,
+          color: 'text-emerald-600 dark:text-emerald-400',
+          defaultConfig: { tools: ['patch_file', 'check_syntax', 'execute_command'], workspace: 'default' },
+          doc: {
+            role: 'Code Authoring & Patching Agent',
+            description: 'Autonomous software engineering agent. Authors new code, applies surgical diff patches, and validates AST syntax integrity to prevent build regressions.',
+            inputs: ['Task specifications from Supervisor', 'File context from Research Specialist'],
+            outputs: ['File modification diff patches', 'AST syntax validation reports'],
+            configFields: [
+              { param: 'tools', desc: 'Active coding tools (patch_file, check_syntax, execute_command).', defaultValue: "['patch_file', 'check_syntax', 'execute_command']" },
+              { param: 'workspace', desc: 'Target project workspace to modify.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Connect downstream from Research Specialist, and route outputs through Approval Gate or to Auditor Specialist.'
+          }
+        },
+        {
+          lane: 'agent',
+          type: 'messagebus' as const,
+          title: 'Auditor Specialist',
+          subtitle: 'Runs diagnostic commands, pytest, and syntax reviews',
+          tag: 'auditor',
+          icon: Cpu,
+          color: 'text-orange-600 dark:text-orange-400',
+          defaultConfig: { tools: ['check_syntax', 'execute_command'], workspace: 'default' },
+          doc: {
+            role: 'Quality & Test Auditor',
+            description: 'Quality assurance agent. Executes automated test suites (pytest, unittest), runs syntax verification, and inspects system integrity following code modifications.',
+            inputs: ['Modified files and patches produced by Coder Specialist'],
+            outputs: ['Quality audit reports, unit test results, and regression diagnostics'],
+            configFields: [
+              { param: 'tools', desc: 'Authorized diagnostic tools (check_syntax, execute_command).', defaultValue: "['check_syntax', 'execute_command']" },
+              { param: 'workspace', desc: 'Workspace environment where test commands run.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Wire downstream from Coder Specialist to verify correctness before committing changes or finalizing output.'
+          }
         }
-      }
-    ]
-  },
-  {
-    lane: 'agent',
-    laneTitle: 'Lane 2: Agent Runtime',
-    items: [
-      {
-        lane: 'agent',
-        type: 'backend' as const,
-        title: 'Supervisor Planner',
-        subtitle: 'Decomposes mission, delegates subtasks, and synthesizes',
-        tag: 'orchestrator',
-        icon: Bot,
-        color: 'text-emerald-600 dark:text-emerald-400',
-        defaultConfig: { directive: 'Plan and coordinate subtasks', workspace: 'default' },
-        doc: {
-          role: 'Coordinator & Planner',
-          description: 'Orkestrator utama dalam arsitektur multi-agen. Menganalisis misi kompleks, memecahnya menjadi subtask terarah, dan mendelegasikannya ke tim spesialis.',
-          inputs: ['Tujuan dari Intake atau Webhook', 'Konteks Blackboard state'],
-          outputs: ['Rencana kerja berurutan (execution plan)', 'Delegasi tugas ke Coder/Researcher/Auditor'],
-          configFields: [
-            { param: 'directive', desc: 'Arahan strategis supervisor dalam memimpin tim spesialis.', defaultValue: 'Plan and coordinate subtasks' },
-            { param: 'workspace', desc: 'Workspace tempat tugas dijalankan.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Menerima wire dari User Objective/Webhook, lalu menyambungkan wire ke Research Specialist atau Coder Specialist.'
+      ]
+    },
+    {
+      lane: 'policy',
+      laneTitle: 'Lane 3: Policy & Safety Governance',
+      items: [
+        {
+          lane: 'policy',
+          type: 'security' as const,
+          title: 'Approval Gate',
+          subtitle: 'Requires human consent before mutating actions',
+          tag: 'policy-gate',
+          icon: ShieldCheck,
+          color: 'text-rose-600 dark:text-rose-400',
+          defaultConfig: { policy: 'ask', workspace: 'default' },
+          doc: {
+            role: 'Human Consent & Safety Policy',
+            description: 'Human-in-the-loop safety checkpoint. Halts execution before sensitive operations or file mutations take place until the user grants explicit permission.',
+            inputs: ['Proposed sensitive action from Coder or Shell Runner'],
+            outputs: ['Approved or Denied authorization status'],
+            configFields: [
+              { param: 'policy', desc: "Authorization policy mode ('ask' requires manual approval, 'auto' auto-approves).", defaultValue: 'ask' },
+              { param: 'workspace', desc: 'Workspace policy context.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Position immediately before destructive tool calls or production file writes.'
+          }
+        },
+        {
+          lane: 'policy',
+          type: 'security' as const,
+          title: 'Circuit Breaker Guard',
+          subtitle: 'Halts execution after 2 consecutive identical failures',
+          tag: 'safety-break',
+          icon: AlertTriangle,
+          color: 'text-rose-600 dark:text-rose-400',
+          defaultConfig: { max_failures: 2, workspace: 'default' },
+          doc: {
+            role: 'Safety & Loop Interrupter',
+            description: 'Automated safety breaker. Interrupts pipeline execution if repeated identical failures are detected on the same step, guarding against infinite loops and token exhaustion.',
+            inputs: ['Success or failure status from previous execution step'],
+            outputs: ['Pass signal if healthy, or emergency trip interruption'],
+            configFields: [
+              { param: 'max_failures', desc: 'Maximum consecutive identical failures before tripping the circuit.', defaultValue: '2' },
+              { param: 'workspace', desc: 'Monitored workspace context.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Insert into retry loops between Coder and Auditor steps.'
+          }
         }
-      },
-      {
-        lane: 'agent',
-        type: 'messagebus' as const,
-        title: 'Research Specialist',
-        subtitle: 'Retrieval agent for files, web data, and skills',
-        tag: 'researcher',
-        icon: Search,
-        color: 'text-orange-600 dark:text-orange-400',
-        defaultConfig: { tools: ['search_web', 'fetch_web', 'read_file'], workspace: 'default' },
-        doc: {
-          role: 'Context Retrieval Agent',
-          description: 'Agen spesialis penelusuran informasi. Membaca berkas proyek, mengumpulkan referensi kode, dan mencari solusi teknis via web search.',
-          inputs: ['Subtask pencarian dari Supervisor', 'Kata kunci atau file path'],
-          outputs: ['Snippet berkas relevan, ringkasan riset web, dan konteks dependensi'],
-          configFields: [
-            { param: 'tools', desc: 'Daftar alat aktif yang diizinkan (search_web, fetch_web, read_file).', defaultValue: "['search_web', 'fetch_web', 'read_file']" },
-            { param: 'workspace', desc: 'Workspace target pembacaan file.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Jalankan sebelum Coder Specialist agar hasil riset menjadi dasar penulisan kode.'
+      ]
+    },
+    {
+      lane: 'tools',
+      laneTitle: 'Lane 4: Tool Execution',
+      items: [
+        {
+          lane: 'tools',
+          type: 'messagebus' as const,
+          title: 'Shell Command Runner',
+          subtitle: 'execute_command subprocess in project directory',
+          tag: 'subprocess',
+          icon: Terminal,
+          color: 'text-orange-600 dark:text-orange-400',
+          defaultConfig: { command: 'pytest', workspace: 'default' },
+          doc: {
+            role: 'Subprocess Command Execution',
+            description: 'Terminal CLI subprocess runner. Executes local commands such as test suites, build tools, or package managers within the host workspace environment.',
+            inputs: ['Shell command string to execute'],
+            outputs: ['Process exit code (0 for success), stdout stream, and stderr logs'],
+            configFields: [
+              { param: 'command', desc: 'Terminal command to run.', defaultValue: 'pytest' },
+              { param: 'workspace', desc: 'Working directory for command execution.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Wire downstream from Approval Gate when running commands that may modify project files.'
+          }
+        },
+        {
+          lane: 'tools',
+          type: 'messagebus' as const,
+          title: 'Filesystem Operator',
+          subtitle: 'patch_file, write_file, and read_file handlers',
+          tag: 'filesystem',
+          icon: FileText,
+          color: 'text-orange-600 dark:text-orange-400',
+          defaultConfig: { path: '.', workspace: 'default' },
+          doc: {
+            role: 'File I/O & Manipulation',
+            description: 'Direct file system handler. Manages reading, writing, and inspecting project directories outside of specialized code editing.',
+            inputs: ['Target path, operation mode, and file content payload'],
+            outputs: ['File operation status or retrieved file contents'],
+            configFields: [
+              { param: 'path', desc: 'Target file or directory path relative to workspace.', defaultValue: '.' },
+              { param: 'workspace', desc: 'Target workspace owner.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Use when the workflow needs to prepare configuration templates or read static local assets.'
+          }
+        },
+        {
+          lane: 'tools',
+          type: 'cloud' as const,
+          title: 'Web Search & Fetch',
+          subtitle: 'Real-time online search and content fetcher',
+          tag: 'online-web',
+          icon: Globe,
+          color: 'text-amber-600 dark:text-amber-400',
+          defaultConfig: { provider: 'auto', workspace: 'default' },
+          doc: {
+            role: 'Online Data Retrieval',
+            description: 'Real-time online search engine and web fetcher. Queries search providers and retrieves clean markdown from public web pages.',
+            inputs: ['Search query or target web URL'],
+            outputs: ['Search result citations or extracted web markdown content'],
+            configFields: [
+              { param: 'provider', desc: 'Search provider backend or automatic discovery mode.', defaultValue: 'auto' },
+              { param: 'workspace', desc: 'Active workspace context.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Connect to Research Specialist to enrich agent reasoning with up-to-date external documentation.'
+          }
         }
-      },
-      {
-        lane: 'agent',
-        type: 'backend' as const,
-        title: 'Coder Specialist',
-        subtitle: 'Code editing with patch_file and terminal self-testing',
-        tag: 'coder',
-        icon: Terminal,
-        color: 'text-emerald-600 dark:text-emerald-400',
-        defaultConfig: { tools: ['patch_file', 'check_syntax', 'execute_command'], workspace: 'default' },
-        doc: {
-          role: 'Code Authoring & Patching Agent',
-          description: 'Agen pemrograman yang menulis kode baru, melakukan modifikasi file berbasis surgical patch, dan memverifikasi integritas sintaks AST.',
-          inputs: ['Spesifikasi tugas dari Supervisor', 'Konteks file dari Research Specialist'],
-          outputs: ['Patch perubahan berkas (file diff)', 'Hasil validasi sintaksis kode'],
-          configFields: [
-            { param: 'tools', desc: 'Daftar alat koding aktif (patch_file, check_syntax, execute_command).', defaultValue: "['patch_file', 'check_syntax', 'execute_command']" },
-            { param: 'workspace', desc: 'Workspace proyek yang akan dimodifikasi.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Hubungkan sesudah Research Specialist, dan arahkan keluarannya ke Approval Gate atau Auditor Specialist.'
+      ]
+    },
+    {
+      lane: 'evidence',
+      laneTitle: 'Lane 5: Evidence & Memory',
+      items: [
+        {
+          lane: 'evidence',
+          type: 'database' as const,
+          title: 'Blackboard State Sink',
+          subtitle: 'Central blackboard aggregating findings and diffs',
+          tag: 'blackboard',
+          icon: Database,
+          color: 'text-purple-600 dark:text-purple-400',
+          defaultConfig: { workspace: 'default' },
+          doc: {
+            role: 'Shared State & Blackboard Memory',
+            description: 'Central shared memory blackboard. Aggregates findings, context variables, file diffs, and intermediate state across all specialists.',
+            inputs: ['Specialist findings, intermediate variables, and turn summaries'],
+            outputs: ['Unified state accessible to all downstream steps'],
+            configFields: [
+              { param: 'workspace', desc: 'Workspace owning the blackboard state.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Position in Lane 5 (Evidence & Memory) as the central sink for agent discoveries and artifacts.'
+          }
+        },
+        {
+          lane: 'evidence',
+          type: 'database' as const,
+          title: 'Trace Event Log',
+          subtitle: 'Live chronological audit log of all agent turns',
+          tag: 'event-stream',
+          icon: Layers,
+          color: 'text-purple-600 dark:text-purple-400',
+          defaultConfig: { workspace: 'default' },
+          doc: {
+            role: 'Chronological Audit Trail',
+            description: 'Comprehensive audit recorder. Captures chronological event streams, agent turns, latencies, and state transitions for debugging and compliance.',
+            inputs: ['Event stream from all active pipeline nodes'],
+            outputs: ['Chronological audit trail inspectable in the Live Event Log drawer'],
+            configFields: [
+              { param: 'workspace', desc: 'Workspace context for event log filtering.', defaultValue: 'default' }
+            ],
+            recommendedConnections: 'Wire to the terminal steps of the pipeline to guarantee full audit traceability.'
+          }
         }
-      },
-      {
-        lane: 'agent',
-        type: 'messagebus' as const,
-        title: 'Auditor Specialist',
-        subtitle: 'Runs diagnostic commands, pytest, and syntax reviews',
-        tag: 'auditor',
-        icon: Cpu,
-        color: 'text-orange-600 dark:text-orange-400',
-        defaultConfig: { tools: ['check_syntax', 'execute_command'], workspace: 'default' },
-        doc: {
-          role: 'Quality & Test Auditor',
-          description: 'Agen penjamin mutu yang menjalankan uji diagnostik (pytest, linting, syntax check) untuk memastikan kode baru tidak merusak sistem.',
-          inputs: ['Perubahan berkas yang baru diterapkan oleh Coder Specialist'],
-          outputs: ['Laporan audit mutu kode, log kelulusan unit test, deteksi regresi'],
-          configFields: [
-            { param: 'tools', desc: 'Daftar perkakas uji yang diizinkan (check_syntax, execute_command).', defaultValue: "['check_syntax', 'execute_command']" },
-            { param: 'workspace', desc: 'Workspace tempat tes dieksekusi.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Hubungkan sesudah Coder Specialist untuk verifikasi otomatis sebelum hasil akhir disimpan.'
-        }
-      }
-    ]
-  },
-  {
-    lane: 'policy',
-    laneTitle: 'Lane 3: Policy & Safety Governance',
-    items: [
-      {
-        lane: 'policy',
-        type: 'security' as const,
-        title: 'Approval Gate',
-        subtitle: 'Requires human consent before mutating actions',
-        tag: 'policy-gate',
-        icon: ShieldCheck,
-        color: 'text-rose-600 dark:text-rose-400',
-        defaultConfig: { policy: 'ask', workspace: 'default' },
-        doc: {
-          role: 'Human Consent & Safety Policy',
-          description: 'Pos pemeriksaan keamanan (checkpoint) yang menahan eksekusi sebelum aksi berisiko atau mutasi file dieksekusi sampai pengguna memberi izin.',
-          inputs: ['Rencana aksi berisiko dari Coder atau Shell Runner'],
-          outputs: ['Keputusan lanjut (Approved) atau batalkan (Denied)'],
-          configFields: [
-            { param: 'policy', desc: "Aturan konfirmasi ('ask' meminta persetujuan manual, 'auto' otomatis lulus).", defaultValue: 'ask' },
-            { param: 'workspace', desc: 'Workspace konteks kebijakan.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Tempatkan tepat sebelum aksi destruktif atau sebelum modifikasi file produksi.'
-        }
-      },
-      {
-        lane: 'policy',
-        type: 'security' as const,
-        title: 'Circuit Breaker Guard',
-        subtitle: 'Halts execution after 2 consecutive identical failures',
-        tag: 'safety-break',
-        icon: AlertTriangle,
-        color: 'text-rose-600 dark:text-rose-400',
-        defaultConfig: { max_failures: 2, workspace: 'default' },
-        doc: {
-          role: 'Safety & Loop Interrupter',
-          description: 'Sekring pengaman yang memutus eksekusi otomatis jika mendeteksi kegagalan berturut-turut pada langkah yang sama guna mencegah pemborosan token dan loop tak berujung.',
-          inputs: ['Status sukses atau gagal dari langkah sebelumnya'],
-          outputs: ['Sinyal lanjut jika aman, atau interupsi darurat (trip)'],
-          configFields: [
-            { param: 'max_failures', desc: 'Batas maksimum kegagalan identik berturut-turut sebelum sirkuit terputus.', defaultValue: '2' },
-            { param: 'workspace', desc: 'Workspace target pengawasan.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Gunakan pada alur perulangan (retry loop) antara Coder dan Auditor.'
-        }
-      }
-    ]
-  },
-  {
-    lane: 'tools',
-    laneTitle: 'Lane 4: Tool Execution',
-    items: [
-      {
-        lane: 'tools',
-        type: 'messagebus' as const,
-        title: 'Shell Command Runner',
-        subtitle: 'execute_command subprocess in project directory',
-        tag: 'subprocess',
-        icon: Terminal,
-        color: 'text-orange-600 dark:text-orange-400',
-        defaultConfig: { command: 'pytest', workspace: 'default' },
-        doc: {
-          role: 'Subprocess Command Execution',
-          description: 'Eksekutor perintah terminal (CLI) yang menjalankan perintah sistem seperti build tools, compiler, atau script uji langsung di lingkungan host.',
-          inputs: ['String perintah shell yang akan dijalankan'],
-          outputs: ['Exit code (0 = sukses), log stdout, dan pesan stderr'],
-          configFields: [
-            { param: 'command', desc: 'Perintah terminal yang akan dijalankan.', defaultValue: 'pytest' },
-            { param: 'workspace', desc: 'Direktori kerja eksekusi perintah.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Hubungkan sesudah Approval Gate jika menjalankan perintah yang berpotensi memodifikasi file.'
-        }
-      },
-      {
-        lane: 'tools',
-        type: 'messagebus' as const,
-        title: 'Filesystem Operator',
-        subtitle: 'patch_file, write_file, and read_file handlers',
-        tag: 'filesystem',
-        icon: FileText,
-        color: 'text-orange-600 dark:text-orange-400',
-        defaultConfig: { path: '.', workspace: 'default' },
-        doc: {
-          role: 'File I/O & Manipulation',
-          description: 'Pengelola berkas langsung untuk membaca, menulis, atau menginspeksi direktori proyek di luar lingkup koding spesifik.',
-          inputs: ['Path file/direktori, mode operasi, dan payload konten'],
-          outputs: ['Status keberhasilan operasi berkas atau isi file'],
-          configFields: [
-            { param: 'path', desc: 'Jalur berkas atau folder target relatif terhadap workspace.', defaultValue: '.' },
-            { param: 'workspace', desc: 'Workspace pemilik berkas.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Gunakan saat workflow perlu menyiapkan file konfigurasi, template, atau membaca aset lokal.'
-        }
-      },
-      {
-        lane: 'tools',
-        type: 'cloud' as const,
-        title: 'Web Search & Fetch',
-        subtitle: 'Real-time online search and content fetcher',
-        tag: 'online-web',
-        icon: Globe,
-        color: 'text-amber-600 dark:text-amber-400',
-        defaultConfig: { provider: 'auto', workspace: 'default' },
-        doc: {
-          role: 'Online Data Retrieval',
-          description: 'Mesin penelusuran web langsung yang mencari dokumentasi online, API docs, dan fetching halaman web publik secara real-time.',
-          inputs: ['Kueri penelusuran web atau URL halaman tujuan'],
-          outputs: ['Kutipan artikel, dokumentasi API, atau konten markdown web'],
-          configFields: [
-            { param: 'provider', desc: 'Penyedia layanan pencarian atau mode otomatis.', defaultValue: 'auto' },
-            { param: 'workspace', desc: 'Workspace aktif.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Hubungkan ke Research Specialist untuk memperkaya konteks dengan data eksternal.'
-        }
-      }
-    ]
-  },
-  {
-    lane: 'evidence',
-    laneTitle: 'Lane 5: Evidence & Memory',
-    items: [
-      {
-        lane: 'evidence',
-        type: 'database' as const,
-        title: 'Blackboard State Sink',
-        subtitle: 'Central blackboard aggregating findings and diffs',
-        tag: 'blackboard',
-        icon: Database,
-        color: 'text-purple-600 dark:text-purple-400',
-        defaultConfig: { workspace: 'default' },
-        doc: {
-          role: 'Shared State & Blackboard Memory',
-          description: 'Pusat memori bersama (shared blackboard) tempat seluruh temuan, variabel konteks, diff file, dan hipotesis agen disimpan secara terpusat.',
-          inputs: ['Data temuan, variabel perantara, dan ringkasan langkah agen'],
-          outputs: ['State terintegrasi yang dapat dibaca oleh setiap node berikutnya'],
-          configFields: [
-            { param: 'workspace', desc: 'Workspace pemilik blackboard.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Tempatkan di Swimlane 5 (Evidence & Memory) sebagai muara penyimpanan artefak hasil kerja agen.'
-        }
-      },
-      {
-        lane: 'evidence',
-        type: 'database' as const,
-        title: 'Trace Event Log',
-        subtitle: 'Live chronological audit log of all agent turns',
-        tag: 'event-stream',
-        icon: Layers,
-        color: 'text-purple-600 dark:text-purple-400',
-        defaultConfig: { workspace: 'default' },
-        doc: {
-          role: 'Chronological Audit Trail',
-          description: 'Perekam jejak audit (audit log) yang menyimpan seluruh runtutan event, giliran eksekusi agen, latensi, dan riwayat langkah secara kronologis.',
-          inputs: ['Stream event dari seluruh node yang aktif'],
-          outputs: ['Catatan riwayat audit lengkap yang dapat diperiksa di Live Event Log drawer'],
-          configFields: [
-            { param: 'workspace', desc: 'Workspace konteks pencatatan log.', defaultValue: 'default' }
-          ],
-          recommendedConnections: 'Dihubungkan ke langkah akhir pipeline untuk memastikan seluruh tahapan terdokumentasi rapi.'
-        }
-      }
-    ]
-  }
-];
+      ]
+    }
+  ];
 
 export function findActivityCatalogItem(node: WorkflowNode): ActivityCatalogItem | undefined {
   for (const group of ACTIVITY_CATALOG) {
@@ -742,10 +910,10 @@ export function WorkflowStudio({
   const [lanes, setLanes] = useState<WorkflowLaneConfig[]>(INITIAL_LANES);
 
   // Core diagram state
-  const [activeWorkflowTitle, setActiveWorkflowTitle] = useState<string>('Multi-Agent Swarm (Standard)');
+  const [activeWorkflowTitle, setActiveWorkflowTitle] = useState<string>('Agent Tool-Call Loop');
   const [nodes, setNodes] = useState<WorkflowNode[]>(WORKFLOW_PRESETS[0].nodes);
   const [edges, setEdges] = useState<WorkflowEdge[]>(WORKFLOW_PRESETS[0].edges);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('supervisor-planner');
+  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('planner');
 
   // Canvas Viewport transform
   const [zoom, setZoom] = useState<number>(1);
@@ -753,6 +921,13 @@ export function WorkflowStudio({
   const [isCanvasPanning, setIsCanvasPanning] = useState<boolean>(false);
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
+
+  // Hover Focus Zoom & Flow Animation Engine
+  const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
+  const [hoverFocusZoomEnabled, setHoverFocusZoomEnabled] = useState<boolean>(true);
+  const [isCameraAnimating, setIsCameraAnimating] = useState<boolean>(false);
+  const unhoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const baseCameraRef = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
 
   // Modals & Panels
   const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(true);
@@ -903,7 +1078,7 @@ export function WorkflowStudio({
             setWorkspaceList(data);
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     }
   }, [workspaces]);
 
@@ -1093,6 +1268,139 @@ export function WorkflowStudio({
     return map;
   }, [nodes]);
 
+  // Archify Semantic Focus & Flow Relationship Map
+  const flowRelations = useMemo(() => {
+    if (!hoveredNodeId) {
+      return {
+        hoveredNode: null,
+        incomingEdges: [] as WorkflowEdge[],
+        outgoingEdges: [] as WorkflowEdge[],
+        upstreamNodeIds: new Set<string>(),
+        downstreamNodeIds: new Set<string>(),
+        relatedEdgeIds: new Set<string>(),
+        relatedNodeIds: new Set<string>(),
+        flowSummary: null as string | null
+      };
+    }
+
+    const hoveredNode = nodes.find((n) => n.id === hoveredNodeId) || null;
+    const incomingEdges = edges.filter((e) => e.to === hoveredNodeId);
+    const outgoingEdges = edges.filter((e) => e.from === hoveredNodeId);
+
+    const upstreamNodeIds = new Set(incomingEdges.map((e) => e.from));
+    const downstreamNodeIds = new Set(outgoingEdges.map((e) => e.to));
+    const relatedEdgeIds = new Set([
+      ...incomingEdges.map((e) => e.id),
+      ...outgoingEdges.map((e) => e.id)
+    ]);
+    const relatedNodeIds = new Set([
+      hoveredNodeId,
+      ...upstreamNodeIds,
+      ...downstreamNodeIds
+    ]);
+
+    const upstreamTitles = incomingEdges
+      .map((e) => nodes.find((n) => n.id === e.from)?.title)
+      .filter(Boolean);
+    const downstreamTitles = outgoingEdges
+      .map((e) => nodes.find((n) => n.id === e.to)?.title)
+      .filter(Boolean);
+
+    let summaryText = '';
+    if (upstreamTitles.length && downstreamTitles.length) {
+      summaryText = `${upstreamTitles.join(', ')} ➔ [${hoveredNode?.title}] ➔ ${downstreamTitles.join(', ')}`;
+    } else if (downstreamTitles.length) {
+      summaryText = `[${hoveredNode?.title}] ➔ ${downstreamTitles.join(', ')}`;
+    } else if (upstreamTitles.length) {
+      summaryText = `${upstreamTitles.join(', ')} ➔ [${hoveredNode?.title}]`;
+    } else if (hoveredNode) {
+      summaryText = `[${hoveredNode.title}] (Standalone Step)`;
+    }
+
+    return {
+      hoveredNode,
+      incomingEdges,
+      outgoingEdges,
+      upstreamNodeIds,
+      downstreamNodeIds,
+      relatedEdgeIds,
+      relatedNodeIds,
+      flowSummary: summaryText || null
+    };
+  }, [hoveredNodeId, nodes, edges]);
+
+  // Smooth Hover Focus Zoom In Handler
+  const handleNodeMouseEnter = useCallback((nodeId: string) => {
+    if (draggingNodeId || isPanningCanvasRef.current || isExecuting) return;
+
+    if (unhoverTimeoutRef.current) {
+      clearTimeout(unhoverTimeoutRef.current);
+      unhoverTimeoutRef.current = null;
+    }
+
+    setHoveredNodeId(nodeId);
+
+    if (hoverFocusZoomEnabled) {
+      if (!baseCameraRef.current) {
+        baseCameraRef.current = { zoom, pan };
+      }
+
+      const targetNode = nodes.find((n) => n.id === nodeId);
+      if (targetNode && canvasRef.current) {
+        const cWidth = canvasRef.current.clientWidth || 1200;
+        const cHeight = canvasRef.current.clientHeight || 700;
+
+        const outEdges = edges.filter((e) => e.from === nodeId);
+        const downNodes = nodes.filter((n) => outEdges.some((e) => e.to === n.id));
+
+        let cx = targetNode.x + NODE_WIDTH / 2;
+        let cy = targetNode.y + NODE_HEIGHT / 2;
+
+        if (downNodes.length > 0) {
+          const avgDownX = downNodes.reduce((acc, n) => acc + n.x + NODE_WIDTH / 2, 0) / downNodes.length;
+          const avgDownY = downNodes.reduce((acc, n) => acc + n.y + NODE_HEIGHT / 2, 0) / downNodes.length;
+          // Weighted forward focus: 58% on current node, 42% on downstream targets
+          cx = cx * 0.58 + avgDownX * 0.42;
+          cy = cy * 0.58 + avgDownY * 0.42;
+        }
+
+        const targetZoom = 1.32;
+        const targetPanX = Math.round(cWidth / 2 - cx * targetZoom);
+        const targetPanY = Math.round(cHeight / 2 - cy * targetZoom);
+
+        setIsCameraAnimating(true);
+        setZoom(targetZoom);
+        setPan({ x: targetPanX, y: targetPanY });
+
+        setTimeout(() => {
+          setIsCameraAnimating(false);
+        }, 340);
+      }
+    }
+  }, [hoverFocusZoomEnabled, zoom, pan, nodes, edges, isExecuting, draggingNodeId]);
+
+  // Smooth Hover Focus Zoom Restore Handler
+  const handleNodeMouseLeave = useCallback(() => {
+    if (unhoverTimeoutRef.current) {
+      clearTimeout(unhoverTimeoutRef.current);
+    }
+
+    unhoverTimeoutRef.current = setTimeout(() => {
+      setHoveredNodeId(null);
+
+      if (hoverFocusZoomEnabled && baseCameraRef.current) {
+        const { zoom: origZoom, pan: origPan } = baseCameraRef.current;
+        baseCameraRef.current = null;
+        setIsCameraAnimating(true);
+        setZoom(origZoom);
+        setPan(origPan);
+        setTimeout(() => {
+          setIsCameraAnimating(false);
+        }, 340);
+      }
+    }, 180);
+  }, [hoverFocusZoomEnabled]);
+
   // Filtered Activity Palette items
   const filteredCatalog = useMemo(() => {
     if (!searchQuery.trim()) return ACTIVITY_CATALOG;
@@ -1215,10 +1523,10 @@ export function WorkflowStudio({
     setSavedWorkflows(updated);
     try {
       localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
-    } catch {}
+    } catch { }
     setActiveWorkflowTitle(item.name);
     setIsSaveModalOpen(false);
-    setSaveToastMessage(`Workflow "${item.name}" berhasil disimpan`);
+    setSaveToastMessage(`Workflow "${item.name}" saved successfully`);
     setTimeout(() => setSaveToastMessage(null), 3000);
   }, [lanes, nodes, edges, savedWorkflows]);
 
@@ -1358,6 +1666,14 @@ export function WorkflowStudio({
       return;
     }
 
+    if (unhoverTimeoutRef.current) {
+      clearTimeout(unhoverTimeoutRef.current);
+      unhoverTimeoutRef.current = null;
+    }
+    setHoveredNodeId(null);
+    baseCameraRef.current = null;
+    setIsCameraAnimating(false);
+
     if (connectingSourceId) {
       setConnectingSourceId(null);
       setConnectingMousePos(null);
@@ -1393,8 +1709,18 @@ export function WorkflowStudio({
   };
 
   const handleResetView = () => {
+    if (unhoverTimeoutRef.current) {
+      clearTimeout(unhoverTimeoutRef.current);
+      unhoverTimeoutRef.current = null;
+    }
+    setHoveredNodeId(null);
+    baseCameraRef.current = null;
+    setIsCameraAnimating(true);
     setZoom(1);
     setPan({ x: 30, y: 20 });
+    setTimeout(() => {
+      setIsCameraAnimating(false);
+    }, 320);
   };
 
   // Add node with optional drop coordinate
@@ -1608,7 +1934,7 @@ export function WorkflowStudio({
     setSavedWorkflows(filtered);
     try {
       localStorage.setItem('locallm_saved_workflows', JSON.stringify(filtered));
-    } catch {}
+    } catch { }
   };
 
   // Export JSON Schema
@@ -1998,15 +2324,17 @@ export function WorkflowStudio({
     };
   }, []);
 
-  // Generate Archify-standard orthogonal stepped connector path
+  // Generate Archify-standard orthogonal stepped connector path with channel corridor routing
   const getOrthogonalRoute = (x1: number, y1: number, x2: number, y2: number) => {
-    if (Math.abs(y1 - y2) < 2) {
+    // Direct horizontal alignment
+    if (Math.abs(y1 - y2) < 4 && x2 >= x1) {
       return {
         path: `M ${x1} ${y1} L ${x2} ${y2}`,
         labelX: (x1 + x2) / 2,
         labelY: y1
       };
     }
+    // Standard forward stepped routing
     if (x2 >= x1 + 24) {
       const midX = Math.round((x1 + x2) / 2);
       return {
@@ -2014,14 +2342,27 @@ export function WorkflowStudio({
         labelX: midX,
         labelY: (y1 + y2) / 2
       };
-    } else {
-      const rightOffset = x1 + 20;
-      const detourY = Math.max(y1, y2) + 40;
-      const leftOffset = x2 - 20;
+    }
+    // Backward loop (e.g. trace -> planner loopback, retry -> planner loop)
+    if (y2 < y1) {
+      // Looping upwards
+      const rightX = x1 + 30;
+      const topY = Math.min(y1, y2) - 28;
+      const leftX = x2 - 28;
       return {
-        path: `M ${x1} ${y1} L ${rightOffset} ${y1} L ${rightOffset} ${detourY} L ${leftOffset} ${detourY} L ${leftOffset} ${y2} L ${x2} ${y2}`,
-        labelX: (rightOffset + leftOffset) / 2,
-        labelY: detourY
+        path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${topY} L ${leftX} ${topY} L ${leftX} ${y2} L ${x2} ${y2}`,
+        labelX: (rightX + leftX) / 2,
+        labelY: topY - 10
+      };
+    } else {
+      // Looping downwards
+      const rightX = x1 + 30;
+      const bottomY = Math.max(y1, y2) + 36;
+      const leftX = x2 - 28;
+      return {
+        path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${bottomY} L ${leftX} ${bottomY} L ${leftX} ${y2} L ${x2} ${y2}`,
+        labelX: (rightX + leftX) / 2,
+        labelY: bottomY + 10
       };
     }
   };
@@ -2084,11 +2425,10 @@ export function WorkflowStudio({
                       key={p.id}
                       type="button"
                       onClick={() => handleLoadPreset(p.id)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${
-                        activeWorkflowTitle === p.name
+                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${activeWorkflowTitle === p.name
                           ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
                           : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
-                      }`}
+                        }`}
                     >
                       <span className="truncate">{p.name}</span>
                       {activeWorkflowTitle === p.name && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
@@ -2141,7 +2481,7 @@ export function WorkflowStudio({
                     type="button"
                     onClick={handleOpenSaveDialog}
                     className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
-                    title="Simpan alur workflow ke localStorage (Ctrl+S)"
+                    title="Save workflow to local storage (Ctrl+S)"
                   >
                     <Save className="w-3 h-3 text-emerald-600" />
                     <span>Save Flow</span>
@@ -2205,11 +2545,10 @@ export function WorkflowStudio({
           <button
             type="button"
             onClick={handleToggleFullscreen}
-            className={`p-1 rounded-lg transition-colors cursor-pointer ${
-              isFullscreen
+            className={`p-1 rounded-lg transition-colors cursor-pointer ${isFullscreen
                 ? 'bg-cyan-500/20 text-cyan-600 dark:text-cyan-400 font-medium'
                 : 'text-slate-700 dark:text-slate-300 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
+              }`}
             title={isFullscreen ? 'Exit Fullscreen' : 'Enter Fullscreen'}
           >
             {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
@@ -2217,14 +2556,36 @@ export function WorkflowStudio({
           <button
             type="button"
             onClick={() => setIsGridVisible((v) => !v)}
-            className={`p-1 rounded-lg transition-colors cursor-pointer ${
-              isGridVisible
+            className={`p-1 rounded-lg transition-colors cursor-pointer ${isGridVisible
                 ? 'bg-slate-200 dark:bg-slate-700 text-slate-900 dark:text-white font-medium'
                 : 'text-slate-500 hover:bg-slate-200 dark:hover:bg-slate-700'
-            }`}
+              }`}
             title="Toggle background grid"
           >
             <Grid className="w-3.5 h-3.5" />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              setHoverFocusZoomEnabled((v) => !v);
+              if (hoverFocusZoomEnabled) {
+                if (unhoverTimeoutRef.current) clearTimeout(unhoverTimeoutRef.current);
+                setHoveredNodeId(null);
+                if (baseCameraRef.current) {
+                  setZoom(baseCameraRef.current.zoom);
+                  setPan(baseCameraRef.current.pan);
+                  baseCameraRef.current = null;
+                }
+              }
+            }}
+            className={`p-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${hoverFocusZoomEnabled
+                ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-semibold'
+                : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
+              }`}
+            title={`Hover Focus Zoom: ${hoverFocusZoomEnabled ? 'Enabled' : 'Disabled'} (Auto-zooms and highlights flow on hover)`}
+          >
+            <Target className="w-3.5 h-3.5" />
+            <span className="text-[10px] hidden lg:inline">Focus Zoom</span>
           </button>
         </div>
 
@@ -2261,11 +2622,10 @@ export function WorkflowStudio({
                       key={p.id}
                       type="button"
                       onClick={() => handleSelectPlatform(p.id)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${
-                        currentBackend === p.id
+                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${currentBackend === p.id
                           ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
                           : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
-                      }`}
+                        }`}
                     >
                       <span className="truncate">{p.name}</span>
                       {currentBackend === p.id && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
@@ -2303,11 +2663,10 @@ export function WorkflowStudio({
             <button
               type="button"
               onClick={() => setExecutionMode('real')}
-              className={`px-2 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1 ${
-                executionMode === 'real'
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer flex items-center gap-1 ${executionMode === 'real'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+                }`}
             >
               <Radio className="w-3 h-3 text-cyan-500" />
               <span>Live Engine</span>
@@ -2315,11 +2674,10 @@ export function WorkflowStudio({
             <button
               type="button"
               onClick={() => setExecutionMode('simulation')}
-              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${
-                executionMode === 'simulation'
+              className={`px-2 py-1 rounded-md transition-colors cursor-pointer ${executionMode === 'simulation'
                   ? 'bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-xs font-semibold'
                   : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
-              }`}
+                }`}
             >
               <span>Step Sim</span>
             </button>
@@ -2329,11 +2687,10 @@ export function WorkflowStudio({
           <button
             type="button"
             onClick={() => setIsDrawerOpen((v) => !v)}
-            className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer active:scale-[0.98] ${
-              isDrawerOpen
+            className={`px-2.5 py-1.5 rounded-xl text-xs font-medium border transition-colors flex items-center gap-1.5 cursor-pointer active:scale-[0.98] ${isDrawerOpen
                 ? 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white border-slate-300 dark:border-slate-700'
                 : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-300 dark:border-slate-700'
-            }`}
+              }`}
             title="Toggle Live Event Log Drawer"
           >
             <Terminal className="w-3.5 h-3.5" />
@@ -2396,9 +2753,8 @@ export function WorkflowStudio({
       <div className="flex-1 flex overflow-hidden relative">
         {/* Left Activity Catalog (Drag & Drop Palette) */}
         <div
-          className={`h-full border-r border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-sm transition-all duration-200 z-20 flex flex-col ${
-            isLibraryOpen ? 'w-68' : 'w-0'
-          } overflow-hidden`}
+          className={`h-full border-r border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-sm transition-all duration-200 z-20 flex flex-col ${isLibraryOpen ? 'w-68' : 'w-0'
+            } overflow-hidden`}
         >
           <div className="p-3 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between">
             <div>
@@ -2456,11 +2812,10 @@ export function WorkflowStudio({
                           if (isExecuting) return;
                           handleAddNode(item);
                         }}
-                        className={`group p-2 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/70 transition-all flex items-center justify-between shadow-2xs ${
-                          isExecuting
+                        className={`group p-2 rounded-xl bg-white dark:bg-slate-800/80 border border-slate-200 dark:border-slate-700/70 transition-all flex items-center justify-between shadow-2xs ${isExecuting
                             ? 'opacity-50 cursor-not-allowed'
                             : 'hover:border-cyan-500/60 hover:bg-slate-50 dark:hover:bg-slate-800 cursor-grab active:cursor-grabbing'
-                        }`}
+                          }`}
                         title={isExecuting ? 'Workflow executing - Editing locked' : 'Drag into canvas or click to add'}
                       >
                         <div className="flex items-center gap-2 min-w-0">
@@ -2482,7 +2837,7 @@ export function WorkflowStudio({
                               setDetailDocItem(item);
                             }}
                             className="p-1 rounded-lg text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 hover:bg-slate-100 dark:hover:bg-slate-700/60 transition-colors cursor-pointer"
-                            title={`Lihat penjelasan & dokumentasi lengkap ${item.title}`}
+                            title={`View complete documentation for ${item.title}`}
                           >
                             <HelpCircle className="w-3.5 h-3.5" />
                           </button>
@@ -2602,7 +2957,8 @@ export function WorkflowStudio({
 
           {/* Canvas Transform Viewport */}
           <div
-            className="w-full h-full relative transform-gpu pointer-events-auto"
+            className={`w-full h-full relative transform-gpu pointer-events-auto ${isCameraAnimating ? 'transition-transform duration-300 ease-out' : ''
+              }`}
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: '0 0'
@@ -2628,6 +2984,15 @@ export function WorkflowStudio({
               ))}
             </div>
 
+            {/* Flow Trajectory HUD Pill on Hover */}
+            {flowRelations.flowSummary && (
+              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1 rounded-full bg-slate-900/95 dark:bg-slate-900/95 border border-cyan-500/50 shadow-2xl backdrop-blur-md text-[10px] font-mono font-semibold text-cyan-300 flex items-center gap-2 pointer-events-none">
+                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
+                <span className="text-slate-400 uppercase tracking-wider text-[8.5px]">Flow:</span>
+                <span className="truncate max-w-xl">{flowRelations.flowSummary}</span>
+              </div>
+            )}
+
             {/* Dynamic Archify SVG Layer: Swimlanes, Stepped Orthogonal Lines, and Flow Animation */}
             <svg
               className="absolute inset-0 pointer-events-none z-0 overflow-visible"
@@ -2649,6 +3014,12 @@ export function WorkflowStudio({
                 <marker id="arrowhead-running" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
                   <polygon points="0 0, 10 3.5, 0 7" fill="#06b6d4" />
                 </marker>
+                <marker id="arrowhead-downstream" markerWidth="11" markerHeight="8" refX="10" refY="4" orient="auto">
+                  <polygon points="0 0, 11 4, 0 8" fill="#06b6d4" />
+                </marker>
+                <marker id="arrowhead-upstream" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
+                  <polygon points="0 0, 10 3.5, 0 7" fill="#a855f7" />
+                </marker>
               </defs>
 
               {/* Dynamic Swimlanes Frames */}
@@ -2659,21 +3030,21 @@ export function WorkflowStudio({
                 let laneStroke = isHovered
                   ? 'stroke-cyan-500 ring-2 ring-cyan-500/30'
                   : isException
-                  ? 'stroke-rose-400/40 dark:stroke-rose-500/30'
-                  : 'stroke-slate-300 dark:stroke-slate-800/80';
+                    ? 'stroke-rose-400/40 dark:stroke-rose-500/30'
+                    : 'stroke-slate-300 dark:stroke-slate-800/80';
 
                 let laneFill = isHovered
                   ? 'fill-cyan-500/5 dark:fill-cyan-950/20'
                   : isException
-                  ? 'fill-rose-500/5 dark:fill-rose-950/20'
-                  : 'fill-white/40 dark:fill-slate-900/30';
+                    ? 'fill-rose-500/5 dark:fill-rose-950/20'
+                    : 'fill-white/40 dark:fill-slate-900/30';
 
                 return (
                   <g key={lane.id}>
                     <rect
                       x={30}
                       y={lane.y}
-                      width={1450}
+                      width={1680}
                       height={lane.height}
                       rx={8}
                       className={`${laneFill} ${laneStroke} transition-colors pointer-events-none`}
@@ -2684,9 +3055,8 @@ export function WorkflowStudio({
                     <text
                       x={42}
                       y={lane.y + 18}
-                      className={`text-[10px] font-mono font-semibold select-none ${
-                        isException ? 'fill-rose-600 dark:fill-rose-400' : 'fill-slate-600 dark:fill-slate-400'
-                      }`}
+                      className={`text-[10px] font-mono font-semibold select-none ${isException ? 'fill-rose-600 dark:fill-rose-400' : 'fill-slate-600 dark:fill-slate-400'
+                        }`}
                     >
                       {lane.num} / {lane.label}
                     </text>
@@ -2706,7 +3076,11 @@ export function WorkflowStudio({
                 const y2 = tgtPos.y + NODE_HEIGHT / 2;
 
                 const route = getOrthogonalRoute(x1, y1, x2, y2);
-                const isFlowActive = activeFlowEdgeId === edge.id || (isExecuting && edge.from === activeExecutingNodeId);
+                const isHoverRelated = flowRelations.relatedEdgeIds.has(edge.id);
+                const isDownstream = flowRelations.outgoingEdges.some((e) => e.id === edge.id);
+                const isUpstream = flowRelations.incomingEdges.some((e) => e.id === edge.id);
+                const isDimmed = hoveredNodeId !== null && !isHoverRelated;
+                const isFlowActive = isHoverRelated || activeFlowEdgeId === edge.id || (isExecuting && edge.from === activeExecutingNodeId);
 
                 let strokeColor = '#64748b';
                 let markerUrl = 'url(#arrowhead)';
@@ -2722,20 +3096,38 @@ export function WorkflowStudio({
                   markerUrl = 'url(#arrowhead-dashed)';
                 }
 
-                if (isFlowActive) {
+                if (isHoverRelated) {
+                  if (isDownstream) {
+                    strokeColor = '#06b6d4';
+                    markerUrl = 'url(#arrowhead-downstream)';
+                  } else if (isUpstream) {
+                    strokeColor = '#a855f7';
+                    markerUrl = 'url(#arrowhead-upstream)';
+                  }
+                } else if (isFlowActive) {
                   strokeColor = '#06b6d4';
                   markerUrl = 'url(#arrowhead-running)';
                 }
 
                 return (
-                  <g key={edge.id}>
-                    {/* Glowing pulse trail when active flow */}
+                  <g
+                    key={edge.id}
+                    className={`transition-opacity duration-200 ${isDimmed ? 'opacity-20' : 'opacity-100'
+                      }`}
+                  >
+                    {/* Glowing pulse trail when active flow or hovered */}
                     {isFlowActive && (
                       <path
                         d={route.path}
                         fill="none"
-                        stroke="rgba(6, 182, 212, 0.5)"
-                        strokeWidth={6}
+                        stroke={
+                          isDownstream
+                            ? 'rgba(6, 182, 212, 0.65)'
+                            : isUpstream
+                              ? 'rgba(168, 85, 247, 0.55)'
+                              : 'rgba(6, 182, 212, 0.5)'
+                        }
+                        strokeWidth={isHoverRelated ? 7 : 5}
                         strokeLinecap="round"
                         strokeLinejoin="round"
                         className="animate-pulse"
@@ -2747,7 +3139,7 @@ export function WorkflowStudio({
                       d={route.path}
                       fill="none"
                       stroke={strokeColor}
-                      strokeWidth={isFlowActive ? 2.5 : 1.6}
+                      strokeWidth={isHoverRelated ? 2.8 : isFlowActive ? 2.5 : 1.6}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeDasharray={edge.variant === 'dashed' || isFlowActive ? '6 4' : 'none'}
@@ -2756,27 +3148,56 @@ export function WorkflowStudio({
 
                     {/* Animated Traveling Particle Pulse showing EXACT flow direction in real time */}
                     {isFlowActive && (
-                      <circle r="4" fill="#06b6d4">
-                        <animateMotion dur="0.9s" repeatCount="indefinite" path={route.path} />
-                      </circle>
+                      <>
+                        <circle
+                          r={isHoverRelated ? 4.5 : 4}
+                          fill={isDownstream ? '#06b6d4' : isUpstream ? '#a855f7' : '#06b6d4'}
+                        >
+                          <animateMotion
+                            dur={isDownstream ? '0.75s' : isUpstream ? '1.05s' : '0.9s'}
+                            repeatCount="indefinite"
+                            path={route.path}
+                          />
+                        </circle>
+                        {isDownstream && (
+                          <circle r="2.5" fill="#67e8f9" opacity="0.85">
+                            <animateMotion
+                              dur="0.75s"
+                              begin="0.38s"
+                              repeatCount="indefinite"
+                              path={route.path}
+                            />
+                          </circle>
+                        )}
+                      </>
                     )}
 
                     {/* Edge Label Pill */}
                     {edge.label && (
                       <g transform={`translate(${route.labelX}, ${route.labelY})`}>
                         <rect
-                          x={-28}
+                          x={-34}
                           y={-9}
-                          width={56}
-                          height={16}
+                          width={68}
+                          height={17}
                           rx={4}
-                          className="fill-white dark:fill-slate-900 stroke-slate-300 dark:stroke-slate-700"
-                          strokeWidth={1}
+                          className={`${isHoverRelated
+                              ? isDownstream
+                                ? 'fill-cyan-950 stroke-cyan-400 dark:fill-cyan-950 dark:stroke-cyan-400'
+                                : 'fill-purple-950 stroke-purple-400 dark:fill-purple-950 dark:stroke-purple-400'
+                              : 'fill-white dark:fill-slate-900 stroke-slate-300 dark:stroke-slate-700'
+                            }`}
+                          strokeWidth={isHoverRelated ? 1.5 : 1}
                         />
                         <text
                           x={0}
                           y={3}
-                          className="text-[8.5px] font-mono font-medium fill-slate-700 dark:fill-slate-300 select-none text-anchor-middle text-center"
+                          className={`text-[8.5px] font-mono font-bold select-none text-anchor-middle text-center ${isHoverRelated
+                              ? isDownstream
+                                ? 'fill-cyan-300'
+                                : 'fill-purple-300'
+                              : 'fill-slate-700 dark:fill-slate-300'
+                            }`}
                           textAnchor="middle"
                         >
                           {edge.label}
@@ -2818,12 +3239,11 @@ export function WorkflowStudio({
                   key={lane.id}
                   style={{
                     position: 'absolute',
-                    left: '1410px',
+                    left: '1640px',
                     top: `${lane.y + 8}px`
                   }}
-                  className={`flex items-center gap-1 transition-opacity ${
-                    isExecuting ? 'opacity-30 pointer-events-none' : 'opacity-60 hover:opacity-100'
-                  }`}
+                  className={`flex items-center gap-1 transition-opacity ${isExecuting ? 'opacity-30 pointer-events-none' : 'opacity-60 hover:opacity-100'
+                    }`}
                 >
                   <button
                     type="button"
@@ -2869,6 +3289,11 @@ export function WorkflowStudio({
                 const isCurrentActiveStep = activeExecutingNodeId === node.id;
                 const isNextTargetStep = nextTargetNodeId === node.id;
 
+                const isHovered = hoveredNodeId === node.id;
+                const isDownstreamTarget = flowRelations.downstreamNodeIds.has(node.id);
+                const isUpstreamSource = flowRelations.upstreamNodeIds.has(node.id);
+                const isDimmedNode = hoveredNodeId !== null && !flowRelations.relatedNodeIds.has(node.id);
+
                 const typeStyle = ARCHIFY_TYPE_STYLES[node.type] || ARCHIFY_TYPE_STYLES.backend;
                 const targetWs = node.config.workspace || activeWorkspace || 'default';
                 const activeModel = node.config.model || config?.default_model || 'auto';
@@ -2884,6 +3309,8 @@ export function WorkflowStudio({
                   <div
                     key={node.id}
                     onPointerDown={(e) => handleNodePointerDown(e, node.id)}
+                    onMouseEnter={() => handleNodeMouseEnter(node.id)}
+                    onMouseLeave={handleNodeMouseLeave}
                     style={{
                       position: 'absolute',
                       left: `${node.x}px`,
@@ -2892,28 +3319,52 @@ export function WorkflowStudio({
                       height: `${NODE_HEIGHT}px`,
                       touchAction: 'none'
                     }}
-                    className={`workflow-node pointer-events-auto group rounded-lg border text-left cursor-grab select-none relative p-2 flex flex-col justify-between ${
-                      typeStyle.container
-                    } ${
-                      isDragging ? 'cursor-grabbing opacity-90 scale-[1.02] shadow-xl z-20' : ''
-                    } ${
-                      isCurrentActiveStep
-                        ? 'ring-4 ring-cyan-500 ring-offset-2 dark:ring-offset-slate-950 shadow-xl z-30 animate-pulse'
-                        : isNextTargetStep
-                        ? 'border-amber-400 border-dashed ring-2 ring-amber-400/50 shadow-md z-20'
-                        : isSelected
-                        ? 'ring-2 ring-cyan-500 shadow-md z-10'
-                        : isRunning
-                        ? 'ring-2 ring-amber-400 animate-pulse'
-                        : isSuccess
-                        ? 'ring-2 ring-emerald-500'
-                        : isError
-                        ? 'ring-2 ring-rose-500'
-                        : 'hover:shadow-sm'
-                    }`}
+                    className={`workflow-node pointer-events-auto group rounded-lg border text-left cursor-grab select-none relative p-2 flex flex-col justify-between transition-all duration-200 ${typeStyle.container
+                      } ${isDragging ? 'cursor-grabbing opacity-90 scale-[1.02] shadow-xl z-20' : ''
+                      } ${isDimmedNode ? 'opacity-25 filter grayscale-30' : 'opacity-100'
+                      } ${isHovered
+                        ? 'ring-4 ring-cyan-500 ring-offset-2 dark:ring-offset-slate-950 shadow-2xl z-30 scale-[1.03]'
+                        : isDownstreamTarget
+                          ? 'ring-2 ring-emerald-400 border-emerald-400 ring-offset-1 dark:ring-offset-slate-900 shadow-xl z-25'
+                          : isUpstreamSource
+                            ? 'ring-2 ring-purple-400/80 border-purple-400/80 shadow-md z-20'
+                            : isCurrentActiveStep
+                              ? 'ring-4 ring-cyan-500 ring-offset-2 dark:ring-offset-slate-950 shadow-xl z-30 animate-pulse'
+                              : isNextTargetStep
+                                ? 'border-amber-400 border-dashed ring-2 ring-amber-400/50 shadow-md z-20'
+                                : isSelected
+                                  ? 'ring-2 ring-cyan-500 shadow-md z-10'
+                                  : isRunning
+                                    ? 'ring-2 ring-amber-400 animate-pulse'
+                                    : isSuccess
+                                      ? 'ring-2 ring-emerald-500'
+                                      : isError
+                                        ? 'ring-2 ring-rose-500'
+                                        : 'hover:shadow-sm'
+                      }`}
                   >
-                    {/* Visual Flow Indicator Pill for Active Node */}
-                    {isCurrentActiveStep && (
+                    {/* Visual Flow Indicator Badges on Hover */}
+                    {isHovered && (
+                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-cyan-600 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1 uppercase tracking-wider">
+                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
+                        <span>Active Focus</span>
+                      </span>
+                    )}
+
+                    {isDownstreamTarget && !isHovered && (
+                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1 uppercase tracking-wider animate-bounce">
+                        <span>➔ Flow Target</span>
+                      </span>
+                    )}
+
+                    {isUpstreamSource && !isHovered && !isDownstreamTarget && (
+                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-purple-700 text-white text-[8px] font-bold shadow-md z-20 flex items-center gap-1 uppercase tracking-wider">
+                        <span>Source Origin ➔</span>
+                      </span>
+                    )}
+
+                    {/* Visual Flow Indicator Pill for Active Executing Node */}
+                    {isCurrentActiveStep && !isHovered && (
                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-cyan-600 text-white text-[8px] font-bold shadow-md flex items-center gap-1 z-30">
                         <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
                         ACTIVE
@@ -2921,7 +3372,7 @@ export function WorkflowStudio({
                     )}
 
                     {/* Visual Flow Indicator Pill for Next Target Node */}
-                    {isNextTargetStep && !isCurrentActiveStep && (
+                    {isNextTargetStep && !isCurrentActiveStep && !isHovered && !isDownstreamTarget && (
                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1">
                         <span>NEXT IN FLOW ➔</span>
                       </span>
@@ -2938,9 +3389,8 @@ export function WorkflowStudio({
                           setConnectingMousePos(null);
                         }
                       }}
-                      className={`port-bead absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-400 dark:bg-slate-600 border border-white dark:border-slate-900 group-hover:bg-cyan-500 transition-colors pointer-events-auto ${
-                        isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
-                      }`}
+                      className={`port-bead absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-400 dark:bg-slate-600 border border-white dark:border-slate-900 group-hover:bg-cyan-500 transition-colors pointer-events-auto ${isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                        }`}
                       title={isExecuting ? 'Locked during execution' : 'Input Port: Click to connect wire here'}
                     />
 
@@ -2956,13 +3406,11 @@ export function WorkflowStudio({
                           setConnectingSourceId(node.id);
                         }
                       }}
-                      className={`port-bead absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-white dark:border-slate-900 transition-all pointer-events-auto ${
-                        isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
-                      } ${
-                        connectingSourceId === node.id
+                      className={`port-bead absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-white dark:border-slate-900 transition-all pointer-events-auto ${isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                        } ${connectingSourceId === node.id
                           ? 'bg-cyan-500 scale-125 ring-2 ring-cyan-400 animate-ping'
                           : 'bg-slate-400 dark:bg-slate-600 group-hover:bg-cyan-500 hover:scale-125'
-                      }`}
+                        }`}
                       title={isExecuting ? 'Locked during execution' : 'Output Port: Click to link sequence to another activity'}
                     />
 
@@ -2995,7 +3443,7 @@ export function WorkflowStudio({
                             if (item) setDetailDocItem(item);
                           }}
                           className="opacity-0 group-hover:opacity-100 p-0.5 rounded text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-opacity cursor-pointer shrink-0"
-                          title="Lihat dokumentasi activity ini"
+                          title="View activity documentation"
                         >
                           <HelpCircle className="w-2.5 h-2.5" />
                         </button>
@@ -3098,15 +3546,15 @@ export function WorkflowStudio({
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-1.5 text-cyan-800 dark:text-cyan-300 font-bold text-[11px]">
                         <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                        <span>Dokumentasi Activity</span>
+                        <span>Activity Documentation</span>
                       </div>
                       <button
                         type="button"
                         onClick={() => setDetailDocItem(selectedCatalogItem)}
                         className="text-[10px] text-cyan-700 dark:text-cyan-400 hover:underline font-semibold cursor-pointer flex items-center gap-0.5"
-                        title="Buka panduan lengkap modal"
+                        title="Open full documentation modal"
                       >
-                        <span>Detail</span>
+                        <span>Details</span>
                         <ChevronRight className="w-3 h-3" />
                       </button>
                     </div>
@@ -3126,11 +3574,11 @@ export function WorkflowStudio({
 
                     <div className="pt-1.5 border-t border-cyan-200/60 dark:border-cyan-800/40 text-[10px] text-slate-600 dark:text-slate-400 space-y-1">
                       <p>
-                        <strong className="text-slate-800 dark:text-slate-200">Input:</strong>{' '}
+                        <strong className="text-slate-800 dark:text-slate-200">Inputs:</strong>{' '}
                         {selectedCatalogItem.doc.inputs.join(', ')}
                       </p>
                       <p>
-                        <strong className="text-slate-800 dark:text-slate-200">Output:</strong>{' '}
+                        <strong className="text-slate-800 dark:text-slate-200">Outputs:</strong>{' '}
                         {selectedCatalogItem.doc.outputs.join(', ')}
                       </p>
                     </div>
@@ -3274,10 +3722,10 @@ export function WorkflowStudio({
                         prev.map((n) =>
                           n.id === selectedNode.id
                             ? {
-                                ...n,
-                                lane: lId,
-                                y: Math.round(laneCfg.y + (laneCfg.height - NODE_HEIGHT) / 2)
-                              }
+                              ...n,
+                              lane: lId,
+                              y: Math.round(laneCfg.y + (laneCfg.height - NODE_HEIGHT) / 2)
+                            }
                             : n
                         )
                       );
@@ -3547,7 +3995,7 @@ export function WorkflowStudio({
                   autoFocus
                 />
                 <p className="text-[10px] text-slate-500 dark:text-slate-400 mt-1">
-                  Menyimpan swimlane, activity nodes, dan wire sequence alur kerja ini ke local storage.
+                  Saves swimlanes, activity nodes, and sequence connections to local storage.
                 </p>
               </div>
 
@@ -3622,22 +4070,20 @@ export function WorkflowStudio({
                   <button
                     type="button"
                     onClick={() => setNewLaneVariantInput('default')}
-                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${
-                      newLaneVariantInput === 'default'
+                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${newLaneVariantInput === 'default'
                         ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-200 font-semibold'
                         : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                    }`}
+                      }`}
                   >
                     Standard Swimlane
                   </button>
                   <button
                     type="button"
                     onClick={() => setNewLaneVariantInput('exception')}
-                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${
-                      newLaneVariantInput === 'exception'
+                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${newLaneVariantInput === 'exception'
                         ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 font-semibold'
                         : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                    }`}
+                      }`}
                   >
                     Policy / Safety Guard
                   </button>
@@ -3748,7 +4194,7 @@ export function WorkflowStudio({
                   type="button"
                   onClick={() => setDetailDocItem(null)}
                   className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-pointer"
-                  title="Tutup (Escape)"
+                  title="Close (Escape)"
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -3757,7 +4203,7 @@ export function WorkflowStudio({
               {/* Badges */}
               <div className="flex items-center gap-2 flex-wrap shrink-0">
                 <span className="px-2 py-0.5 rounded-md bg-cyan-100 dark:bg-cyan-950/70 border border-cyan-300 dark:border-cyan-800 text-cyan-800 dark:text-cyan-300 text-[10px] font-semibold">
-                  Peran: {detailDocItem.doc.role}
+                  Role: {detailDocItem.doc.role}
                 </span>
                 <span className="px-2 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 text-[10px] font-mono">
                   Swimlane: {detailDocItem.lane.toUpperCase()}
@@ -3769,11 +4215,11 @@ export function WorkflowStudio({
 
               {/* Scrollable Content */}
               <div className="flex-1 overflow-y-auto space-y-4 text-xs pr-1">
-                {/* Deskripsi & Fungsi */}
+                {/* Description & Function */}
                 <div className="space-y-1">
                   <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                     <FileText className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                    <span>Fungsi & Cara Kerja</span>
+                    <span>Function & Operational Mechanics</span>
                   </h4>
                   <p className="text-slate-700 dark:text-slate-300 leading-relaxed bg-slate-50 dark:bg-slate-800/50 p-2.5 rounded-xl border border-slate-200 dark:border-slate-800">
                     {detailDocItem.doc.description}
@@ -3797,7 +4243,7 @@ export function WorkflowStudio({
                   <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/40 border border-slate-200 dark:border-slate-800 space-y-1.5">
                     <h5 className="font-bold text-[10.5px] text-slate-800 dark:text-slate-200 flex items-center gap-1">
                       <ArrowUp className="w-3 h-3 text-emerald-600" />
-                      <span>Output / Hasil</span>
+                      <span>Outputs & Artifacts</span>
                     </h5>
                     <ul className="list-disc list-inside space-y-1 text-[11px] text-slate-600 dark:text-slate-400">
                       {detailDocItem.doc.outputs.map((out, idx) => (
@@ -3807,12 +4253,12 @@ export function WorkflowStudio({
                   </div>
                 </div>
 
-                {/* Parameter Konfigurasi */}
+                {/* Configuration Parameters */}
                 {detailDocItem.doc.configFields.length > 0 && (
                   <div className="space-y-1.5">
                     <h4 className="text-[11px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 flex items-center gap-1.5">
                       <Settings className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-                      <span>Parameter Konfigurasi</span>
+                      <span>Configuration Parameters</span>
                     </h4>
                     <div className="space-y-1.5">
                       {detailDocItem.doc.configFields.map((cf) => (
@@ -3839,11 +4285,11 @@ export function WorkflowStudio({
                   </div>
                 )}
 
-                {/* Rekomendasi Alur Koneksi */}
+                {/* Recommended Sequence Connections */}
                 <div className="space-y-1 p-2.5 rounded-xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200/60 dark:border-amber-800/40">
                   <h4 className="text-[10.5px] font-bold text-amber-800 dark:text-amber-300 flex items-center gap-1.5">
                     <Workflow className="w-3.5 h-3.5" />
-                    <span>Rekomendasi Alur Koneksi</span>
+                    <span>Recommended Sequence Connections</span>
                   </h4>
                   <p className="text-[11px] text-amber-900/80 dark:text-amber-300/80 leading-relaxed">
                     {detailDocItem.doc.recommendedConnections}
@@ -3858,7 +4304,7 @@ export function WorkflowStudio({
                   onClick={() => setDetailDocItem(null)}
                   className="px-3.5 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
-                  Tutup
+                  Close
                 </button>
                 <button
                   type="button"
@@ -3870,7 +4316,7 @@ export function WorkflowStudio({
                   className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
                 >
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Tambahkan ke Canvas</span>
+                  <span>Add to Canvas</span>
                 </button>
               </div>
             </motion.div>

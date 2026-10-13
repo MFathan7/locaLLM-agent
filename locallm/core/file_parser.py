@@ -109,7 +109,7 @@ def parse_attachment_file(
         if ext in (".docx", ".docm", ".dotx"):
             text = extract_text_from_docx(raw_bytes)
             if not text:
-                return False, "", "File .docx tidak memiliki teks yang dapat diekstrak atau kosong."
+                return False, "", "The .docx file contains no extractable text or is empty."
             if len(text) > max_chars:
                 text = text[:max_chars] + f"\n\n[... Truncated: document text exceeded {max_chars} characters ...]"
             return True, text, ""
@@ -118,7 +118,7 @@ def parse_attachment_file(
         if ext == ".pdf":
             text = extract_text_from_pdf(raw_bytes)
             if not text:
-                return False, "", "File PDF tidak memiliki teks yang dapat diekstrak atau merupakan pindaian gambar (scanned)."
+                return False, "", "The PDF file contains no extractable text or is a scanned image."
             if len(text) > max_chars:
                 text = text[:max_chars] + f"\n\n[... Truncated: PDF text exceeded {max_chars} characters ...]"
             return True, text, ""
@@ -130,7 +130,7 @@ def parse_attachment_file(
             try:
                 text = raw_bytes.decode("latin-1")
             except Exception:
-                return False, "", f"File '{filename}' tidak dapat dibaca sebagai format teks yang valid."
+                return False, "", f"File '{filename}' cannot be read as a valid text format."
 
         if len(text) > max_chars:
             text = text[:max_chars] + f"\n\n[... Truncated: text exceeded {max_chars} characters ...]"

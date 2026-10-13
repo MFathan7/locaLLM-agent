@@ -749,7 +749,7 @@ export function useLocaLLM() {
           }));
         }
       } else {
-        const errMsg = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+        const errMsg = `[Connection Issue]: Failed to reach model (${err?.message || 'Network error'}).`;
         assistantContent = errMsg;
         setSessions(prev => prev.map(s => {
           if (s.id !== currentSessionId) return s;
@@ -771,8 +771,8 @@ export function useLocaLLM() {
     const parsedResp = extractThinkingAndResponse(assistantContent);
     if (!assistantContent.trim() || (!parsedResp.response.trim() && parsedResp.thinking.trim())) {
       const fallbackNote = (!parsedResp.response.trim() && parsedResp.thinking.trim())
-        ? '\n\nModel menyelesaikan proses penalaran namun tidak menghasilkan teks jawaban akhir. Silakan klik regenerasi atau ajukan ulang pertanyaan.'
-        : 'Tidak ada respon yang diterima dari model. Silakan coba ajukan pertanyaan kembali atau gunakan model lain.';
+        ? '\n\nThe model completed reasoning but did not produce a final response. Please click regenerate or resend your prompt.'
+        : 'No response was received from the model. Please resend your prompt or try a different model.';
       assistantContent = (assistantContent ? assistantContent + fallbackNote : fallbackNote);
       setSessions(prev => prev.map(s => {
         if (s.id !== currentSessionId) return s;
@@ -980,7 +980,7 @@ export function useLocaLLM() {
       if (err?.name === 'AbortError' || abortController.signal.aborted) {
         // User stopped generation
       } else {
-        assistantContent = `[Kendala Koneksi]: Gagal menghubungi model (${err?.message || 'Network error'}).`;
+        assistantContent = `[Connection Issue]: Failed to reach model (${err?.message || 'Network error'}).`;
       }
     } finally {
       abortControllersRef.current.delete(currentSessionId);
@@ -990,8 +990,8 @@ export function useLocaLLM() {
     const parsedRegen = extractThinkingAndResponse(assistantContent);
     if (!assistantContent.trim() || (!parsedRegen.response.trim() && parsedRegen.thinking.trim())) {
       const fallbackNote = (!parsedRegen.response.trim() && parsedRegen.thinking.trim())
-        ? '\n\nModel menyelesaikan proses penalaran namun tidak menghasilkan teks jawaban akhir. Silakan klik regenerasi atau ajukan ulang pertanyaan.'
-        : 'Tidak ada respon yang diterima dari model. Silakan periksa koneksi atau coba klik kembali.';
+        ? '\n\nThe model completed reasoning but did not produce a final response. Please click regenerate or resend your prompt.'
+        : 'No response was received from the model. Please check the connection or try regenerating.';
       assistantContent = (assistantContent ? assistantContent + fallbackNote : fallbackNote);
     }
 

@@ -474,7 +474,7 @@ export const api = {
                     onChunk(parsed.data);
                   } else if (parsed.event === 'error') {
                     const errDetail = parsed.data?.message || 'Error occurred';
-                    const errText = `\n[Gagal memproses respon: ${errDetail}]`;
+                    const errText = `\n[Failed to process response: ${errDetail}]`;
                     fullResponse += errText;
                     onChunk(errText);
                   }
@@ -539,7 +539,7 @@ export const api = {
       }
 
       if (!fullResponse.trim()) {
-        const emptyMsg = "Tidak ada respon teks yang diterima dari model. Pastikan model lokal aktif atau periksa apakah backend sedang memproses permintaan.";
+        const emptyMsg = "No text response received from the model. Ensure the local model is active and check if the backend is processing the request.";
         onChunk(emptyMsg);
         return emptyMsg;
       }
@@ -551,7 +551,7 @@ export const api = {
         return fullResponse;
       }
       console.warn('Direct chat stream failed, generating fallback response:', err);
-      const fallback = `[Kendala Server]: Gagal terhubung ke engine locaLLM pada port ${config.server_port || 8080} (${err.message || 'Network error'}). Pastikan server locaLLM aktif.`;
+      const fallback = `[Server Issue]: Failed to connect to locaLLM engine on port ${config.server_port || 8080} (${err.message || 'Network error'}). Ensure the locaLLM server is running.`;
       onChunk(fallback);
       return fallback;
     }
