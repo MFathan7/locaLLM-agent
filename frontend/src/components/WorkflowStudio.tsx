@@ -45,7 +45,8 @@ import {
   Lock,
   HelpCircle,
   BookOpen,
-  Target
+  Target,
+  GripVertical
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ThemeToggle } from './ThemeToggle';
@@ -55,11 +56,17 @@ import { api } from '../services/api';
 
 export type WorkflowLane = 'ui' | 'agent' | 'policy' | 'tools' | 'evidence' | string;
 
+export type SequenceColor = 'blue' | 'yellow' | 'red';
+
 export interface WorkflowLaneConfig {
   id: string;
   num: string;
   label: string;
+  description?: string;
+  color?: SequenceColor;
+  x?: number;
   y: number;
+  width?: number;
   height: number;
   variant?: 'default' | 'exception';
 }
@@ -110,13 +117,24 @@ export interface WorkflowNode {
   };
 }
 
+export type PortSide = 'top' | 'bottom' | 'left' | 'right';
+
 export interface WorkflowEdge {
   id: string;
   from: string;
   to: string;
+  fromSide?: PortSide;
+  toSide?: PortSide;
   label?: string;
   variant?: 'default' | 'emphasis' | 'security' | 'dashed';
 }
+
+export const PORT_SIDES: { side: PortSide; posClass: string; title: string }[] = [
+  { side: 'top', posClass: 'left-1/2 -top-1.5 -translate-x-1/2', title: 'Top Port' },
+  { side: 'bottom', posClass: 'left-1/2 -bottom-1.5 -translate-x-1/2', title: 'Bottom Port' },
+  { side: 'left', posClass: '-left-1.5 top-1/2 -translate-y-1/2', title: 'Left Port' },
+  { side: 'right', posClass: '-right-1.5 top-1/2 -translate-y-1/2', title: 'Right Port' },
+];
 
 export interface WorkflowPhase {
   id: string;
@@ -146,23 +164,86 @@ interface WorkflowStudioProps {
 export const NODE_WIDTH = 156;
 export const NODE_HEIGHT = 64;
 
-// Default Archify Swimlanes Layout
+// Default UiPath-Style Sequence Groups Layout
 export const INITIAL_LANES: WorkflowLaneConfig[] = [
-  { id: 'ui', num: '01', label: 'User Interface', y: 70, height: 130, variant: 'default' },
-  { id: 'agent', num: '02', label: 'Agent Runtime', y: 220, height: 145, variant: 'default' },
-  { id: 'policy', num: '03', label: 'Policy & Recovery', y: 385, height: 130, variant: 'exception' },
-  { id: 'tools', num: '04', label: 'Tool Execution', y: 535, height: 145, variant: 'default' },
-  { id: 'evidence', num: '05', label: 'Evidence & Context Store', y: 700, height: 130, variant: 'default' }
+  { id: 'ui', num: '01', label: 'User Interface Sequence', description: 'Handles user prompts, input validation, and conversational deliverables', color: 'blue', x: 30, y: 70, width: 1680, height: 135 },
+  { id: 'agent', num: '02', label: 'Agent Runtime Sequence', description: 'Cognitive reasoning loop, model inference, and tool call planning', color: 'blue', x: 30, y: 225, width: 1680, height: 145 },
+  { id: 'policy', num: '03', label: 'Policy & Guardrail Sequence', description: 'Safety screening, human authorization gates, and retry recovery loops', color: 'red', x: 30, y: 390, width: 1680, height: 135 },
+  { id: 'tools', num: '04', label: 'Tool Execution Sequence', description: 'Sandboxed code interpretation, terminal commands, and API execution', color: 'yellow', x: 30, y: 545, width: 1680, height: 145 },
+  { id: 'evidence', num: '05', label: 'Evidence & Context Sequence', description: 'Vector embeddings, short-term scratchpad, and memory grounding', color: 'blue', x: 30, y: 710, width: 1680, height: 135 }
 ];
 
-// Helper to recalculate sequential positions and numbers for dynamic lanes
+// UiPath-Style Sequence Visual Themes (Standard, Normal, Critical)
+export const SEQUENCE_COLOR_THEMES: Record<SequenceColor, {
+  label: string;
+  badgeLabel: string;
+  tooltip: string;
+  border: string;
+  bg: string;
+  headerBg: string;
+  headerText: string;
+  badgeClass: string;
+  accentHex: string;
+  dotBg: string;
+}> = {
+  blue: {
+    label: 'Standard',
+    badgeLabel: 'STANDARD',
+    tooltip: 'Standard sequence for baseline workflow processes and standard operations.',
+    border: 'border-blue-400/80 dark:border-blue-500/50',
+    bg: 'bg-blue-50/20 dark:bg-blue-950/15',
+    headerBg: 'bg-blue-100/75 dark:bg-blue-900/40 border-b border-blue-200 dark:border-blue-800/60',
+    headerText: 'text-blue-950 dark:text-blue-200',
+    badgeClass: 'bg-blue-500/15 text-blue-700 dark:text-blue-300 border border-blue-400/40',
+    accentHex: '#3b82f6',
+    dotBg: 'bg-blue-500'
+  },
+  yellow: {
+    label: 'Normal',
+    badgeLabel: 'NORMAL',
+    tooltip: 'Normal sequence for intermediate execution handling secondary tools and middle-tier processes.',
+    border: 'border-amber-400/80 dark:border-amber-500/50',
+    bg: 'bg-amber-50/20 dark:bg-amber-950/15',
+    headerBg: 'bg-amber-100/75 dark:bg-amber-900/40 border-b border-amber-200 dark:border-amber-800/60',
+    headerText: 'text-amber-950 dark:text-amber-200',
+    badgeClass: 'bg-amber-500/15 text-amber-700 dark:text-amber-300 border border-amber-400/40',
+    accentHex: '#f59e0b',
+    dotBg: 'bg-amber-500'
+  },
+  red: {
+    label: 'Critical',
+    badgeLabel: 'CRITICAL',
+    tooltip: 'Critical sequence for high-priority security guardrails, policy gates, and recovery loops.',
+    border: 'border-rose-400/80 dark:border-rose-500/50',
+    bg: 'bg-rose-50/20 dark:bg-rose-950/15',
+    headerBg: 'bg-rose-100/75 dark:bg-rose-900/40 border-b border-rose-200 dark:border-rose-800/60',
+    headerText: 'text-rose-950 dark:text-rose-200',
+    badgeClass: 'bg-rose-500/15 text-rose-700 dark:text-rose-300 border border-rose-400/40',
+    accentHex: '#f43f5e',
+    dotBg: 'bg-rose-500'
+  }
+};
+
+// Helper to recalculate sequential positions and numbers for dynamic sequences
 export function computeLanePositions(laneList: WorkflowLaneConfig[]): WorkflowLaneConfig[] {
   let currentY = 70;
   return laneList.map((lane, index) => {
-    const num = String(index + 1).padStart(2, '0');
-    const updated = { ...lane, num, y: currentY };
-    currentY += lane.height + 20;
-    return updated;
+    const num = lane.num || String(index + 1).padStart(2, '0');
+    const x = typeof lane.x === 'number' ? lane.x : 30;
+    const width = typeof lane.width === 'number' ? lane.width : 1680;
+    const height = typeof lane.height === 'number' ? lane.height : 140;
+    const color: SequenceColor = lane.color || (lane.variant === 'exception' ? 'red' : 'blue');
+    const y = typeof lane.y === 'number' && !isNaN(lane.y) ? lane.y : currentY;
+    currentY = Math.max(currentY + height + 24, y + height + 24);
+    return {
+      ...lane,
+      num,
+      x,
+      y,
+      width,
+      height,
+      color
+    };
   });
 }
 
@@ -180,48 +261,56 @@ const ARCHIFY_TYPE_STYLES: Record<string, {
   iconColor: string;
   tagClass: string;
   stroke: string;
+  hoverShadow: string;
 }> = {
   frontend: {
     container: 'bg-cyan-50/90 dark:bg-cyan-950/40 border-cyan-500/80 dark:border-cyan-400 text-cyan-950 dark:text-cyan-100 shadow-2xs',
     iconColor: 'text-cyan-600 dark:text-cyan-400',
     tagClass: 'bg-cyan-100 text-cyan-800 dark:bg-cyan-900/60 dark:text-cyan-300',
-    stroke: '#22d3ee'
+    stroke: '#22d3ee',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(6,182,212,0.45),0_6px_14px_-4px_rgba(6,182,212,0.3)] border-cyan-500 dark:border-cyan-400'
   },
   backend: {
     container: 'bg-emerald-50/90 dark:bg-emerald-950/40 border-emerald-500/80 dark:border-emerald-400 text-emerald-950 dark:text-emerald-100 shadow-2xs',
     iconColor: 'text-emerald-600 dark:text-emerald-400',
     tagClass: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900/60 dark:text-emerald-300',
-    stroke: '#34d399'
+    stroke: '#34d399',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(16,185,129,0.45),0_6px_14px_-4px_rgba(16,185,129,0.3)] border-emerald-500 dark:border-emerald-400'
   },
   security: {
     container: 'bg-rose-50/90 dark:bg-rose-950/40 border-rose-500/80 dark:border-rose-400 text-rose-950 dark:text-rose-100 shadow-2xs',
     iconColor: 'text-rose-600 dark:text-rose-400',
     tagClass: 'bg-rose-100 text-rose-800 dark:bg-rose-900/60 dark:text-rose-300',
-    stroke: '#fb7185'
+    stroke: '#fb7185',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(244,63,94,0.45),0_6px_14px_-4px_rgba(244,63,94,0.3)] border-rose-500 dark:border-rose-400'
   },
   database: {
     container: 'bg-purple-50/90 dark:bg-purple-950/40 border-purple-500/80 dark:border-purple-400 text-purple-950 dark:text-purple-100 shadow-2xs',
     iconColor: 'text-purple-600 dark:text-purple-400',
     tagClass: 'bg-purple-100 text-purple-800 dark:bg-purple-900/60 dark:text-purple-300',
-    stroke: '#a78bfa'
+    stroke: '#a78bfa',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(168,85,247,0.45),0_6px_14px_-4px_rgba(168,85,247,0.3)] border-purple-500 dark:border-purple-400'
   },
   cloud: {
     container: 'bg-amber-50/90 dark:bg-amber-950/40 border-amber-500/80 dark:border-amber-400 text-amber-950 dark:text-amber-100 shadow-2xs',
     iconColor: 'text-amber-600 dark:text-amber-400',
     tagClass: 'bg-amber-100 text-amber-800 dark:bg-amber-900/60 dark:text-amber-300',
-    stroke: '#fbbf24'
+    stroke: '#fbbf24',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(245,158,11,0.45),0_6px_14px_-4px_rgba(245,158,11,0.3)] border-amber-500 dark:border-amber-400'
   },
   messagebus: {
     container: 'bg-orange-50/90 dark:bg-orange-950/40 border-orange-500/80 dark:border-orange-400 text-orange-950 dark:text-orange-100 shadow-2xs',
     iconColor: 'text-orange-600 dark:text-orange-400',
     tagClass: 'bg-orange-100 text-orange-800 dark:bg-orange-900/60 dark:text-orange-300',
-    stroke: '#fb923c'
+    stroke: '#fb923c',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(249,115,22,0.45),0_6px_14px_-4px_rgba(249,115,22,0.3)] border-orange-500 dark:border-orange-400'
   },
   external: {
     container: 'bg-slate-100/90 dark:bg-slate-800/60 border-slate-400/80 dark:border-slate-500 text-slate-900 dark:text-slate-100 shadow-2xs',
     iconColor: 'text-slate-600 dark:text-slate-300',
     tagClass: 'bg-slate-200 text-slate-800 dark:bg-slate-700 dark:text-slate-300',
-    stroke: '#94a3b8'
+    stroke: '#94a3b8',
+    hoverShadow: 'shadow-[0_12px_28px_-6px_rgba(100,116,139,0.45),0_6px_14px_-4px_rgba(100,116,139,0.3)] border-slate-500 dark:border-slate-400'
   }
 };
 
@@ -907,13 +996,64 @@ export function WorkflowStudio({
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   // Dynamic Swimlanes state (Can add, remove, reorder, and edit swimlanes)
-  const [lanes, setLanes] = useState<WorkflowLaneConfig[]>(INITIAL_LANES);
+  const [lanes, setLanes] = useState<WorkflowLaneConfig[]>(() => {
+    try {
+      const active = localStorage.getItem('locallm_active_canvas');
+      if (active) {
+        const parsed = JSON.parse(active);
+        if (parsed.lanes && Array.isArray(parsed.lanes) && parsed.lanes.length > 0) {
+          return parsed.lanes;
+        }
+      }
+    } catch { }
+    return INITIAL_LANES;
+  });
 
-  // Core diagram state
-  const [activeWorkflowTitle, setActiveWorkflowTitle] = useState<string>('Agent Tool-Call Loop');
-  const [nodes, setNodes] = useState<WorkflowNode[]>(WORKFLOW_PRESETS[0].nodes);
-  const [edges, setEdges] = useState<WorkflowEdge[]>(WORKFLOW_PRESETS[0].edges);
-  const [selectedNodeId, setSelectedNodeId] = useState<string | null>('planner');
+  // Core diagram state with multi-select support
+  const [activeWorkflowTitle, setActiveWorkflowTitle] = useState<string>(() => {
+    try {
+      const active = localStorage.getItem('locallm_active_canvas');
+      if (active) {
+        const parsed = JSON.parse(active);
+        if (parsed.title) return parsed.title;
+      }
+    } catch { }
+    return 'Agent Tool-Call Loop';
+  });
+
+  const [nodes, setNodes] = useState<WorkflowNode[]>(() => {
+    try {
+      const active = localStorage.getItem('locallm_active_canvas');
+      if (active) {
+        const parsed = JSON.parse(active);
+        if (parsed.nodes && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
+          return parsed.nodes;
+        }
+      }
+    } catch { }
+    return WORKFLOW_PRESETS[0].nodes;
+  });
+
+  const [edges, setEdges] = useState<WorkflowEdge[]>(() => {
+    try {
+      const active = localStorage.getItem('locallm_active_canvas');
+      if (active) {
+        const parsed = JSON.parse(active);
+        if (parsed.edges && Array.isArray(parsed.edges)) {
+          return parsed.edges;
+        }
+      }
+    } catch { }
+    return WORKFLOW_PRESETS[0].edges;
+  });
+
+  // Multi-Selection State for activities and sequences
+  const [selectedNodeIds, setSelectedNodeIds] = useState<string[]>([]);
+  const [selectedLaneIds, setSelectedLaneIds] = useState<string[]>([]);
+  const selectedNodeId = selectedNodeIds[0] || null;
+  const setSelectedNodeId = useCallback((id: string | null) => {
+    setSelectedNodeIds(id ? [id] : []);
+  }, []);
 
   // Canvas Viewport transform
   const [zoom, setZoom] = useState<number>(1);
@@ -922,12 +1062,50 @@ export function WorkflowStudio({
   const [isFullscreen, setIsFullscreen] = useState<boolean>(false);
   const [isGridVisible, setIsGridVisible] = useState<boolean>(true);
 
-  // Hover Focus Zoom & Flow Animation Engine
+  // Flow Animation & Camera Focus Engine
   const [hoveredNodeId, setHoveredNodeId] = useState<string | null>(null);
-  const [hoverFocusZoomEnabled, setHoverFocusZoomEnabled] = useState<boolean>(true);
+  const [clickFocusZoomEnabled, setClickFocusZoomEnabled] = useState<boolean>(true);
   const [isCameraAnimating, setIsCameraAnimating] = useState<boolean>(false);
   const unhoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baseCameraRef = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
+
+  // Sequence Drag & Resize State (UiPath-Style Grouping & Resizing)
+  const [draggingSequenceId, setDraggingSequenceId] = useState<string | null>(null);
+  const [resizingSequenceId, setResizingSequenceId] = useState<string | null>(null);
+
+  const dragSequenceRef = useRef<{
+    laneId: string;
+    startX: number;
+    startY: number;
+    initialLaneX: number;
+    initialLaneY: number;
+    initialNodes: { id: string; x: number; y: number }[];
+    hasMoved: boolean;
+    multiLanes?: {
+      id: string;
+      x: number;
+      y: number;
+      nodes: { id: string; x: number; y: number }[];
+    }[];
+  } | null>(null);
+
+  const resizeSequenceRef = useRef<{
+    laneId: string;
+    startX: number;
+    startY: number;
+    initialWidth: number;
+    initialHeight: number;
+    minWidth?: number;
+    initialLaneX?: number;
+    initialNodes?: { id: string; x: number; y: number }[];
+    mode: 'width' | 'both';
+  } | null>(null);
+
+  // Drag vs Click Tracking Refs to prevent jitter and erroneous camera movements
+  const justDraggedNodeRef = useRef<boolean>(false);
+  const canvasPanMovedRef = useRef<boolean>(false);
+  const pointerRafIdRef = useRef<number | null>(null);
+  const pendingPointerEventRef = useRef<PointerEvent | null>(null);
 
   // Modals & Panels
   const [isLibraryOpen, setIsLibraryOpen] = useState<boolean>(true);
@@ -949,9 +1127,22 @@ export function WorkflowStudio({
   // Custom UI Modals
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
   const [saveWorkflowNameInput, setSaveWorkflowNameInput] = useState<string>('');
-  const [isAddLaneModalOpen, setIsAddLaneModalOpen] = useState<boolean>(false);
-  const [newLaneLabelInput, setNewLaneLabelInput] = useState<string>('');
-  const [newLaneVariantInput, setNewLaneVariantInput] = useState<'default' | 'exception'>('default');
+
+  // Sequence Add & Edit Modal State
+  const [sequenceModal, setSequenceModal] = useState<{
+    isOpen: boolean;
+    mode: 'add' | 'edit';
+    laneId?: string;
+    label: string;
+    description: string;
+    color: SequenceColor;
+  }>({
+    isOpen: false,
+    mode: 'add',
+    label: '',
+    description: '',
+    color: 'blue'
+  });
 
   // Activity Delete Confirmation Modal
   const [nodeToDelete, setNodeToDelete] = useState<WorkflowNode | null>(null);
@@ -967,17 +1158,22 @@ export function WorkflowStudio({
   const startResizeYRef = useRef<number>(0);
   const startResizeHeightRef = useRef<number>(200);
 
-  // Interactive Wiring (Sequence wire creation)
-  const [connectingSourceId, setConnectingSourceId] = useState<string | null>(null);
+  // Interactive Wiring (Sequence wire creation & rewiring with 4-sided ports)
+  const [connectingSource, setConnectingSource] = useState<{ nodeId: string; side: PortSide } | null>(null);
   const [connectingMousePos, setConnectingMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [selectedEdgeId, setSelectedEdgeId] = useState<string | null>(null);
+  const [rewiringEdge, setRewiringEdge] = useState<{ edgeId: string; end: 'from' | 'to' } | null>(null);
 
   // Node Drag State (Smooth pointer-based dragging)
+  // Node Drag State (Smooth pointer-based dragging with multi-select support)
   const dragNodeRef = useRef<{
     nodeId: string;
     startX: number;
     startY: number;
     initialNodeX: number;
     initialNodeY: number;
+    hasMoved?: boolean;
+    multiNodes?: { id: string; x: number; y: number }[];
   } | null>(null);
   const [draggingNodeId, setDraggingNodeId] = useState<string | null>(null);
   const [hoveredLaneId, setHoveredLaneId] = useState<string | null>(null);
@@ -1108,9 +1304,17 @@ export function WorkflowStudio({
     return () => el.removeEventListener('wheel', onWheel);
   }, []);
 
-  // Helper to detect lane by Y coordinate dynamically based on current lanes
-  const detectLaneByY = useCallback((y: number): string => {
+  // Helper to detect sequence by coordinates dynamically based on current sequences
+  const detectLaneByCoord = useCallback((x: number, y: number): string => {
+    const midX = x + NODE_WIDTH / 2;
     const midY = y + NODE_HEIGHT / 2;
+    for (const lane of lanes) {
+      const lx = lane.x ?? 30;
+      const lw = lane.width ?? 1680;
+      if (midX >= lx && midX <= lx + lw && midY >= lane.y && midY <= lane.y + lane.height) {
+        return lane.id;
+      }
+    }
     for (const lane of lanes) {
       if (midY >= lane.y && midY <= lane.y + lane.height + 20) {
         return lane.id;
@@ -1119,39 +1323,187 @@ export function WorkflowStudio({
     return lanes[0]?.id || 'ui';
   }, [lanes]);
 
-  // Global Pointer Listeners for Smooth Node Dragging and Canvas Panning
+  // Mutable refs for pointer listeners to avoid stale closures
+  const selectedNodeIdRef = useRef<string | null>(selectedNodeId);
+  selectedNodeIdRef.current = selectedNodeId;
+  const selectedNodeIdsRef = useRef<string[]>(selectedNodeIds);
+  selectedNodeIdsRef.current = selectedNodeIds;
+  const selectedLaneIdsRef = useRef<string[]>(selectedLaneIds);
+  selectedLaneIdsRef.current = selectedLaneIds;
+  const selectedEdgeIdRef = useRef<string | null>(selectedEdgeId);
+  selectedEdgeIdRef.current = selectedEdgeId;
+  const handleSelectNodeRef = useRef<(id: string) => void>(() => {});
+  const handleUnselectNodeRef = useRef<() => void>(() => {});
+  const handleDeleteSelectedRef = useRef<() => void>(() => {});
+
+  // Global Pointer Listeners for Smooth Node Dragging, Sequence Dragging/Resizing, and Canvas Panning
   useEffect(() => {
-    const onWindowPointerMove = (e: PointerEvent) => {
-      // Handle Smooth Node Dragging
+    const handleMove = (e: PointerEvent) => {
+      // 1. Handle Sequence Container Dragging (Single or Multi-Sequence)
+      if (dragSequenceRef.current) {
+        const { laneId, startX, startY, initialLaneX, initialLaneY, initialNodes, multiLanes } = dragSequenceRef.current;
+        const rawDist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (rawDist > 3) {
+          dragSequenceRef.current.hasMoved = true;
+        }
+
+        const dx = (e.clientX - startX) / zoom;
+        const dy = (e.clientY - startY) / zoom;
+
+        if (multiLanes && multiLanes.length > 1) {
+          // Multi-sequence simultaneous movement
+          setLanes((prev) =>
+            prev.map((l) => {
+              const match = multiLanes.find((m) => m.id === l.id);
+              if (match) {
+                return {
+                  ...l,
+                  x: Math.max(10, Math.round(match.x + dx)),
+                  y: Math.max(10, Math.round(match.y + dy))
+                };
+              }
+              return l;
+            })
+          );
+
+          setNodes((prev) =>
+            prev.map((n) => {
+              for (const ml of multiLanes) {
+                const nodeMatch = ml.nodes.find((init) => init.id === n.id);
+                if (nodeMatch) {
+                  return {
+                    ...n,
+                    x: Math.max(10, Math.round(nodeMatch.x + dx)),
+                    y: Math.max(10, Math.round(nodeMatch.y + dy))
+                  };
+                }
+              }
+              return n;
+            })
+          );
+        } else {
+          // Single sequence movement
+          const newLaneX = Math.max(10, Math.round(initialLaneX + dx));
+          const newLaneY = Math.max(10, Math.round(initialLaneY + dy));
+
+          const deltaX = newLaneX - initialLaneX;
+          const deltaY = newLaneY - initialLaneY;
+
+          setLanes((prev) =>
+            prev.map((l) => (l.id === laneId ? { ...l, x: newLaneX, y: newLaneY } : l))
+          );
+
+          setNodes((prev) =>
+            prev.map((n) => {
+              const match = initialNodes.find((init) => init.id === n.id);
+              if (match) {
+                return {
+                  ...n,
+                  x: Math.max(10, Math.round(match.x + deltaX)),
+                  y: Math.max(10, Math.round(match.y + deltaY))
+                };
+              }
+              return n;
+            })
+          );
+        }
+        return;
+      }
+
+      // 2. Handle Sequence Container Resizing with Minimum Size & Inward Push
+      if (resizeSequenceRef.current) {
+        const { laneId, startX, startY, initialWidth, initialHeight, minWidth, initialLaneX, initialNodes, mode } = resizeSequenceRef.current;
+        const dx = (e.clientX - startX) / zoom;
+        const dy = (e.clientY - startY) / zoom;
+
+        // Apply minimum width constraint so sequence cannot be closed past its activities
+        const newWidth = Math.max(minWidth || 420, Math.round(initialWidth + dx));
+        const newHeight = mode === 'both' ? Math.max(110, Math.round(initialHeight + dy)) : initialHeight;
+
+        setLanes((prev) =>
+          prev.map((l) => (l.id === laneId ? { ...l, width: newWidth, height: newHeight } : l))
+        );
+
+        // When sequence is shrunk, push contained activities inward in the direction of the drag
+        if (initialNodes && initialNodes.length > 0 && typeof initialLaneX === 'number') {
+          const maxAllowedNodeX = initialLaneX + newWidth - NODE_WIDTH - 24;
+
+          setNodes((prev) =>
+            prev.map((n) => {
+              const init = initialNodes.find((m) => m.id === n.id);
+              if (!init) return n;
+
+              if (newWidth < initialWidth) {
+                // Shrunk: push inward if right boundary is encroaching
+                if (init.x > maxAllowedNodeX) {
+                  return { ...n, x: Math.max(initialLaneX + 24, maxAllowedNodeX) };
+                }
+                const ratio = Math.max(0.4, (newWidth - NODE_WIDTH - 48) / Math.max(1, initialWidth - NODE_WIDTH - 48));
+                const relX = init.x - initialLaneX - 24;
+                const shiftedX = Math.round(initialLaneX + 24 + relX * ratio);
+                return { ...n, x: Math.max(initialLaneX + 24, Math.min(maxAllowedNodeX, shiftedX)) };
+              } else {
+                // Widening back: smoothly restore original position
+                return { ...n, x: init.x };
+              }
+            })
+          );
+        }
+        return;
+      }
+
+      // 3. Handle Smooth Individual & Multi Activity Node Dragging
       if (dragNodeRef.current) {
-        const { nodeId, startX, startY, initialNodeX, initialNodeY } = dragNodeRef.current;
+        const { nodeId, startX, startY, initialNodeX, initialNodeY, multiNodes } = dragNodeRef.current;
+        const rawDist = Math.hypot(e.clientX - startX, e.clientY - startY);
+        if (rawDist > 4) {
+          dragNodeRef.current.hasMoved = true;
+        }
+
         const dx = (e.clientX - startX) / zoom;
         const dy = (e.clientY - startY) / zoom;
 
         const newX = Math.max(20, Math.round(initialNodeX + dx));
         const newY = Math.max(20, Math.round(initialNodeY + dy));
 
-        const targetLane = detectLaneByY(newY);
+        const targetLane = detectLaneByCoord(newX, newY);
         setHoveredLaneId(targetLane);
 
-        setNodes((prev) =>
-          prev.map((n) => {
-            if (n.id === nodeId) {
-              return {
-                ...n,
-                x: newX,
-                y: newY,
-                lane: targetLane
-              };
-            }
-            return n;
-          })
-        );
+        if (multiNodes && multiNodes.length > 1) {
+          // Multi-node drag: all selected nodes move in unison
+          setNodes((prev) =>
+            prev.map((n) => {
+              const match = multiNodes.find((m) => m.id === n.id);
+              if (match) {
+                return {
+                  ...n,
+                  x: Math.max(20, Math.round(match.x + dx)),
+                  y: Math.max(20, Math.round(match.y + dy))
+                };
+              }
+              return n;
+            })
+          );
+        } else {
+          // Single node drag
+          setNodes((prev) =>
+            prev.map((n) => {
+              if (n.id === nodeId) {
+                return {
+                  ...n,
+                  x: newX,
+                  y: newY
+                };
+              }
+              return n;
+            })
+          );
+        }
         return;
       }
 
-      // Handle Connecting Wire Preview line
-      if (connectingSourceId && canvasRef.current) {
+      // 4. Handle Connecting Wire Preview line
+      if ((connectingSource || rewiringEdge) && canvasRef.current) {
         const rect = canvasRef.current.getBoundingClientRect();
         setConnectingMousePos({
           x: (e.clientX - rect.left - pan.x) / zoom,
@@ -1159,10 +1511,14 @@ export function WorkflowStudio({
         });
       }
 
-      // Handle Canvas Panning
+      // 5. Handle Canvas Panning
       if (isPanningCanvasRef.current) {
         const dx = e.clientX - canvasPanStartRef.current.startX;
         const dy = e.clientY - canvasPanStartRef.current.startY;
+        if (Math.hypot(dx, dy) > 4) {
+          canvasPanMovedRef.current = true;
+          baseCameraRef.current = null;
+        }
         setPan({
           x: Math.round(canvasPanStartRef.current.panX + dx),
           y: Math.round(canvasPanStartRef.current.panY + dy)
@@ -1170,30 +1526,128 @@ export function WorkflowStudio({
       }
     };
 
-    const onWindowPointerUp = () => {
-      if (dragNodeRef.current) {
-        if (initialDragSnapshotRef.current) {
-          const { initialNodeX, initialNodeY, nodeId } = dragNodeRef.current;
-          const currentNode = nodes.find((n) => n.id === nodeId);
-          if (currentNode && (currentNode.x !== initialNodeX || currentNode.y !== initialNodeY)) {
-            setHistoryPast((prev) => [...prev.slice(-30), initialDragSnapshotRef.current!]);
-            setHistoryFuture([]);
-          }
-          initialDragSnapshotRef.current = null;
+    const onWindowPointerMove = (e: PointerEvent) => {
+      // Coalesce pointer events with requestAnimationFrame for smooth 60/120fps dragging
+      pendingPointerEventRef.current = e;
+      if (pointerRafIdRef.current !== null) return;
+
+      pointerRafIdRef.current = requestAnimationFrame(() => {
+        pointerRafIdRef.current = null;
+        if (pendingPointerEventRef.current) {
+          handleMove(pendingPointerEventRef.current);
         }
+      });
+    };
+
+    const onWindowPointerUp = () => {
+      if (pointerRafIdRef.current !== null) {
+        cancelAnimationFrame(pointerRafIdRef.current);
+        pointerRafIdRef.current = null;
+      }
+      if (pendingPointerEventRef.current) {
+        handleMove(pendingPointerEventRef.current);
+        pendingPointerEventRef.current = null;
+      }
+
+      // Finalize Sequence Dragging
+      if (dragSequenceRef.current) {
+        const { hasMoved } = dragSequenceRef.current;
+        if (hasMoved && initialDragSnapshotRef.current) {
+          setHistoryPast((prev) => [...prev.slice(-30), initialDragSnapshotRef.current!]);
+          setHistoryFuture([]);
+        }
+        initialDragSnapshotRef.current = null;
+        dragSequenceRef.current = null;
+        setDraggingSequenceId(null);
+      }
+
+      // Finalize Sequence Resizing
+      if (resizeSequenceRef.current) {
+        if (initialDragSnapshotRef.current) {
+          setHistoryPast((prev) => [...prev.slice(-30), initialDragSnapshotRef.current!]);
+          setHistoryFuture([]);
+        }
+        initialDragSnapshotRef.current = null;
+        resizeSequenceRef.current = null;
+        setResizingSequenceId(null);
+      }
+
+      // Finalize Individual Node Dragging
+      if (dragNodeRef.current) {
+        const { nodeId, hasMoved, multiNodes } = dragNodeRef.current;
+        if (hasMoved) {
+          // Commit final lane assignment upon drop for all moved nodes
+          setNodes((prev) =>
+            prev.map((n) => {
+              if (multiNodes && multiNodes.some((m) => m.id === n.id)) {
+                const finalLane = detectLaneByCoord(n.x, n.y);
+                return { ...n, lane: finalLane };
+              }
+              if (n.id === nodeId) {
+                const finalLane = detectLaneByCoord(n.x, n.y);
+                return { ...n, lane: finalLane };
+              }
+              return n;
+            })
+          );
+        }
+
+        if (hasMoved && initialDragSnapshotRef.current) {
+          setHistoryPast((prev) => [...prev.slice(-30), initialDragSnapshotRef.current!]);
+          setHistoryFuture([]);
+        }
+        initialDragSnapshotRef.current = null;
         dragNodeRef.current = null;
         setDraggingNodeId(null);
         setHoveredLaneId(null);
+
+        if (hasMoved) {
+          justDraggedNodeRef.current = true;
+        } else {
+          justDraggedNodeRef.current = false;
+        }
       }
+
       if (isPanningCanvasRef.current) {
+        // If canvas was clicked without panning movement, unselect all
+        if (!canvasPanMovedRef.current) {
+          setSelectedNodeIds([]);
+          setSelectedLaneIds([]);
+          setSelectedEdgeId(null);
+          setRewiringEdge(null);
+          if (selectedNodeIdRef.current) {
+            handleUnselectNodeRef.current();
+          }
+        }
         isPanningCanvasRef.current = false;
         setIsCanvasPanning(false);
       }
     };
 
     const onWindowKeyDown = (e: KeyboardEvent) => {
+      const activeEl = document.activeElement;
+      const isInput =
+        activeEl &&
+        (activeEl.tagName === 'INPUT' ||
+          activeEl.tagName === 'TEXTAREA' ||
+          activeEl.tagName === 'SELECT' ||
+          activeEl.getAttribute('contenteditable') === 'true');
+
+      if (!isInput && (e.key === 'Delete' || e.key === 'Del')) {
+        handleDeleteSelectedRef.current();
+        return;
+      }
+
       if (e.key === 'Escape') {
-        setConnectingSourceId(null);
+        setSelectedNodeIds([]);
+        setSelectedLaneIds([]);
+        setSelectedEdgeId(null);
+        setRewiringEdge(null);
+        if (selectedNodeIdRef.current) {
+          handleUnselectNodeRef.current();
+        }
+        setSequenceModal((prev) => (prev.isOpen ? { ...prev, isOpen: false } : prev));
+        setConnectingSource(null);
         setConnectingMousePos(null);
       }
     };
@@ -1202,16 +1656,24 @@ export function WorkflowStudio({
     window.addEventListener('pointerup', onWindowPointerUp);
     window.addEventListener('keydown', onWindowKeyDown);
     return () => {
+      if (pointerRafIdRef.current !== null) {
+        cancelAnimationFrame(pointerRafIdRef.current);
+      }
       window.removeEventListener('pointermove', onWindowPointerMove);
       window.removeEventListener('pointerup', onWindowPointerUp);
       window.removeEventListener('keydown', onWindowKeyDown);
     };
-  }, [zoom, pan, connectingSourceId, detectLaneByY]);
+  }, [zoom, pan, connectingSource, rewiringEdge, detectLaneByCoord]);
 
   // Selected Node reference
   const selectedNode = useMemo(() => {
     return nodes.find((n) => n.id === selectedNodeId) || null;
   }, [nodes, selectedNodeId]);
+
+  // Selected Edge / Wire reference
+  const selectedEdge = useMemo(() => {
+    return edges.find((e) => e.id === selectedEdgeId) || null;
+  }, [edges, selectedEdgeId]);
 
   // Selected Node documentation catalog reference
   const selectedCatalogItem = useMemo(() => {
@@ -1268,68 +1730,7 @@ export function WorkflowStudio({
     return map;
   }, [nodes]);
 
-  // Archify Semantic Focus & Flow Relationship Map
-  const flowRelations = useMemo(() => {
-    if (!hoveredNodeId) {
-      return {
-        hoveredNode: null,
-        incomingEdges: [] as WorkflowEdge[],
-        outgoingEdges: [] as WorkflowEdge[],
-        upstreamNodeIds: new Set<string>(),
-        downstreamNodeIds: new Set<string>(),
-        relatedEdgeIds: new Set<string>(),
-        relatedNodeIds: new Set<string>(),
-        flowSummary: null as string | null
-      };
-    }
-
-    const hoveredNode = nodes.find((n) => n.id === hoveredNodeId) || null;
-    const incomingEdges = edges.filter((e) => e.to === hoveredNodeId);
-    const outgoingEdges = edges.filter((e) => e.from === hoveredNodeId);
-
-    const upstreamNodeIds = new Set(incomingEdges.map((e) => e.from));
-    const downstreamNodeIds = new Set(outgoingEdges.map((e) => e.to));
-    const relatedEdgeIds = new Set([
-      ...incomingEdges.map((e) => e.id),
-      ...outgoingEdges.map((e) => e.id)
-    ]);
-    const relatedNodeIds = new Set([
-      hoveredNodeId,
-      ...upstreamNodeIds,
-      ...downstreamNodeIds
-    ]);
-
-    const upstreamTitles = incomingEdges
-      .map((e) => nodes.find((n) => n.id === e.from)?.title)
-      .filter(Boolean);
-    const downstreamTitles = outgoingEdges
-      .map((e) => nodes.find((n) => n.id === e.to)?.title)
-      .filter(Boolean);
-
-    let summaryText = '';
-    if (upstreamTitles.length && downstreamTitles.length) {
-      summaryText = `${upstreamTitles.join(', ')} ➔ [${hoveredNode?.title}] ➔ ${downstreamTitles.join(', ')}`;
-    } else if (downstreamTitles.length) {
-      summaryText = `[${hoveredNode?.title}] ➔ ${downstreamTitles.join(', ')}`;
-    } else if (upstreamTitles.length) {
-      summaryText = `${upstreamTitles.join(', ')} ➔ [${hoveredNode?.title}]`;
-    } else if (hoveredNode) {
-      summaryText = `[${hoveredNode.title}] (Standalone Step)`;
-    }
-
-    return {
-      hoveredNode,
-      incomingEdges,
-      outgoingEdges,
-      upstreamNodeIds,
-      downstreamNodeIds,
-      relatedEdgeIds,
-      relatedNodeIds,
-      flowSummary: summaryText || null
-    };
-  }, [hoveredNodeId, nodes, edges]);
-
-  // Smooth Hover Focus Zoom In Handler
+  // Hover State Handler (Activates semantic colored shadow on the hovered activity)
   const handleNodeMouseEnter = useCallback((nodeId: string) => {
     if (draggingNodeId || isPanningCanvasRef.current || isExecuting) return;
 
@@ -1339,47 +1740,9 @@ export function WorkflowStudio({
     }
 
     setHoveredNodeId(nodeId);
+  }, [draggingNodeId, isExecuting]);
 
-    if (hoverFocusZoomEnabled) {
-      if (!baseCameraRef.current) {
-        baseCameraRef.current = { zoom, pan };
-      }
-
-      const targetNode = nodes.find((n) => n.id === nodeId);
-      if (targetNode && canvasRef.current) {
-        const cWidth = canvasRef.current.clientWidth || 1200;
-        const cHeight = canvasRef.current.clientHeight || 700;
-
-        const outEdges = edges.filter((e) => e.from === nodeId);
-        const downNodes = nodes.filter((n) => outEdges.some((e) => e.to === n.id));
-
-        let cx = targetNode.x + NODE_WIDTH / 2;
-        let cy = targetNode.y + NODE_HEIGHT / 2;
-
-        if (downNodes.length > 0) {
-          const avgDownX = downNodes.reduce((acc, n) => acc + n.x + NODE_WIDTH / 2, 0) / downNodes.length;
-          const avgDownY = downNodes.reduce((acc, n) => acc + n.y + NODE_HEIGHT / 2, 0) / downNodes.length;
-          // Weighted forward focus: 58% on current node, 42% on downstream targets
-          cx = cx * 0.58 + avgDownX * 0.42;
-          cy = cy * 0.58 + avgDownY * 0.42;
-        }
-
-        const targetZoom = 1.32;
-        const targetPanX = Math.round(cWidth / 2 - cx * targetZoom);
-        const targetPanY = Math.round(cHeight / 2 - cy * targetZoom);
-
-        setIsCameraAnimating(true);
-        setZoom(targetZoom);
-        setPan({ x: targetPanX, y: targetPanY });
-
-        setTimeout(() => {
-          setIsCameraAnimating(false);
-        }, 340);
-      }
-    }
-  }, [hoverFocusZoomEnabled, zoom, pan, nodes, edges, isExecuting, draggingNodeId]);
-
-  // Smooth Hover Focus Zoom Restore Handler
+  // Hover Clear Handler
   const handleNodeMouseLeave = useCallback(() => {
     if (unhoverTimeoutRef.current) {
       clearTimeout(unhoverTimeoutRef.current);
@@ -1387,19 +1750,240 @@ export function WorkflowStudio({
 
     unhoverTimeoutRef.current = setTimeout(() => {
       setHoveredNodeId(null);
+    }, 100);
+  }, []);
 
-      if (hoverFocusZoomEnabled && baseCameraRef.current) {
-        const { zoom: origZoom, pan: origPan } = baseCameraRef.current;
-        baseCameraRef.current = null;
-        setIsCameraAnimating(true);
-        setZoom(origZoom);
-        setPan(origPan);
-        setTimeout(() => {
-          setIsCameraAnimating(false);
-        }, 340);
+  // Deselect and Zoom Out to Overview Handler
+  const handleUnselectNode = useCallback(() => {
+    setSelectedNodeIds([]);
+    setSelectedLaneIds([]);
+
+    if (baseCameraRef.current) {
+      const { zoom: origZoom, pan: origPan } = baseCameraRef.current;
+      baseCameraRef.current = null;
+      setIsCameraAnimating(true);
+      setZoom(origZoom);
+      setPan(origPan);
+      setTimeout(() => {
+        setIsCameraAnimating(false);
+      }, 340);
+    }
+  }, []);
+
+  // Click Focus Zoom In Handler (Smoothly frames node and opens properties)
+  const handleSelectNode = useCallback((nodeId: string) => {
+    setSelectedNodeIds([nodeId]);
+    setSelectedLaneIds([]);
+    setSelectedEdgeId(null);
+    setRewiringEdge(null);
+
+    if (!clickFocusZoomEnabled) return;
+
+    // Capture base camera only if not already focused from another node
+    if (!baseCameraRef.current) {
+      baseCameraRef.current = { zoom, pan };
+    }
+
+    const targetNode = nodes.find((n) => n.id === nodeId);
+    if (targetNode && canvasRef.current) {
+      const cWidth = canvasRef.current.clientWidth || 1200;
+      const cHeight = canvasRef.current.clientHeight || 700;
+
+      const outEdges = edges.filter((e) => e.from === nodeId);
+      const downNodes = nodes.filter((n) => outEdges.some((e) => e.to === n.id));
+
+      let cx = targetNode.x + NODE_WIDTH / 2;
+      let cy = targetNode.y + NODE_HEIGHT / 2;
+
+      if (downNodes.length > 0) {
+        const avgDownX = downNodes.reduce((acc, n) => acc + n.x + NODE_WIDTH / 2, 0) / downNodes.length;
+        const avgDownY = downNodes.reduce((acc, n) => acc + n.y + NODE_HEIGHT / 2, 0) / downNodes.length;
+        // Weighted forward focus: 58% on current node, 42% on downstream targets
+        cx = cx * 0.58 + avgDownX * 0.42;
+        cy = cy * 0.58 + avgDownY * 0.42;
       }
-    }, 180);
-  }, [hoverFocusZoomEnabled]);
+
+      const targetZoom = 1.35;
+      const targetPanX = Math.round(cWidth / 2 - cx * targetZoom);
+      const targetPanY = Math.round(cHeight / 2 - cy * targetZoom);
+
+      setIsCameraAnimating(true);
+      setZoom(targetZoom);
+      setPan({ x: targetPanX, y: targetPanY });
+
+      setTimeout(() => {
+        setIsCameraAnimating(false);
+      }, 340);
+    }
+  }, [clickFocusZoomEnabled, zoom, pan, nodes, edges, handleUnselectNode]);
+
+  // Canvas History snapshot recorder for Undo
+  const recordHistory = useCallback(() => {
+    setHistoryPast((prev) => [
+      ...prev.slice(-30),
+      {
+        nodes: JSON.parse(JSON.stringify(nodes)),
+        edges: JSON.parse(JSON.stringify(edges)),
+        lanes: JSON.parse(JSON.stringify(lanes))
+      }
+    ]);
+    setHistoryFuture([]);
+  }, [nodes, edges, lanes]);
+
+  // Unified Delete Selected Items Handler (Works with DEL shortcut)
+  const handleDeleteSelected = useCallback(() => {
+    if (isExecuting) return;
+    const nodeIdsToDelete = selectedNodeIdsRef.current;
+    const laneIdsToDelete = selectedLaneIdsRef.current;
+    const edgeIdToDelete = selectedEdgeIdRef.current;
+    if (nodeIdsToDelete.length === 0 && laneIdsToDelete.length === 0 && !edgeIdToDelete) return;
+
+    recordHistory();
+
+    let nextLanes = [...lanes];
+    let nextNodes = [...nodes];
+    let nextEdges = [...edges];
+
+    // Delete selected edge
+    if (edgeIdToDelete) {
+      nextEdges = nextEdges.filter((e) => e.id !== edgeIdToDelete);
+      setSelectedEdgeId(null);
+    }
+
+    // 1. Delete selected sequences (safely leave at least 1 sequence)
+    if (laneIdsToDelete.length > 0) {
+      if (nextLanes.length <= laneIdsToDelete.length) {
+        const toDelete = laneIdsToDelete.slice(0, nextLanes.length - 1);
+        nextLanes = nextLanes.filter((l) => !toDelete.includes(l.id));
+      } else {
+        nextLanes = nextLanes.filter((l) => !laneIdsToDelete.includes(l.id));
+      }
+      const fallbackLane = nextLanes[0]?.id || 'ui';
+      nextNodes = nextNodes.map((n) =>
+        laneIdsToDelete.includes(n.lane) ? { ...n, lane: fallbackLane } : n
+      );
+    }
+
+    // 2. Delete selected activities
+    if (nodeIdsToDelete.length > 0) {
+      nextNodes = nextNodes.filter((n) => !nodeIdsToDelete.includes(n.id));
+      nextEdges = nextEdges.filter(
+        (e) => !nodeIdsToDelete.includes(e.from) && !nodeIdsToDelete.includes(e.to)
+      );
+    }
+
+    setLanes(nextLanes);
+    setNodes(nextNodes);
+    setEdges(nextEdges);
+    setSelectedNodeIds([]);
+    setSelectedLaneIds([]);
+
+    const deletedNodesCount = nodes.length - nextNodes.length;
+    const deletedLanesCount = lanes.length - nextLanes.length;
+    let msg = '';
+    if (edgeIdToDelete) {
+      msg = 'Deleted connection wire';
+    } else if (deletedNodesCount > 0 && deletedLanesCount > 0) {
+      msg = `Deleted ${deletedNodesCount} activity(ies) and ${deletedLanesCount} sequence(s)`;
+    } else if (deletedNodesCount > 0) {
+      msg = `Deleted ${deletedNodesCount} activity(ies)`;
+    } else if (deletedLanesCount > 0) {
+      msg = `Deleted ${deletedLanesCount} sequence(s)`;
+    }
+    if (msg) {
+      setSaveToastMessage(msg);
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    }
+  }, [isExecuting, recordHistory, lanes, nodes, edges]);
+
+  // Auto-reposition and distribute activities inside a sequence neatly
+  const handleAutoRepositionLaneActivities = useCallback((laneId: string) => {
+    if (isExecuting) return;
+    const lane = lanes.find((l) => l.id === laneId);
+    if (!lane) return;
+
+    const laneNodes = nodes.filter((n) => n.lane === laneId);
+    if (laneNodes.length === 0) return;
+
+    recordHistory();
+
+    const laneX = lane.x ?? 30;
+    const laneWidth = lane.width ?? 1680;
+    const centerY = Math.round(lane.y + (lane.height - NODE_HEIGHT) / 2);
+
+    // Sort by current X position to preserve sequence order
+    const sorted = [...laneNodes].sort((a, b) => a.x - b.x);
+
+    let step = 0;
+    if (sorted.length > 1) {
+      const availableSpan = Math.max(0, laneWidth - 80 - NODE_WIDTH);
+      step = availableSpan / (sorted.length - 1);
+    }
+
+    setNodes((prev) =>
+      prev.map((n) => {
+        const idx = sorted.findIndex((s) => s.id === n.id);
+        if (idx !== -1) {
+          const newX = sorted.length === 1
+            ? Math.round(laneX + (laneWidth - NODE_WIDTH) / 2)
+            : Math.round(laneX + 40 + idx * step);
+          return {
+            ...n,
+            x: newX,
+            y: centerY
+          };
+        }
+        return n;
+      })
+    );
+
+    setSaveToastMessage(`Auto-repositioned ${sorted.length} activity(ies) in "${lane.label}"`);
+    setTimeout(() => setSaveToastMessage(null), 2500);
+  }, [isExecuting, lanes, nodes, recordHistory]);
+
+  // Auto-align and tidy all sequences into a clean vertical stack
+  const handleAutoAlignAllSequences = useCallback(() => {
+    if (isExecuting) return;
+    recordHistory();
+
+    let currentY = 70;
+    const updatedLanes = lanes.map((lane, index) => {
+      const num = String(index + 1).padStart(2, '0');
+      const targetX = 30;
+      const targetY = currentY;
+      const deltaX = targetX - (lane.x ?? 30);
+      const deltaY = targetY - lane.y;
+
+      setNodes((prev) =>
+        prev.map((n) => {
+          if (n.lane === lane.id) {
+            return {
+              ...n,
+              x: Math.round(n.x + deltaX),
+              y: Math.round(n.y + deltaY)
+            };
+          }
+          return n;
+        })
+      );
+
+      currentY += lane.height + 24;
+      return {
+        ...lane,
+        num,
+        x: targetX,
+        y: targetY
+      };
+    });
+
+    setLanes(updatedLanes);
+    setSaveToastMessage('All sequences and activities auto-aligned neatly');
+    setTimeout(() => setSaveToastMessage(null), 2500);
+  }, [isExecuting, lanes, recordHistory]);
+
+  // Sync latest handlers to mutable refs for global event listeners
+  handleSelectNodeRef.current = handleSelectNode;
+  handleUnselectNodeRef.current = handleUnselectNode;
 
   // Filtered Activity Palette items
   const filteredCatalog = useMemo(() => {
@@ -1418,11 +2002,21 @@ export function WorkflowStudio({
     })).filter((cat) => cat.items.length > 0);
   }, [searchQuery]);
 
-  // Total dynamic canvas SVG height based on active lanes
+  // Total dynamic canvas SVG dimensions based on active sequences (stable to prevent layout shifts)
   const totalCanvasHeight = useMemo(() => {
-    if (lanes.length === 0) return 1200;
-    const lastLane = lanes[lanes.length - 1];
-    return Math.max(1400, lastLane.y + lastLane.height + 250);
+    let maxY = 1800;
+    lanes.forEach((l) => {
+      maxY = Math.max(maxY, l.y + l.height + 400);
+    });
+    return maxY;
+  }, [lanes]);
+
+  const totalCanvasWidth = useMemo(() => {
+    let maxX = 2800;
+    lanes.forEach((l) => {
+      maxX = Math.max(maxX, (l.x ?? 30) + (l.width ?? 1680) + 400);
+    });
+    return maxX;
   }, [lanes]);
 
   // Resizable Live Execution Log Drawer Handler
@@ -1448,19 +2042,6 @@ export function WorkflowStudio({
     window.addEventListener('pointermove', onPointerMove);
     window.addEventListener('pointerup', onPointerUp);
   };
-
-  // Canvas History snapshot recorder for Undo
-  const recordHistory = useCallback(() => {
-    setHistoryPast((prev) => [
-      ...prev.slice(-30),
-      {
-        nodes: JSON.parse(JSON.stringify(nodes)),
-        edges: JSON.parse(JSON.stringify(edges)),
-        lanes: JSON.parse(JSON.stringify(lanes))
-      }
-    ]);
-    setHistoryFuture([]);
-  }, [nodes, edges, lanes]);
 
   // Undo handler
   const handleUndo = useCallback(() => {
@@ -1504,7 +2085,32 @@ export function WorkflowStudio({
     setLanes(next.lanes);
   }, [isExecuting, historyFuture, nodes, edges, lanes]);
 
-  // Save workflow (Custom UI Dialog)
+  // Save workflow: direct save with "Success to save" toast if already saved, or modal dialog if new
+  const handleSaveWorkflowAction = useCallback(() => {
+    const isSaved = savedWorkflows.some(
+      (w) => w.name.toLowerCase() === activeWorkflowTitle.toLowerCase()
+    );
+    if (isSaved) {
+      const item = {
+        name: activeWorkflowTitle,
+        date: new Date().toLocaleDateString(),
+        lanes,
+        nodes,
+        edges
+      };
+      const updated = [item, ...savedWorkflows.filter((w) => w.name !== item.name)];
+      setSavedWorkflows(updated);
+      try {
+        localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
+      } catch { }
+      setSaveToastMessage('Success to save');
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    } else {
+      setSaveWorkflowNameInput(activeWorkflowTitle);
+      setIsSaveModalOpen(true);
+    }
+  }, [activeWorkflowTitle, lanes, nodes, edges, savedWorkflows]);
+
   const handleOpenSaveDialog = useCallback(() => {
     setSaveWorkflowNameInput(activeWorkflowTitle);
     setIsSaveModalOpen(true);
@@ -1526,17 +2132,17 @@ export function WorkflowStudio({
     } catch { }
     setActiveWorkflowTitle(item.name);
     setIsSaveModalOpen(false);
-    setSaveToastMessage(`Workflow "${item.name}" saved successfully`);
-    setTimeout(() => setSaveToastMessage(null), 3000);
+    setSaveToastMessage('Success to save');
+    setTimeout(() => setSaveToastMessage(null), 2500);
   }, [lanes, nodes, edges, savedWorkflows]);
 
-  // Global Keyboard shortcuts: Ctrl+S (Save), Ctrl+Z (Undo) and Ctrl+Shift+Z / Ctrl+Y (Redo)
+  // Global Keyboard shortcuts: Ctrl+S (Save), Del (Delete Selected), Ctrl+Z (Undo), Ctrl+Shift+Z / Ctrl+Y (Redo), and Arrow Keys (Nudge)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Ctrl+S / Cmd+S save workflow shortcut
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 's') {
         e.preventDefault();
-        handleOpenSaveDialog();
+        handleSaveWorkflowAction();
         return;
       }
 
@@ -1545,9 +2151,63 @@ export function WorkflowStudio({
         activeEl &&
         (activeEl.tagName === 'INPUT' ||
           activeEl.tagName === 'TEXTAREA' ||
+          activeEl.tagName === 'SELECT' ||
           activeEl.getAttribute('contenteditable') === 'true')
       ) {
         return;
+      }
+
+      // Delete shortcut with DEL key
+      if (e.key === 'Delete' || e.key === 'Del') {
+        if (!isExecuting && (selectedNodeIds.length > 0 || selectedLaneIds.length > 0 || selectedEdgeId)) {
+          e.preventDefault();
+          handleDeleteSelected();
+          return;
+        }
+      }
+
+      // Arrow keys nudging for selected items
+      if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
+        const step = e.shiftKey ? 20 : 4;
+        let dx = 0;
+        let dy = 0;
+        if (e.key === 'ArrowLeft') dx = -step;
+        if (e.key === 'ArrowRight') dx = step;
+        if (e.key === 'ArrowUp') dy = -step;
+        if (e.key === 'ArrowDown') dy = step;
+
+        if (selectedNodeIds.length > 0) {
+          e.preventDefault();
+          recordHistory();
+          setNodes((prev) =>
+            prev.map((n) =>
+              selectedNodeIds.includes(n.id)
+                ? { ...n, x: Math.max(10, n.x + dx), y: Math.max(10, n.y + dy) }
+                : n
+            )
+          );
+          return;
+        }
+
+        if (selectedLaneIds.length > 0) {
+          e.preventDefault();
+          recordHistory();
+          setLanes((prev) =>
+            prev.map((l) =>
+              selectedLaneIds.includes(l.id)
+                ? { ...l, x: Math.max(10, (l.x ?? 30) + dx), y: Math.max(10, l.y + dy) }
+                : l
+            )
+          );
+          setNodes((prev) =>
+            prev.map((n) =>
+              selectedLaneIds.includes(n.lane)
+                ? { ...n, x: Math.max(10, n.x + dx), y: Math.max(10, n.y + dy) }
+                : n
+            )
+          );
+          return;
+        }
       }
 
       if ((e.ctrlKey || e.metaKey) && !e.shiftKey && e.key.toLowerCase() === 'z') {
@@ -1564,7 +2224,22 @@ export function WorkflowStudio({
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [handleUndo, handleRedo, handleOpenSaveDialog]);
+  }, [handleUndo, handleRedo, handleOpenSaveDialog, handleDeleteSelected, selectedNodeIds, selectedLaneIds, isExecuting, recordHistory]);
+
+  // Persistent active canvas state synchronization
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        'locallm_active_canvas',
+        JSON.stringify({
+          title: activeWorkflowTitle,
+          lanes,
+          nodes,
+          edges
+        })
+      );
+    } catch { }
+  }, [activeWorkflowTitle, lanes, nodes, edges]);
 
   // Auto-close header dropdown menus & modal on outside click and Escape
   useEffect(() => {
@@ -1627,20 +2302,59 @@ export function WorkflowStudio({
     }
     e.stopPropagation();
 
-    // If currently in wire connecting mode, complete sequence link!
-    if (connectingSourceId) {
-      if (connectingSourceId !== id) {
-        handleAddEdge(connectingSourceId, id);
+    // If currently in wire connecting or rewiring mode, complete link!
+    if (connectingSource) {
+      if (connectingSource.nodeId !== id) {
+        handleAddEdge(connectingSource.nodeId, id, connectingSource.side, 'left');
       }
-      setConnectingSourceId(null);
+      setConnectingSource(null);
       setConnectingMousePos(null);
+      return;
+    }
+
+    if (rewiringEdge) {
+      recordHistory();
+      setEdges((prev) =>
+        prev.map((edge) => {
+          if (edge.id === rewiringEdge.edgeId) {
+            return rewiringEdge.end === 'from'
+              ? { ...edge, from: id, fromSide: 'right' }
+              : { ...edge, to: id, toSide: 'left' };
+          }
+          return edge;
+        })
+      );
+      setRewiringEdge(null);
+      setSelectedEdgeId(rewiringEdge.edgeId);
+      setSaveToastMessage('Connection wire repositioned successfully');
+      setTimeout(() => setSaveToastMessage(null), 2500);
       return;
     }
 
     const node = nodes.find((n) => n.id === id);
     if (!node) return;
 
-    setSelectedNodeId(id);
+    const isCtrl = e.ctrlKey || e.metaKey;
+    let nextNodeIds = selectedNodeIds;
+
+    if (isCtrl) {
+      if (selectedNodeIds.includes(id)) {
+        nextNodeIds = selectedNodeIds.filter((x) => x !== id);
+      } else {
+        nextNodeIds = [...selectedNodeIds, id];
+      }
+      setSelectedNodeIds(nextNodeIds);
+      setSelectedLaneIds([]);
+      setSelectedEdgeId(null);
+    } else {
+      if (!selectedNodeIds.includes(id)) {
+        nextNodeIds = [id];
+        setSelectedNodeIds([id]);
+        setSelectedLaneIds([]);
+        setSelectedEdgeId(null);
+      }
+    }
+
     setDraggingNodeId(id);
 
     // Save initial snapshot before dragging begins
@@ -1650,12 +2364,18 @@ export function WorkflowStudio({
       lanes: JSON.parse(JSON.stringify(lanes))
     };
 
+    const multi = nextNodeIds.includes(id) && nextNodeIds.length > 1
+      ? nodes.filter((n) => nextNodeIds.includes(n.id)).map((n) => ({ id: n.id, x: n.x, y: n.y }))
+      : undefined;
+
     dragNodeRef.current = {
       nodeId: id,
       startX: e.clientX,
       startY: e.clientY,
       initialNodeX: node.x,
-      initialNodeY: node.y
+      initialNodeY: node.y,
+      hasMoved: false,
+      multiNodes: multi
     };
   };
 
@@ -1671,13 +2391,18 @@ export function WorkflowStudio({
       unhoverTimeoutRef.current = null;
     }
     setHoveredNodeId(null);
-    baseCameraRef.current = null;
     setIsCameraAnimating(false);
+    canvasPanMovedRef.current = false;
 
-    if (connectingSourceId) {
-      setConnectingSourceId(null);
+    if (connectingSource) {
+      setConnectingSource(null);
       setConnectingMousePos(null);
     }
+    if (rewiringEdge) {
+      setRewiringEdge(null);
+      setConnectingMousePos(null);
+    }
+    setSelectedEdgeId(null);
 
     isPanningCanvasRef.current = true;
     setIsCanvasPanning(true);
@@ -1738,7 +2463,7 @@ export function WorkflowStudio({
 
     const actualX = customX !== undefined ? Math.max(20, customX) : Math.round(350 + (nodes.length % 5) * 35 - pan.x / zoom);
     const actualY = customY !== undefined ? Math.max(20, customY) : defaultY;
-    const actualLane = customY !== undefined ? detectLaneByY(actualY) : template.lane;
+    const actualLane = customY !== undefined ? detectLaneByCoord(actualX, actualY) : template.lane;
 
     const assignedModel = apiModels.length > 0 ? (apiModels.find((m) => m.id !== 'auto')?.id || apiModels[0]?.id) : 'auto';
 
@@ -1800,18 +2525,34 @@ export function WorkflowStudio({
     );
   };
 
-  // Add edge connection between two nodes
-  const handleAddEdge = (fromId: string, toId: string, label: string = 'next') => {
+  // Add edge connection between two nodes with support for 4-sided ports
+  const handleAddEdge = (
+    fromId: string,
+    toId: string,
+    fromSide: PortSide = 'right',
+    toSide: PortSide = 'left',
+    label: string = 'next'
+  ) => {
     if (isExecuting) return;
     if (fromId === toId) return;
     const exists = edges.some((e) => e.from === fromId && e.to === toId);
-    if (exists) return;
+    if (exists) {
+      recordHistory();
+      setEdges((prev) =>
+        prev.map((e) => (e.from === fromId && e.to === toId ? { ...e, fromSide, toSide } : e))
+      );
+      setSaveToastMessage('Updated connection wire ports');
+      setTimeout(() => setSaveToastMessage(null), 2000);
+      return;
+    }
 
     recordHistory();
     const newEdge: WorkflowEdge = {
-      id: `e-${Date.now().toString(36)}`,
+      id: `e-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 5)}`,
       from: fromId,
       to: toId,
+      fromSide,
+      toSide,
       label,
       variant: 'default'
     };
@@ -1824,39 +2565,80 @@ export function WorkflowStudio({
     setEdges((prev) => prev.filter((e) => e.id !== edgeId));
   };
 
-  // --- Dynamic Swimlanes Management (Add, Delete, Reorder) ---
-  const handleAddNewLane = () => {
+  // --- UiPath-Style Sequence Management (Add, Edit, Reorder, Delete, Group Drag, Resize) ---
+  const handleOpenAddSequenceModal = () => {
     if (isExecuting) return;
-    if (!newLaneLabelInput.trim()) return;
+    setSequenceModal({
+      isOpen: true,
+      mode: 'add',
+      label: '',
+      description: '',
+      color: 'blue'
+    });
+  };
+
+  const handleOpenEditSequenceModal = (lane: WorkflowLaneConfig) => {
+    if (isExecuting) return;
+    setSequenceModal({
+      isOpen: true,
+      mode: 'edit',
+      laneId: lane.id,
+      label: lane.label,
+      description: lane.description || '',
+      color: lane.color || (lane.variant === 'exception' ? 'red' : 'blue')
+    });
+  };
+
+  const handleSaveSequenceModal = () => {
+    if (isExecuting) return;
+    if (!sequenceModal.label.trim()) return;
     recordHistory();
-    const newId = `lane-${Date.now().toString(36)}`;
-    const newLane: WorkflowLaneConfig = {
-      id: newId,
-      num: String(lanes.length + 1).padStart(2, '0'),
-      label: newLaneLabelInput.trim(),
-      y: 0,
-      height: 135,
-      variant: newLaneVariantInput
-    };
-    const updated = computeLanePositions([...lanes, newLane]);
-    setLanes(updated);
-    setNewLaneLabelInput('');
-    setIsAddLaneModalOpen(false);
+
+    if (sequenceModal.mode === 'add') {
+      const newId = `seq-${Date.now().toString(36)}`;
+      const maxY = lanes.reduce((max, l) => Math.max(max, l.y + l.height), 70);
+      const newLane: WorkflowLaneConfig = {
+        id: newId,
+        num: String(lanes.length + 1).padStart(2, '0'),
+        label: sequenceModal.label.trim(),
+        description: sequenceModal.description.trim(),
+        color: sequenceModal.color,
+        x: 30,
+        y: maxY + 20,
+        width: 1680,
+        height: 140
+      };
+      setLanes((prev) => [...prev, newLane]);
+    } else if (sequenceModal.mode === 'edit' && sequenceModal.laneId) {
+      setLanes((prev) =>
+        prev.map((l) =>
+          l.id === sequenceModal.laneId
+            ? {
+                ...l,
+                label: sequenceModal.label.trim(),
+                description: sequenceModal.description.trim(),
+                color: sequenceModal.color
+              }
+            : l
+        )
+      );
+    }
+
+    setSequenceModal((prev) => ({ ...prev, isOpen: false }));
   };
 
   const handleDeleteLane = (laneId: string) => {
     if (isExecuting) return;
     if (lanes.length <= 1) {
-      alert('A workflow must contain at least one swimlane.');
+      alert('A workflow must contain at least one sequence group.');
       return;
     }
     recordHistory();
     const remaining = lanes.filter((l) => l.id !== laneId);
-    const updated = computeLanePositions(remaining);
-    setLanes(updated);
+    setLanes(remaining);
 
-    // Reassign any nodes that were in the deleted lane to the nearest lane
-    const fallbackLane = updated[0].id;
+    // Reassign any nodes that were in the deleted sequence to the first remaining sequence
+    const fallbackLane = remaining[0].id;
     setNodes((prev) =>
       prev.map((n) => (n.lane === laneId ? { ...n, lane: fallbackLane } : n))
     );
@@ -1867,10 +2649,128 @@ export function WorkflowStudio({
     const targetIdx = direction === 'up' ? index - 1 : index + 1;
     if (targetIdx < 0 || targetIdx >= lanes.length) return;
     recordHistory();
+
+    const currentLane = lanes[index];
+    const targetLane = lanes[targetIdx];
+
+    const deltaCurrentY = targetLane.y - currentLane.y;
+    const deltaTargetY = currentLane.y - targetLane.y;
+
     const nextLanes = [...lanes];
-    const [removed] = nextLanes.splice(index, 1);
-    nextLanes.splice(targetIdx, 0, removed);
-    setLanes(computeLanePositions(nextLanes));
+    nextLanes[index] = { ...targetLane, y: currentLane.y, num: currentLane.num };
+    nextLanes[targetIdx] = { ...currentLane, y: targetLane.y, num: targetLane.num };
+
+    setNodes((prev) =>
+      prev.map((n) => {
+        if (n.lane === currentLane.id) {
+          return { ...n, y: n.y + deltaCurrentY };
+        }
+        if (n.lane === targetLane.id) {
+          return { ...n, y: n.y + deltaTargetY };
+        }
+        return n;
+      })
+    );
+
+    setLanes(nextLanes);
+  };
+
+  // Pointer down on Sequence Header for Group Dragging (Single or Multi-Sequence)
+  const handleSequenceHeaderPointerDown = (e: React.PointerEvent, laneId: string) => {
+    if (isExecuting) return;
+    if ((e.target as HTMLElement).closest('button, input, textarea, select')) {
+      return;
+    }
+    e.stopPropagation();
+
+    const isCtrl = e.ctrlKey || e.metaKey;
+    let nextLaneIds = selectedLaneIds;
+
+    if (isCtrl) {
+      if (selectedLaneIds.includes(laneId)) {
+        nextLaneIds = selectedLaneIds.filter((x) => x !== laneId);
+      } else {
+        nextLaneIds = [...selectedLaneIds, laneId];
+      }
+      setSelectedLaneIds(nextLaneIds);
+      setSelectedNodeIds([]);
+    } else {
+      if (!selectedLaneIds.includes(laneId)) {
+        nextLaneIds = [laneId];
+        setSelectedLaneIds([laneId]);
+        setSelectedNodeIds([]);
+      }
+    }
+
+    const lane = lanes.find((l) => l.id === laneId);
+    if (!lane) return;
+
+    const groupedNodes = nodes
+      .filter((n) => n.lane === laneId)
+      .map((n) => ({ id: n.id, x: n.x, y: n.y }));
+
+    initialDragSnapshotRef.current = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+      lanes: JSON.parse(JSON.stringify(lanes))
+    };
+
+    const multi = nextLaneIds.includes(laneId) && nextLaneIds.length > 1
+      ? lanes.filter((l) => nextLaneIds.includes(l.id)).map((l) => ({
+          id: l.id,
+          x: l.x ?? 30,
+          y: l.y,
+          nodes: nodes.filter((n) => n.lane === l.id).map((n) => ({ id: n.id, x: n.x, y: n.y }))
+        }))
+      : undefined;
+
+    dragSequenceRef.current = {
+      laneId,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialLaneX: lane.x ?? 30,
+      initialLaneY: lane.y,
+      initialNodes: groupedNodes,
+      hasMoved: false,
+      multiLanes: multi
+    };
+
+    setDraggingSequenceId(laneId);
+  };
+
+  // Pointer down on Sequence Resize Handle
+  const handleSequenceResizePointerDown = (e: React.PointerEvent, laneId: string, mode: 'width' | 'both') => {
+    if (isExecuting) return;
+    e.stopPropagation();
+
+    const lane = lanes.find((l) => l.id === laneId);
+    if (!lane) return;
+
+    initialDragSnapshotRef.current = {
+      nodes: JSON.parse(JSON.stringify(nodes)),
+      edges: JSON.parse(JSON.stringify(edges)),
+      lanes: JSON.parse(JSON.stringify(lanes))
+    };
+
+    const laneNodes = nodes.filter((n) => n.lane === laneId);
+    const minRequiredWidth = Math.max(
+      420,
+      laneNodes.length > 0 ? Math.min(1400, laneNodes.length * 172 + 60) : 420
+    );
+
+    resizeSequenceRef.current = {
+      laneId,
+      startX: e.clientX,
+      startY: e.clientY,
+      initialWidth: lane.width ?? 1680,
+      initialHeight: lane.height,
+      minWidth: minRequiredWidth,
+      initialLaneX: lane.x ?? 30,
+      initialNodes: laneNodes.map((n) => ({ id: n.id, x: n.x, y: n.y })),
+      mode
+    };
+
+    setResizingSequenceId(laneId);
   };
 
   // Workflow preset selection
@@ -1915,16 +2815,17 @@ export function WorkflowStudio({
 
 
 
-  // Load saved workflow
+  // Load saved workflow (Preserves exact saved positions)
   const handleLoadSavedWorkflow = (saved: typeof savedWorkflows[0]) => {
     setIsWorkflowMenuOpen(false);
     setActiveWorkflowTitle(saved.name);
     if (saved.lanes && Array.isArray(saved.lanes)) {
-      setLanes(computeLanePositions(saved.lanes));
+      setLanes(saved.lanes);
     }
     setNodes(saved.nodes);
     setEdges(saved.edges);
-    setSelectedNodeId(saved.nodes[0]?.id || null);
+    setSelectedNodeIds([]);
+    setSelectedLaneIds([]);
   };
 
   // Delete saved workflow
@@ -2324,45 +3225,140 @@ export function WorkflowStudio({
     };
   }, []);
 
-  // Generate Archify-standard orthogonal stepped connector path with channel corridor routing
-  const getOrthogonalRoute = (x1: number, y1: number, x2: number, y2: number) => {
-    // Direct horizontal alignment
-    if (Math.abs(y1 - y2) < 4 && x2 >= x1) {
+  // Helper to compute connection terminal coordinates on any of the 4 sides of a node
+  const getPortCoord = (
+    pos: { x: number; y: number },
+    side: PortSide = 'right'
+  ) => {
+    switch (side) {
+      case 'top':
+        return { x: pos.x + NODE_WIDTH / 2, y: pos.y };
+      case 'bottom':
+        return { x: pos.x + NODE_WIDTH / 2, y: pos.y + NODE_HEIGHT };
+      case 'left':
+        return { x: pos.x, y: pos.y + NODE_HEIGHT / 2 };
+      case 'right':
+      default:
+        return { x: pos.x + NODE_WIDTH, y: pos.y + NODE_HEIGHT / 2 };
+    }
+  };
+
+  // Generate Archify-standard orthogonal stepped connector path supporting 4-sided ports
+  const getOrthogonalRoute = (
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number,
+    fromSide: PortSide = 'right',
+    toSide: PortSide = 'left'
+  ) => {
+    // 1. Standard Horizontal Routing (Right to Left)
+    if (fromSide === 'right' && toSide === 'left') {
+      if (Math.abs(y1 - y2) < 4 && x2 >= x1) {
+        return {
+          path: `M ${x1} ${y1} L ${x2} ${y2}`,
+          labelX: (x1 + x2) / 2,
+          labelY: y1
+        };
+      }
+      if (x2 >= x1 + 24) {
+        const midX = Math.round((x1 + x2) / 2);
+        return {
+          path: `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`,
+          labelX: midX,
+          labelY: (y1 + y2) / 2
+        };
+      }
+      if (y2 < y1) {
+        const rightX = x1 + 30;
+        const topY = Math.min(y1, y2) - 28;
+        const leftX = x2 - 28;
+        return {
+          path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${topY} L ${leftX} ${topY} L ${leftX} ${y2} L ${x2} ${y2}`,
+          labelX: (rightX + leftX) / 2,
+          labelY: topY - 10
+        };
+      } else {
+        const rightX = x1 + 30;
+        const bottomY = Math.max(y1, y2) + 36;
+        const leftX = x2 - 28;
+        return {
+          path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${bottomY} L ${leftX} ${bottomY} L ${leftX} ${y2} L ${x2} ${y2}`,
+          labelX: (rightX + leftX) / 2,
+          labelY: bottomY + 10
+        };
+      }
+    }
+
+    // 2. Standard Vertical Routing (Bottom to Top)
+    if (fromSide === 'bottom' && toSide === 'top') {
+      if (Math.abs(x1 - x2) < 4 && y2 >= y1) {
+        return {
+          path: `M ${x1} ${y1} L ${x2} ${y2}`,
+          labelX: x1,
+          labelY: (y1 + y2) / 2
+        };
+      }
+      if (y2 >= y1 + 24) {
+        const midY = Math.round((y1 + y2) / 2);
+        return {
+          path: `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`,
+          labelX: (x1 + x2) / 2,
+          labelY: midY
+        };
+      }
+      const bottomY = y1 + 28;
+      const midX = Math.max(x1, x2) + 36;
+      const topY = y2 - 28;
       return {
-        path: `M ${x1} ${y1} L ${x2} ${y2}`,
-        labelX: (x1 + x2) / 2,
-        labelY: y1
+        path: `M ${x1} ${y1} L ${x1} ${bottomY} L ${midX} ${bottomY} L ${midX} ${topY} L ${x2} ${topY} L ${x2} ${y2}`,
+        labelX: midX + 10,
+        labelY: (bottomY + topY) / 2
       };
     }
-    // Standard forward stepped routing
-    if (x2 >= x1 + 24) {
-      const midX = Math.round((x1 + x2) / 2);
+
+    // 3. Inverse Vertical Routing (Top to Bottom)
+    if (fromSide === 'top' && toSide === 'bottom') {
+      if (y1 >= y2 + 24) {
+        const midY = Math.round((y1 + y2) / 2);
+        return {
+          path: `M ${x1} ${y1} L ${x1} ${midY} L ${x2} ${midY} L ${x2} ${y2}`,
+          labelX: (x1 + x2) / 2,
+          labelY: midY
+        };
+      }
+      const topY = y1 - 28;
+      const midX = Math.max(x1, x2) + 36;
+      const bottomY = y2 + 28;
       return {
-        path: `M ${x1} ${y1} L ${midX} ${y1} L ${midX} ${y2} L ${x2} ${y2}`,
-        labelX: midX,
-        labelY: (y1 + y2) / 2
+        path: `M ${x1} ${y1} L ${x1} ${topY} L ${midX} ${topY} L ${midX} ${bottomY} L ${x2} ${bottomY} L ${x2} ${y2}`,
+        labelX: midX + 10,
+        labelY: (topY + bottomY) / 2
       };
     }
-    // Backward loop (e.g. trace -> planner loopback, retry -> planner loop)
-    if (y2 < y1) {
-      // Looping upwards
-      const rightX = x1 + 30;
-      const topY = Math.min(y1, y2) - 28;
-      const leftX = x2 - 28;
+
+    // 4. Any other orthogonal side combination
+    const dx1 = fromSide === 'right' ? 24 : fromSide === 'left' ? -24 : 0;
+    const dy1 = fromSide === 'bottom' ? 24 : fromSide === 'top' ? -24 : 0;
+    const sx = x1 + dx1;
+    const sy = y1 + dy1;
+
+    const dx2 = toSide === 'right' ? 24 : toSide === 'left' ? -24 : 0;
+    const dy2 = toSide === 'bottom' ? 24 : toSide === 'top' ? -24 : 0;
+    const ex = x2 + dx2;
+    const ey = y2 + dy2;
+
+    if (fromSide === 'right' || fromSide === 'left') {
       return {
-        path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${topY} L ${leftX} ${topY} L ${leftX} ${y2} L ${x2} ${y2}`,
-        labelX: (rightX + leftX) / 2,
-        labelY: topY - 10
+        path: `M ${x1} ${y1} L ${sx} ${sy} L ${ex} ${sy} L ${ex} ${ey} L ${x2} ${y2}`,
+        labelX: (sx + ex) / 2,
+        labelY: sy
       };
     } else {
-      // Looping downwards
-      const rightX = x1 + 30;
-      const bottomY = Math.max(y1, y2) + 36;
-      const leftX = x2 - 28;
       return {
-        path: `M ${x1} ${y1} L ${rightX} ${y1} L ${rightX} ${bottomY} L ${leftX} ${bottomY} L ${leftX} ${y2} L ${x2} ${y2}`,
-        labelX: (rightX + leftX) / 2,
-        labelY: bottomY + 10
+        path: `M ${x1} ${y1} L ${sx} ${sy} L ${sx} ${ey} L ${ex} ${ey} L ${x2} ${y2}`,
+        labelX: sx,
+        labelY: (sy + ey) / 2
       };
     }
   };
@@ -2414,82 +3410,90 @@ export function WorkflowStudio({
             </button>
 
             {/* Workflow Menu Dropdown Popover */}
-            {isWorkflowMenuOpen && (
-              <div className="absolute top-full left-0 mt-1.5 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-xl p-2 z-50 text-xs">
-                <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                  Pre-built Workflow Presets
-                </div>
-                <div className="space-y-0.5">
-                  {WORKFLOW_PRESETS.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleLoadPreset(p.id)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${activeWorkflowTitle === p.name
-                          ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
-                          : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
-                        }`}
-                    >
-                      <span className="truncate">{p.name}</span>
-                      {activeWorkflowTitle === p.name && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
-                    </button>
-                  ))}
-                </div>
+            <AnimatePresence>
+              {isWorkflowMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                  className="absolute top-full left-0 mt-1.5 w-72 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-xl p-2 z-50 text-xs"
+                >
+                  <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                    Pre-built Workflow Presets
+                  </div>
+                  <div className="space-y-0.5">
+                    {WORKFLOW_PRESETS.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleLoadPreset(p.id)}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${activeWorkflowTitle === p.name
+                            ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
+                            : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
+                          }`}
+                      >
+                        <span className="truncate">{p.name}</span>
+                        {activeWorkflowTitle === p.name && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
 
-                {savedWorkflows.length > 0 && (
-                  <>
-                    <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
-                    <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
-                      Saved Custom Workflows
-                    </div>
-                    <div className="space-y-0.5 max-h-36 overflow-y-auto">
-                      {savedWorkflows.map((sw) => (
-                        <div
-                          key={sw.name}
-                          onClick={() => handleLoadSavedWorkflow(sw)}
-                          className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer flex items-center justify-between group"
-                        >
-                          <div className="min-w-0">
-                            <p className="font-semibold truncate">{sw.name}</p>
-                            <p className="text-[9px] text-slate-400">{sw.date} · {sw.nodes.length} nodes</p>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={(e) => handleDeleteSavedWorkflow(e, sw.name)}
-                            className="p-1 rounded hover:text-rose-500 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"
-                            title="Delete saved workflow"
+                  {savedWorkflows.length > 0 && (
+                    <>
+                      <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
+                      <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Saved Custom Workflows
+                      </div>
+                      <div className="space-y-0.5 max-h-36 overflow-y-auto">
+                        {savedWorkflows.map((sw) => (
+                          <div
+                            key={sw.name}
+                            onClick={() => handleLoadSavedWorkflow(sw)}
+                            className="w-full text-left px-2.5 py-1.5 rounded-xl hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200 transition-colors cursor-pointer flex items-center justify-between group"
                           >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-                  </>
-                )}
+                            <div className="min-w-0">
+                              <p className="font-semibold truncate">{sw.name}</p>
+                              <p className="text-[9px] text-slate-400">{sw.date} · {sw.nodes.length} nodes</p>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={(e) => handleDeleteSavedWorkflow(e, sw.name)}
+                              className="p-1 rounded hover:text-rose-500 text-slate-400 opacity-0 group-hover:opacity-100 transition-opacity"
+                              title="Delete saved workflow"
+                            >
+                              <Trash2 className="w-3 h-3" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </>
+                  )}
 
-                <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
-                <div className="grid grid-cols-2 gap-1 pt-0.5">
-                  <button
-                    type="button"
-                    onClick={handleCreateNewWorkflow}
-                    className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
-                  >
-                    <FilePlus className="w-3 h-3 text-cyan-600" />
-                    <span>New Blank</span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleOpenSaveDialog}
-                    className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
-                    title="Save workflow to local storage (Ctrl+S)"
-                  >
-                    <Save className="w-3 h-3 text-emerald-600" />
-                    <span>Save Flow</span>
-                    <span className="text-[9px] font-mono opacity-60 ml-0.5">Ctrl+S</span>
-                  </button>
-                </div>
-              </div>
-            )}
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
+                  <div className="grid grid-cols-2 gap-1 pt-0.5">
+                    <button
+                      type="button"
+                      onClick={handleCreateNewWorkflow}
+                      className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
+                    >
+                      <FilePlus className="w-3 h-3 text-cyan-600" />
+                      <span>New Blank</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleSaveWorkflowAction}
+                      className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
+                      title="Save workflow to local storage (Ctrl+S)"
+                    >
+                      <Save className="w-3 h-3 text-emerald-600" />
+                      <span>Save Flow</span>
+                      <span className="text-[9px] font-mono opacity-60 ml-0.5">Ctrl+S</span>
+                    </button>
+                  </div>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
         </div>
 
@@ -2567,22 +3571,16 @@ export function WorkflowStudio({
           <button
             type="button"
             onClick={() => {
-              setHoverFocusZoomEnabled((v) => !v);
-              if (hoverFocusZoomEnabled) {
-                if (unhoverTimeoutRef.current) clearTimeout(unhoverTimeoutRef.current);
-                setHoveredNodeId(null);
-                if (baseCameraRef.current) {
-                  setZoom(baseCameraRef.current.zoom);
-                  setPan(baseCameraRef.current.pan);
-                  baseCameraRef.current = null;
-                }
+              setClickFocusZoomEnabled((v) => !v);
+              if (clickFocusZoomEnabled && selectedNodeId) {
+                handleUnselectNode();
               }
             }}
-            className={`p-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${hoverFocusZoomEnabled
+            className={`p-1 rounded-lg transition-colors cursor-pointer flex items-center gap-1 ${clickFocusZoomEnabled
                 ? 'bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-semibold'
                 : 'text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700'
               }`}
-            title={`Hover Focus Zoom: ${hoverFocusZoomEnabled ? 'Enabled' : 'Disabled'} (Auto-zooms and highlights flow on hover)`}
+            title={`Click Focus Zoom: ${clickFocusZoomEnabled ? 'Enabled' : 'Disabled'} (Click node to zoom in; deselect or Esc to zoom out)`}
           >
             <Target className="w-3.5 h-3.5" />
             <span className="text-[10px] hidden lg:inline">Focus Zoom</span>
@@ -2610,42 +3608,50 @@ export function WorkflowStudio({
             </button>
 
             {/* Platform Selection Popover */}
-            {isPlatformMenuOpen && (
-              <div className="absolute top-full right-0 mt-1.5 w-60 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-xl p-2 z-50 text-xs">
-                <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
-                  <span>Registered Platforms</span>
-                  {isLoadingModels && <span className="animate-spin text-cyan-500">⟳</span>}
-                </div>
-                <div className="space-y-0.5">
-                  {registeredPlatforms.map((p) => (
-                    <button
-                      key={p.id}
-                      type="button"
-                      onClick={() => handleSelectPlatform(p.id)}
-                      className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${currentBackend === p.id
-                          ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
-                          : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
-                        }`}
-                    >
-                      <span className="truncate">{p.name}</span>
-                      {currentBackend === p.id && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
-                    </button>
-                  ))}
-                </div>
-                <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
-                <button
-                  type="button"
-                  onClick={() => {
-                    setIsPlatformMenuOpen(false);
-                    setIsSettingsOpen(true);
-                  }}
-                  className="w-full text-center px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold text-[11px] cursor-pointer flex items-center justify-center gap-1.5"
+            <AnimatePresence>
+              {isPlatformMenuOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: -8, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: -8, scale: 0.96 }}
+                  transition={{ duration: 0.16, ease: 'easeOut' }}
+                  className="absolute top-full right-0 mt-1.5 w-60 rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 shadow-xl p-2 z-50 text-xs"
                 >
-                  <Settings className="w-3 h-3 text-slate-500" />
-                  <span>Configure Platforms...</span>
-                </button>
-              </div>
-            )}
+                  <div className="px-2 py-1 font-bold text-[10px] uppercase tracking-wider text-slate-500 dark:text-slate-400 flex items-center justify-between">
+                    <span>Registered Platforms</span>
+                    {isLoadingModels && <span className="animate-spin text-cyan-500">⟳</span>}
+                  </div>
+                  <div className="space-y-0.5">
+                    {registeredPlatforms.map((p) => (
+                      <button
+                        key={p.id}
+                        type="button"
+                        onClick={() => handleSelectPlatform(p.id)}
+                        className={`w-full text-left px-2.5 py-1.5 rounded-xl transition-colors cursor-pointer flex items-center justify-between ${currentBackend === p.id
+                            ? 'bg-cyan-50 dark:bg-cyan-950/40 text-cyan-700 dark:text-cyan-300 font-semibold'
+                            : 'hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-800 dark:text-slate-200'
+                          }`}
+                      >
+                        <span className="truncate">{p.name}</span>
+                        {currentBackend === p.id && <Check className="w-3 h-3 text-cyan-600 shrink-0" />}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="h-px bg-slate-200 dark:bg-slate-800 my-1.5" />
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setIsPlatformMenuOpen(false);
+                      setIsSettingsOpen(true);
+                    }}
+                    className="w-full text-center px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 font-semibold text-[11px] cursor-pointer flex items-center justify-center gap-1.5"
+                  >
+                    <Settings className="w-3 h-3 text-slate-500" />
+                    <span>Configure Platforms...</span>
+                  </button>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </div>
 
           {/* Settings Modal Button */}
@@ -2896,21 +3902,26 @@ export function WorkflowStudio({
             backgroundPosition: `${pan.x}px ${pan.y}px`,
             backgroundSize: `${24 * zoom}px ${24 * zoom}px`,
             color: 'var(--grid-dot-color, rgba(100, 116, 139, 0.28))',
-            cursor: connectingSourceId ? 'crosshair' : isCanvasPanning ? 'grabbing' : 'grab'
+            cursor: (connectingSource || rewiringEdge) ? 'crosshair' : isCanvasPanning ? 'grabbing' : 'grab'
           }}
         >
-          {/* Wire Linking Banner Alert */}
-          {connectingSourceId && !isExecuting && (
-            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-3 py-1.5 rounded-full bg-cyan-600 text-white text-xs font-semibold shadow-lg flex items-center gap-2 animate-bounce">
+          {/* Wire Linking / Rewiring Banner Alert */}
+          {(connectingSource || rewiringEdge) && !isExecuting && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-30 px-3.5 py-1.5 rounded-full bg-cyan-600 text-white text-xs font-semibold shadow-lg flex items-center gap-2 animate-bounce">
               <LinkIcon className="w-3.5 h-3.5" />
-              <span>Click target activity to link sequence, or press Esc to cancel</span>
+              <span>
+                {rewiringEdge
+                  ? `Click any port to reattach ${rewiringEdge.end === 'from' ? 'source' : 'target'} end (Esc to cancel)`
+                  : 'Click target activity port to link wire (Esc to cancel)'}
+              </span>
               <button
                 type="button"
                 onClick={() => {
-                  setConnectingSourceId(null);
+                  setConnectingSource(null);
+                  setRewiringEdge(null);
                   setConnectingMousePos(null);
                 }}
-                className="p-0.5 rounded-full hover:bg-cyan-700"
+                className="p-0.5 rounded-full hover:bg-cyan-700 cursor-pointer"
               >
                 <X className="w-3 h-3" />
               </button>
@@ -2933,7 +3944,45 @@ export function WorkflowStudio({
             </div>
           )}
 
-          {/* Pan Navigation Hint & Add Swimlane shortcut */}
+          {/* Floating Multi-Selection Action Bar */}
+          {selectedNodeIds.length + selectedLaneIds.length > 1 && !isExecuting && (
+            <div className="absolute top-3 left-1/2 -translate-x-1/2 z-40 flex items-center gap-2.5 px-3.5 py-1.5 rounded-full bg-slate-900/95 dark:bg-slate-800/95 text-white text-xs shadow-2xl border border-cyan-500/50 backdrop-blur-md">
+              <span className="font-semibold text-cyan-400 flex items-center gap-1.5">
+                <Check className="w-3.5 h-3.5" />
+                <span>
+                  {selectedNodeIds.length > 0 && `${selectedNodeIds.length} activities`}
+                  {selectedNodeIds.length > 0 && selectedLaneIds.length > 0 && ' + '}
+                  {selectedLaneIds.length > 0 && `${selectedLaneIds.length} sequences`}
+                  {' selected'}
+                </span>
+              </span>
+              <span className="text-slate-400 text-[10px] hidden sm:inline">
+                (Ctrl+Click to toggle, Drag to move all)
+              </span>
+              <button
+                type="button"
+                onClick={handleDeleteSelected}
+                className="px-2.5 py-0.5 rounded-md bg-rose-600 hover:bg-rose-700 text-white text-[11px] font-bold flex items-center gap-1 cursor-pointer transition-colors shadow-xs"
+                title="Delete selected activities and sequences (or press DEL key)"
+              >
+                <Trash2 className="w-3 h-3" />
+                <span>Delete (Del)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedNodeIds([]);
+                  setSelectedLaneIds([]);
+                }}
+                className="p-1 rounded-full hover:bg-white/10 text-slate-400 hover:text-white cursor-pointer"
+                title="Deselect all (Esc)"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            </div>
+          )}
+
+          {/* Pan Navigation Hint, Add Sequence & Tidy Sequences shortcuts */}
           <div className="absolute bottom-3 left-3 z-10 flex items-center gap-2">
             <div className="pointer-events-none flex items-center gap-2 text-[10px] font-mono text-slate-600 dark:text-slate-400 bg-white/85 dark:bg-slate-900/85 backdrop-blur-xs px-2 py-1 rounded-lg border border-slate-300/80 dark:border-slate-800 shadow-2xs">
               <Move className="w-3 h-3 text-slate-500" />
@@ -2943,60 +3992,224 @@ export function WorkflowStudio({
             <button
               type="button"
               disabled={isExecuting}
-              onClick={() => {
-                if (isExecuting) return;
-                setIsAddLaneModalOpen(true);
-              }}
+              onClick={handleOpenAddSequenceModal}
               className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-300 dark:border-slate-800 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300 shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
-              title={isExecuting ? 'Cannot add lanes while pipeline is executing' : 'Add a new custom swimlane layer'}
+              title={isExecuting ? 'Cannot add sequences while pipeline is executing' : 'Add a new sequence group container'}
             >
               <Plus className="w-3 h-3" />
-              <span>Add Swimlane</span>
+              <span>Add Sequence</span>
+            </button>
+
+            <button
+              type="button"
+              disabled={isExecuting}
+              onClick={handleAutoAlignAllSequences}
+              className="px-2.5 py-1 rounded-lg bg-white/90 dark:bg-slate-900/90 hover:bg-cyan-50 dark:hover:bg-cyan-950/40 disabled:opacity-40 disabled:cursor-not-allowed border border-slate-300 dark:border-slate-800 text-[10px] font-semibold text-cyan-700 dark:text-cyan-300 shadow-2xs transition-colors flex items-center gap-1 cursor-pointer"
+              title="Auto-align all sequences into a tidy, uniform vertical layout"
+            >
+              <Layers className="w-3 h-3" />
+              <span>Tidy Sequences</span>
             </button>
           </div>
 
           {/* Canvas Transform Viewport */}
           <div
-            className={`w-full h-full relative transform-gpu pointer-events-auto ${isCameraAnimating ? 'transition-transform duration-300 ease-out' : ''
-              }`}
+            className={`w-full h-full relative transform-gpu pointer-events-auto ${
+              isCanvasPanning || Boolean(draggingNodeId) || Boolean(draggingSequenceId) || Boolean(resizingSequenceId)
+                ? 'transition-none'
+                : isCameraAnimating
+                  ? 'transition-transform duration-350 ease-out'
+                  : 'transition-transform duration-200 ease-out'
+            }`}
             style={{
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
               transformOrigin: '0 0'
             }}
           >
-            {/* Top Signal Flow Phase Demarcations */}
-            <div className="absolute top-2 left-0 right-0 pointer-events-none flex items-center gap-4 z-0">
-              {SIGNAL_FLOW_PHASES.map((phase) => (
-                <div
-                  key={phase.id}
-                  style={{
-                    position: 'absolute',
-                    left: `${phase.fromX}px`,
-                    width: `${phase.toX - phase.fromX}px`
-                  }}
-                  className="px-2.5 py-1 rounded-lg border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/70 backdrop-blur-xs flex items-center justify-between shadow-2xs"
-                >
-                  <span className="font-mono text-[9.5px] font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 truncate">
-                    {phase.label}
-                  </span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-cyan-500" />
-                </div>
-              ))}
+            {/* 1. UiPath-Style Sequence Containers Layer (Grouping, Draggable, Resizable) */}
+            <div className="absolute inset-0 pointer-events-none z-[1]">
+              {lanes.map((lane, idx) => {
+                const laneColorKey: SequenceColor = lane.color || (lane.variant === 'exception' ? 'red' : 'blue');
+                const colorTheme = SEQUENCE_COLOR_THEMES[laneColorKey] || SEQUENCE_COLOR_THEMES.blue;
+                const isHovered = hoveredLaneId === lane.id;
+                const isSelectedLane = selectedLaneIds.includes(lane.id);
+                const isDraggingThisSequence = draggingSequenceId === lane.id || (Boolean(draggingSequenceId) && isSelectedLane);
+                const isResizingThisSequence = resizingSequenceId === lane.id;
+                const assignedNodesCount = nodes.filter((n) => n.lane === lane.id).length;
+
+                const laneX = lane.x ?? 30;
+                const laneWidth = lane.width ?? 1680;
+
+                return (
+                  <div
+                    key={lane.id}
+                    style={{
+                      position: 'absolute',
+                      left: `${laneX}px`,
+                      top: `${lane.y}px`,
+                      width: `${laneWidth}px`,
+                      height: `${lane.height}px`
+                    }}
+                    className={`sequence-container group pointer-events-none rounded-xl border-2 transition-shadow flex flex-col justify-between ${colorTheme.border} ${colorTheme.bg} ${
+                      isSelectedLane
+                        ? 'ring-2 ring-cyan-500 shadow-2xl z-25'
+                        : isDraggingThisSequence
+                          ? 'shadow-2xl ring-2 ring-cyan-500/50 opacity-95 z-30'
+                          : isResizingThisSequence
+                            ? 'shadow-xl ring-2 ring-cyan-500/40 z-30'
+                            : isHovered
+                              ? 'shadow-md ring-1 ring-cyan-500/30'
+                              : 'shadow-2xs'
+                    }`}
+                  >
+                    {/* Sequence Header Bar (Draggable & Clickable) */}
+                    <div
+                      onPointerDown={(e) => handleSequenceHeaderPointerDown(e, lane.id)}
+                      onDoubleClick={() => handleOpenEditSequenceModal(lane)}
+                      className={`pointer-events-auto flex items-center justify-between px-3 py-1.5 rounded-t-[10px] select-none cursor-grab active:cursor-grabbing transition-colors ${
+                        isSelectedLane ? 'ring-1 ring-cyan-400 bg-cyan-500/15' : ''
+                      } ${colorTheme.headerBg}`}
+                      title="Drag header to move sequence · Ctrl+Click to multi-select · Double click to edit settings"
+                    >
+                      {/* Left: Drag Handle, Number, Label, Status Badge, and Description */}
+                      <div className="flex items-center gap-2.5 min-w-0">
+                        <div className="text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-200">
+                          <GripVertical className="w-3.5 h-3.5" />
+                        </div>
+
+                        <span className="text-[10px] font-mono font-bold px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 text-slate-700 dark:text-slate-200 shrink-0">
+                          {lane.num}
+                        </span>
+
+                        <span className={`text-xs font-bold truncate max-w-[280px] ${colorTheme.headerText}`}>
+                          {lane.label}
+                        </span>
+
+                        {/* Sequence Status / Priority Level Badge with Help Tooltip */}
+                        <div className="relative group/seqinfo flex items-center shrink-0">
+                          <span className={`text-[9px] font-mono font-bold px-2 py-0.5 rounded-full ${colorTheme.badgeClass}`}>
+                            {colorTheme.badgeLabel}
+                          </span>
+                          <div
+                            className="ml-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors cursor-help p-0.5"
+                            title={colorTheme.tooltip}
+                          >
+                            <HelpCircle className="w-3 h-3" />
+                          </div>
+                          {/* Floating Popover on Hover */}
+                          <div className="absolute top-full left-0 mt-1 hidden group-hover/seqinfo:block z-50 w-64 p-2 rounded-lg bg-slate-900/95 dark:bg-slate-800/95 text-slate-100 text-[10px] leading-relaxed shadow-xl border border-slate-700/80 backdrop-blur-xs pointer-events-none">
+                            <div className="font-bold text-cyan-400 mb-0.5">{colorTheme.label} Sequence</div>
+                            <div className="text-slate-300">{colorTheme.tooltip}</div>
+                          </div>
+                        </div>
+
+                        {/* Sequence Description */}
+                        {lane.description && (
+                          <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 truncate max-w-[460px] hidden md:inline">
+                            ({lane.description})
+                          </span>
+                        )}
+                      </div>
+
+                      {/* Right: Activity Count & Control Action Buttons */}
+                      <div className="flex items-center gap-1.5 shrink-0" onClick={(e) => e.stopPropagation()}>
+                        <span className="text-[10px] font-mono text-slate-500 dark:text-slate-400 mr-1.5 hidden sm:inline">
+                          {assignedNodesCount} {assignedNodesCount === 1 ? 'activity' : 'activities'}
+                        </span>
+
+                        {/* Auto-reposition activities inside sequence button */}
+                        <button
+                          type="button"
+                          disabled={isExecuting || assignedNodesCount === 0}
+                          onClick={() => handleAutoRepositionLaneActivities(lane.id)}
+                          className="p-1 rounded-md bg-white/80 dark:bg-slate-900/80 hover:bg-white dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors cursor-pointer disabled:opacity-30"
+                          title="Auto-reposition and tidy activities inside this sequence"
+                        >
+                          <Grid className="w-3 h-3" />
+                        </button>
+
+                        {/* Edit Sequence Settings Button */}
+                        <button
+                          type="button"
+                          disabled={isExecuting}
+                          onClick={() => handleOpenEditSequenceModal(lane)}
+                          className="p-1 rounded-md bg-white/80 dark:bg-slate-900/80 hover:bg-white dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors cursor-pointer disabled:opacity-30"
+                          title="Edit sequence name, description, and color level"
+                        >
+                          <Settings2 className="w-3 h-3" />
+                        </button>
+
+                        {/* Move Up */}
+                        <button
+                          type="button"
+                          disabled={idx === 0 || isExecuting}
+                          onClick={() => handleMoveLane(idx, 'up')}
+                          className="p-1 rounded-md bg-white/80 dark:bg-slate-900/80 hover:bg-white dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-30"
+                          title="Move sequence up"
+                        >
+                          <ArrowUp className="w-3 h-3" />
+                        </button>
+
+                        {/* Move Down */}
+                        <button
+                          type="button"
+                          disabled={idx === lanes.length - 1 || isExecuting}
+                          onClick={() => handleMoveLane(idx, 'down')}
+                          className="p-1 rounded-md bg-white/80 dark:bg-slate-900/80 hover:bg-white dark:hover:bg-slate-800 border border-slate-200 dark:border-slate-700 text-slate-600 dark:text-slate-300 hover:text-slate-950 dark:hover:text-white transition-colors cursor-pointer disabled:opacity-30"
+                          title="Move sequence down"
+                        >
+                          <ArrowDown className="w-3 h-3" />
+                        </button>
+
+                        {/* Delete Sequence */}
+                        <button
+                          type="button"
+                          disabled={lanes.length <= 1 || isExecuting}
+                          onClick={() => handleDeleteLane(lane.id)}
+                          className="p-1 rounded-md bg-white/80 dark:bg-slate-900/80 hover:bg-rose-50 dark:hover:bg-rose-950/40 border border-slate-200 dark:border-slate-700 text-slate-400 hover:text-rose-500 transition-colors cursor-pointer disabled:opacity-30"
+                          title="Delete sequence group"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+
+                    {/* Sequence Body Space (Empty space pans canvas) */}
+                    <div
+                      onMouseDown={(e) => {
+                        if ((e.target as HTMLElement).closest('.workflow-node, button, input, textarea, select, .port-bead')) return;
+                        handleCanvasMouseDown(e);
+                      }}
+                      className="flex-1 relative pointer-events-auto cursor-grab active:cursor-grabbing"
+                      title="Drag canvas to pan · Drag sequence header to move sequence"
+                    />
+
+                    {/* Right Edge Horizontal Resize Handle (Widen Container) */}
+                    <div
+                      onPointerDown={(e) => handleSequenceResizePointerDown(e, lane.id, 'width')}
+                      className="pointer-events-auto absolute right-0 top-0 bottom-0 w-3 cursor-ew-resize hover:bg-cyan-500/20 active:bg-cyan-500/30 transition-colors flex items-center justify-center group/resize rounded-r-xl"
+                      title="Drag horizontally to resize sequence width"
+                    >
+                      <div className="w-1 h-8 rounded-full bg-slate-300/80 dark:bg-slate-700/80 group-hover/resize:bg-cyan-500 transition-colors" />
+                    </div>
+
+                    {/* Bottom-Right Corner Resize Grip (Width and Height) */}
+                    <div
+                      onPointerDown={(e) => handleSequenceResizePointerDown(e, lane.id, 'both')}
+                      className="pointer-events-auto absolute right-1 bottom-1 w-4 h-4 cursor-nwse-resize hover:bg-cyan-500/20 active:bg-cyan-500/30 rounded flex items-center justify-center group/corner"
+                      title="Drag to resize width and height"
+                    >
+                      <div className="w-2 h-2 border-r-2 border-b-2 border-slate-400 dark:border-slate-600 group-hover/corner:border-cyan-500" />
+                    </div>
+                  </div>
+                );
+              })}
             </div>
 
-            {/* Flow Trajectory HUD Pill on Hover */}
-            {flowRelations.flowSummary && (
-              <div className="absolute top-12 left-1/2 -translate-x-1/2 z-20 px-3.5 py-1 rounded-full bg-slate-900/95 dark:bg-slate-900/95 border border-cyan-500/50 shadow-2xl backdrop-blur-md text-[10px] font-mono font-semibold text-cyan-300 flex items-center gap-2 pointer-events-none">
-                <span className="w-2 h-2 rounded-full bg-cyan-400 animate-ping shrink-0" />
-                <span className="text-slate-400 uppercase tracking-wider text-[8.5px]">Flow:</span>
-                <span className="truncate max-w-xl">{flowRelations.flowSummary}</span>
-              </div>
-            )}
-
-            {/* Dynamic Archify SVG Layer: Swimlanes, Stepped Orthogonal Lines, and Flow Animation */}
+            {/* Stepped Orthogonal Lines and Flow Animation SVG Layer */}
             <svg
-              className="absolute inset-0 pointer-events-none z-0 overflow-visible"
-              style={{ width: '2400px', height: `${totalCanvasHeight}px` }}
+              className="absolute inset-0 pointer-events-none z-[5] overflow-visible"
+              style={{ width: `${totalCanvasWidth}px`, height: `${totalCanvasHeight}px` }}
             >
               <defs>
                 <marker id="arrowhead" markerWidth="10" markerHeight="7" refX="9" refY="3.5" orient="auto">
@@ -3022,65 +4235,21 @@ export function WorkflowStudio({
                 </marker>
               </defs>
 
-              {/* Dynamic Swimlanes Frames */}
-              {lanes.map((lane) => {
-                const isException = lane.variant === 'exception';
-                const isHovered = hoveredLaneId === lane.id;
-
-                let laneStroke = isHovered
-                  ? 'stroke-cyan-500 ring-2 ring-cyan-500/30'
-                  : isException
-                    ? 'stroke-rose-400/40 dark:stroke-rose-500/30'
-                    : 'stroke-slate-300 dark:stroke-slate-800/80';
-
-                let laneFill = isHovered
-                  ? 'fill-cyan-500/5 dark:fill-cyan-950/20'
-                  : isException
-                    ? 'fill-rose-500/5 dark:fill-rose-950/20'
-                    : 'fill-white/40 dark:fill-slate-900/30';
-
-                return (
-                  <g key={lane.id}>
-                    <rect
-                      x={30}
-                      y={lane.y}
-                      width={1680}
-                      height={lane.height}
-                      rx={8}
-                      className={`${laneFill} ${laneStroke} transition-colors pointer-events-none`}
-                      strokeWidth={isHovered ? 2 : 1}
-                    />
-
-                    {/* Lane Header Number and Label */}
-                    <text
-                      x={42}
-                      y={lane.y + 18}
-                      className={`text-[10px] font-mono font-semibold select-none ${isException ? 'fill-rose-600 dark:fill-rose-400' : 'fill-slate-600 dark:fill-slate-400'
-                        }`}
-                    >
-                      {lane.num} / {lane.label}
-                    </text>
-                  </g>
-                );
-              })}
-
-              {/* Stepped Orthogonal Connector Lines with vivid Flow Animation */}
+              {/* Stepped Orthogonal Connector Lines */}
               {edges.map((edge) => {
                 const srcPos = nodePositionMap.get(edge.from);
                 const tgtPos = nodePositionMap.get(edge.to);
                 if (!srcPos || !tgtPos) return null;
 
-                const x1 = srcPos.x + NODE_WIDTH;
-                const y1 = srcPos.y + NODE_HEIGHT / 2;
-                const x2 = tgtPos.x;
-                const y2 = tgtPos.y + NODE_HEIGHT / 2;
+                const fromSide = edge.fromSide || 'right';
+                const toSide = edge.toSide || 'left';
+                const p1 = getPortCoord(srcPos, fromSide);
+                const p2 = getPortCoord(tgtPos, toSide);
 
-                const route = getOrthogonalRoute(x1, y1, x2, y2);
-                const isHoverRelated = flowRelations.relatedEdgeIds.has(edge.id);
-                const isDownstream = flowRelations.outgoingEdges.some((e) => e.id === edge.id);
-                const isUpstream = flowRelations.incomingEdges.some((e) => e.id === edge.id);
-                const isDimmed = hoveredNodeId !== null && !isHoverRelated;
-                const isFlowActive = isHoverRelated || activeFlowEdgeId === edge.id || (isExecuting && edge.from === activeExecutingNodeId);
+                const route = getOrthogonalRoute(p1.x, p1.y, p2.x, p2.y, fromSide, toSide);
+                const isSelectedEdge = selectedEdgeId === edge.id;
+                const isSelectedFlow = selectedNodeId === edge.from;
+                const isFlowActive = isSelectedFlow || activeFlowEdgeId === edge.id || (isExecuting && edge.from === activeExecutingNodeId);
 
                 let strokeColor = '#64748b';
                 let markerUrl = 'url(#arrowhead)';
@@ -3096,41 +4265,45 @@ export function WorkflowStudio({
                   markerUrl = 'url(#arrowhead-dashed)';
                 }
 
-                if (isHoverRelated) {
-                  if (isDownstream) {
-                    strokeColor = '#06b6d4';
-                    markerUrl = 'url(#arrowhead-downstream)';
-                  } else if (isUpstream) {
-                    strokeColor = '#a855f7';
-                    markerUrl = 'url(#arrowhead-upstream)';
-                  }
-                } else if (isFlowActive) {
+                if (isFlowActive) {
+                  strokeColor = '#06b6d4';
+                  markerUrl = 'url(#arrowhead-running)';
+                }
+                if (isSelectedEdge) {
                   strokeColor = '#06b6d4';
                   markerUrl = 'url(#arrowhead-running)';
                 }
 
                 return (
-                  <g
-                    key={edge.id}
-                    className={`transition-opacity duration-200 ${isDimmed ? 'opacity-20' : 'opacity-100'
-                      }`}
-                  >
-                    {/* Glowing pulse trail when active flow or hovered */}
-                    {isFlowActive && (
+                  <g key={edge.id} className="group/wire">
+                    {/* Invisible broad hitbox path for clicking to select wire */}
+                    <path
+                      d={route.path}
+                      fill="none"
+                      stroke="transparent"
+                      strokeWidth={22}
+                      className="cursor-pointer pointer-events-auto"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEdgeId(edge.id);
+                        setSelectedNodeIds([]);
+                        setSelectedLaneIds([]);
+                        setRewiringEdge(null);
+                      }}
+                    >
+                      <title>Click wire to select · Press DEL to delete · Drag or click endpoints to rewire</title>
+                    </path>
+
+                    {/* Glowing pulse trail when active executing or selected */}
+                    {(isFlowActive || isSelectedEdge) && (
                       <path
                         d={route.path}
                         fill="none"
-                        stroke={
-                          isDownstream
-                            ? 'rgba(6, 182, 212, 0.65)'
-                            : isUpstream
-                              ? 'rgba(168, 85, 247, 0.55)'
-                              : 'rgba(6, 182, 212, 0.5)'
-                        }
-                        strokeWidth={isHoverRelated ? 7 : 5}
+                        stroke="rgba(6, 182, 212, 0.55)"
+                        strokeWidth={isSelectedEdge ? 7 : 5}
                         strokeLinecap="round"
                         strokeLinejoin="round"
-                        className="animate-pulse"
+                        className={isSelectedEdge ? '' : 'animate-pulse'}
                       />
                     )}
 
@@ -3139,91 +4312,173 @@ export function WorkflowStudio({
                       d={route.path}
                       fill="none"
                       stroke={strokeColor}
-                      strokeWidth={isHoverRelated ? 2.8 : isFlowActive ? 2.5 : 1.6}
+                      strokeWidth={isSelectedEdge ? 3 : isFlowActive ? 2.5 : 1.6}
                       strokeLinecap="round"
                       strokeLinejoin="round"
                       strokeDasharray={edge.variant === 'dashed' || isFlowActive ? '6 4' : 'none'}
                       markerEnd={markerUrl}
                     />
 
-                    {/* Animated Traveling Particle Pulse showing EXACT flow direction in real time */}
+                    {/* Traveling Particle Pulse during execution */}
                     {isFlowActive && (
+                      <circle r={4} fill="#06b6d4">
+                        <animateMotion
+                          dur="0.9s"
+                          repeatCount="indefinite"
+                          path={route.path}
+                        />
+                      </circle>
+                    )}
+
+                    {/* Selected Edge Interactive Endpoint Reconnection Beads */}
+                    {isSelectedEdge && (
                       <>
+                        {/* Source Endpoint Bead */}
                         <circle
-                          r={isHoverRelated ? 4.5 : 4}
-                          fill={isDownstream ? '#06b6d4' : isUpstream ? '#a855f7' : '#06b6d4'}
+                          cx={p1.x}
+                          cy={p1.y}
+                          r={6}
+                          className="fill-cyan-500 stroke-2 stroke-white dark:stroke-slate-900 cursor-pointer pointer-events-auto hover:scale-125 transition-transform shadow-md"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRewiringEdge({ edgeId: edge.id, end: 'from' });
+                          }}
                         >
-                          <animateMotion
-                            dur={isDownstream ? '0.75s' : isUpstream ? '1.05s' : '0.9s'}
-                            repeatCount="indefinite"
-                            path={route.path}
-                          />
+                          <title>Click to rewire source end (click any activity port)</title>
                         </circle>
-                        {isDownstream && (
-                          <circle r="2.5" fill="#67e8f9" opacity="0.85">
-                            <animateMotion
-                              dur="0.75s"
-                              begin="0.38s"
-                              repeatCount="indefinite"
-                              path={route.path}
-                            />
-                          </circle>
-                        )}
+
+                        {/* Target Endpoint Bead */}
+                        <circle
+                          cx={p2.x}
+                          cy={p2.y}
+                          r={6}
+                          className="fill-amber-500 stroke-2 stroke-white dark:stroke-slate-900 cursor-pointer pointer-events-auto hover:scale-125 transition-transform shadow-md"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setRewiringEdge({ edgeId: edge.id, end: 'to' });
+                          }}
+                        >
+                          <title>Click to rewire target end (click any activity port)</title>
+                        </circle>
                       </>
                     )}
 
-                    {/* Edge Label Pill */}
-                    {edge.label && (
-                      <g transform={`translate(${route.labelX}, ${route.labelY})`}>
-                        <rect
-                          x={-34}
-                          y={-9}
-                          width={68}
-                          height={17}
-                          rx={4}
-                          className={`${isHoverRelated
-                              ? isDownstream
-                                ? 'fill-cyan-950 stroke-cyan-400 dark:fill-cyan-950 dark:stroke-cyan-400'
-                                : 'fill-purple-950 stroke-purple-400 dark:fill-purple-950 dark:stroke-purple-400'
-                              : 'fill-white dark:fill-slate-900 stroke-slate-300 dark:stroke-slate-700'
-                            }`}
-                          strokeWidth={isHoverRelated ? 1.5 : 1}
-                        />
-                        <text
-                          x={0}
-                          y={3}
-                          className={`text-[8.5px] font-mono font-bold select-none text-anchor-middle text-center ${isHoverRelated
-                              ? isDownstream
-                                ? 'fill-cyan-300'
-                                : 'fill-purple-300'
-                              : 'fill-slate-700 dark:fill-slate-300'
-                            }`}
-                          textAnchor="middle"
-                        >
-                          {edge.label}
-                        </text>
-                      </g>
-                    )}
+                    {/* Edge Label Pill or Quick Action Toolbar */}
+                    <g
+                      transform={`translate(${route.labelX}, ${route.labelY})`}
+                      className="pointer-events-auto cursor-pointer"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedEdgeId(edge.id);
+                        setSelectedNodeIds([]);
+                        setSelectedLaneIds([]);
+                      }}
+                    >
+                      {isSelectedEdge ? (
+                        <g>
+                          <rect
+                            x={-44}
+                            y={-11}
+                            width={88}
+                            height={22}
+                            rx={11}
+                            className="fill-slate-900 text-white dark:fill-white dark:text-slate-900 shadow-xl"
+                          />
+                          <text
+                            x={-12}
+                            y={4}
+                            className="text-[9px] font-bold font-mono fill-white dark:fill-slate-900 select-none text-anchor-middle"
+                            textAnchor="middle"
+                          >
+                            {edge.label || 'wire'}
+                          </text>
+                          {/* Quick Delete 'x' Button */}
+                          <g
+                            transform="translate(22, 0)"
+                            className="cursor-pointer hover:opacity-80"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteEdge(edge.id);
+                              setSelectedEdgeId(null);
+                            }}
+                          >
+                            <circle r={7} className="fill-rose-500" />
+                            <text x={0} y={3} textAnchor="middle" className="fill-white text-[9px] font-bold">×</text>
+                          </g>
+                        </g>
+                      ) : edge.label ? (
+                        <g>
+                          <rect
+                            x={-34}
+                            y={-9}
+                            width={68}
+                            height={17}
+                            rx={4}
+                            className="fill-white dark:fill-slate-900 stroke-slate-300 dark:stroke-slate-700"
+                            strokeWidth={1}
+                          />
+                          <text
+                            x={0}
+                            y={3}
+                            className="text-[8.5px] font-mono font-bold select-none text-anchor-middle text-center fill-slate-700 dark:text-slate-300"
+                            textAnchor="middle"
+                          >
+                            {edge.label}
+                          </text>
+                        </g>
+                      ) : null}
+                    </g>
                   </g>
                 );
               })}
 
               {/* Dynamic Live Wire Preview Line while connecting */}
-              {connectingSourceId && connectingMousePos && nodePositionMap.get(connectingSourceId) && (
+              {connectingSource && connectingMousePos && nodePositionMap.get(connectingSource.nodeId) && (
                 (() => {
-                  const sPos = nodePositionMap.get(connectingSourceId)!;
-                  const x1 = sPos.x + NODE_WIDTH;
-                  const y1 = sPos.y + NODE_HEIGHT / 2;
+                  const sPos = nodePositionMap.get(connectingSource.nodeId)!;
+                  const p1 = getPortCoord(sPos, connectingSource.side);
+                  const x1 = p1.x;
+                  const y1 = p1.y;
                   const x2 = connectingMousePos.x;
                   const y2 = connectingMousePos.y;
-                  const route = getOrthogonalRoute(x1, y1, x2, y2);
+                  const route = getOrthogonalRoute(x1, y1, x2, y2, connectingSource.side, 'left');
                   return (
                     <path
                       d={route.path}
                       fill="none"
                       stroke="#06b6d4"
-                      strokeWidth={2}
-                      strokeDasharray="4 4"
+                      strokeWidth={2.5}
+                      strokeDasharray="5 4"
+                      markerEnd="url(#arrowhead-running)"
+                      className="animate-pulse"
+                    />
+                  );
+                })()
+              )}
+
+              {/* Dynamic Live Wire Preview Line while rewiring existing edge */}
+              {rewiringEdge && connectingMousePos && (
+                (() => {
+                  const edge = edges.find((e) => e.id === rewiringEdge.edgeId);
+                  if (!edge) return null;
+                  const fixedNodeId = rewiringEdge.end === 'from' ? edge.to : edge.from;
+                  const fixedSide = rewiringEdge.end === 'from' ? (edge.toSide || 'left') : (edge.fromSide || 'right');
+                  const fPos = nodePositionMap.get(fixedNodeId);
+                  if (!fPos) return null;
+                  const pFixed = getPortCoord(fPos, fixedSide);
+                  const pMouse = connectingMousePos;
+                  const x1 = rewiringEdge.end === 'from' ? pMouse.x : pFixed.x;
+                  const y1 = rewiringEdge.end === 'from' ? pMouse.y : pFixed.y;
+                  const x2 = rewiringEdge.end === 'from' ? pFixed.x : pMouse.x;
+                  const y2 = rewiringEdge.end === 'from' ? pFixed.y : pMouse.y;
+                  const route = getOrthogonalRoute(x1, y1, x2, y2, fixedSide, 'left');
+                  return (
+                    <path
+                      d={route.path}
+                      fill="none"
+                      stroke="#f59e0b"
+                      strokeWidth={2.5}
+                      strokeDasharray="5 4"
                       markerEnd="url(#arrowhead)"
                       className="animate-pulse"
                     />
@@ -3232,55 +4487,11 @@ export function WorkflowStudio({
               )}
             </svg>
 
-            {/* Swimlane Control Action Buttons in Canvas (Move Up, Down, Delete) */}
-            <div className="absolute top-0 left-0 pointer-events-auto z-10">
-              {lanes.map((lane, idx) => (
-                <div
-                  key={lane.id}
-                  style={{
-                    position: 'absolute',
-                    left: '1640px',
-                    top: `${lane.y + 8}px`
-                  }}
-                  className={`flex items-center gap-1 transition-opacity ${isExecuting ? 'opacity-30 pointer-events-none' : 'opacity-60 hover:opacity-100'
-                    }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => handleMoveLane(idx, 'up')}
-                    disabled={idx === 0 || isExecuting}
-                    className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 cursor-pointer"
-                    title="Move swimlane up"
-                  >
-                    <ArrowUp className="w-2.5 h-2.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleMoveLane(idx, 'down')}
-                    disabled={idx === lanes.length - 1 || isExecuting}
-                    className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-500 hover:text-slate-900 dark:hover:text-white disabled:opacity-30 cursor-pointer"
-                    title="Move swimlane down"
-                  >
-                    <ArrowDown className="w-2.5 h-2.5" />
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteLane(lane.id)}
-                    disabled={isExecuting}
-                    className="p-1 rounded bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-slate-400 hover:text-rose-500 disabled:opacity-30 cursor-pointer"
-                    title="Delete this swimlane"
-                  >
-                    <Trash2 className="w-2.5 h-2.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-
-            {/* Draggable Archify-Styled Activity Object Cards */}
-            <div className="absolute inset-0 z-10 pointer-events-none">
+            {/* Draggable Archify-Styled Activity Object Cards Layer */}
+            <div className="absolute inset-0 z-20 pointer-events-none">
               {nodes.map((node) => {
-                const isSelected = selectedNodeId === node.id;
-                const isDragging = draggingNodeId === node.id;
+                const isSelected = selectedNodeIds.includes(node.id);
+                const isDragging = draggingNodeId === node.id || (Boolean(draggingNodeId) && isSelected);
                 const isRunning = node.status === 'running';
                 const isSuccess = node.status === 'success';
                 const isError = node.status === 'error';
@@ -3288,11 +4499,10 @@ export function WorkflowStudio({
 
                 const isCurrentActiveStep = activeExecutingNodeId === node.id;
                 const isNextTargetStep = nextTargetNodeId === node.id;
-
                 const isHovered = hoveredNodeId === node.id;
-                const isDownstreamTarget = flowRelations.downstreamNodeIds.has(node.id);
-                const isUpstreamSource = flowRelations.upstreamNodeIds.has(node.id);
-                const isDimmedNode = hoveredNodeId !== null && !flowRelations.relatedNodeIds.has(node.id);
+                const isDownstreamTarget = Boolean(
+                  selectedNodeId && edges.some((e) => e.from === selectedNodeId && e.to === node.id)
+                );
 
                 const typeStyle = ARCHIFY_TYPE_STYLES[node.type] || ARCHIFY_TYPE_STYLES.backend;
                 const targetWs = node.config.workspace || activeWorkspace || 'default';
@@ -3311,6 +4521,22 @@ export function WorkflowStudio({
                     onPointerDown={(e) => handleNodePointerDown(e, node.id)}
                     onMouseEnter={() => handleNodeMouseEnter(node.id)}
                     onMouseLeave={handleNodeMouseLeave}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (justDraggedNodeRef.current) {
+                        justDraggedNodeRef.current = false;
+                        return;
+                      }
+                      if (e.ctrlKey || e.metaKey) {
+                        // Multi-selection toggle with Ctrl+Click
+                        setSelectedNodeIds((prev) =>
+                          prev.includes(node.id) ? prev.filter((x) => x !== node.id) : [...prev, node.id]
+                        );
+                        setSelectedLaneIds([]);
+                      } else {
+                        handleSelectNode(node.id);
+                      }
+                    }}
                     style={{
                       position: 'absolute',
                       left: `${node.x}px`,
@@ -3319,100 +4545,106 @@ export function WorkflowStudio({
                       height: `${NODE_HEIGHT}px`,
                       touchAction: 'none'
                     }}
-                    className={`workflow-node pointer-events-auto group rounded-lg border text-left cursor-grab select-none relative p-2 flex flex-col justify-between transition-all duration-200 ${typeStyle.container
-                      } ${isDragging ? 'cursor-grabbing opacity-90 scale-[1.02] shadow-xl z-20' : ''
-                      } ${isDimmedNode ? 'opacity-25 filter grayscale-30' : 'opacity-100'
-                      } ${isHovered
-                        ? 'ring-4 ring-cyan-500 ring-offset-2 dark:ring-offset-slate-950 shadow-2xl z-30 scale-[1.03]'
-                        : isDownstreamTarget
-                          ? 'ring-2 ring-emerald-400 border-emerald-400 ring-offset-1 dark:ring-offset-slate-900 shadow-xl z-25'
-                          : isUpstreamSource
-                            ? 'ring-2 ring-purple-400/80 border-purple-400/80 shadow-md z-20'
-                            : isCurrentActiveStep
-                              ? 'ring-4 ring-cyan-500 ring-offset-2 dark:ring-offset-slate-950 shadow-xl z-30 animate-pulse'
-                              : isNextTargetStep
-                                ? 'border-amber-400 border-dashed ring-2 ring-amber-400/50 shadow-md z-20'
-                                : isSelected
-                                  ? 'ring-2 ring-cyan-500 shadow-md z-10'
-                                  : isRunning
-                                    ? 'ring-2 ring-amber-400 animate-pulse'
-                                    : isSuccess
-                                      ? 'ring-2 ring-emerald-500'
-                                      : isError
-                                        ? 'ring-2 ring-rose-500'
-                                        : 'hover:shadow-sm'
-                      }`}
+                    className={`workflow-node pointer-events-auto group rounded-lg border text-left select-none relative p-2 flex flex-col justify-between ${
+                      isDragging || draggingSequenceId
+                        ? 'cursor-grabbing transition-none'
+                        : 'cursor-grab transition-[border-color,background-color,box-shadow,transform] duration-150'
+                    } ${typeStyle.container} ${
+                      isDragging ? 'opacity-90 scale-[1.02] shadow-xl z-30' : ''
+                    } ${
+                      isHovered
+                        ? `${typeStyle.hoverShadow} scale-[1.015] z-30`
+                        : isSelected
+                          ? 'ring-2 ring-cyan-500 shadow-xl shadow-cyan-500/20 scale-[1.02] z-30'
+                          : isCurrentActiveStep
+                            ? 'ring-2 ring-cyan-500 shadow-lg z-25'
+                            : isNextTargetStep
+                              ? 'border-amber-400 border-dashed ring-2 ring-amber-400/50 shadow-md z-20'
+                              : isDownstreamTarget
+                                ? 'ring-2 ring-cyan-400/80 border-cyan-400 shadow-md shadow-cyan-400/10 animate-pulse z-20'
+                                : isRunning
+                                  ? 'ring-2 ring-amber-400 animate-pulse'
+                                  : isSuccess
+                                    ? 'ring-2 ring-emerald-500'
+                                    : isError
+                                      ? 'ring-2 ring-rose-500'
+                                      : 'hover:shadow-sm'
+                    }`}
                   >
-                    {/* Visual Flow Indicator Badges on Hover */}
-                    {isHovered && (
+                    {/* Visual Flow Indicator Pill for Active Executing Node (Pipeline Execution only) */}
+                    {isCurrentActiveStep && (
                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-cyan-600 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1 uppercase tracking-wider">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                        <span>Active Focus</span>
+                        <span>ACTIVE</span>
                       </span>
                     )}
 
-                    {isDownstreamTarget && !isHovered && (
-                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-emerald-600 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1 uppercase tracking-wider animate-bounce">
-                        <span>➔ Flow Target</span>
-                      </span>
-                    )}
-
-                    {isUpstreamSource && !isHovered && !isDownstreamTarget && (
-                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-purple-700 text-white text-[8px] font-bold shadow-md z-20 flex items-center gap-1 uppercase tracking-wider">
-                        <span>Source Origin ➔</span>
-                      </span>
-                    )}
-
-                    {/* Visual Flow Indicator Pill for Active Executing Node */}
-                    {isCurrentActiveStep && !isHovered && (
-                      <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-cyan-600 text-white text-[8px] font-bold shadow-md flex items-center gap-1 z-30">
-                        <span className="w-1.5 h-1.5 rounded-full bg-white animate-ping" />
-                        ACTIVE
-                      </span>
-                    )}
-
-                    {/* Visual Flow Indicator Pill for Next Target Node */}
-                    {isNextTargetStep && !isCurrentActiveStep && !isHovered && !isDownstreamTarget && (
+                    {isNextTargetStep && !isCurrentActiveStep && (
                       <span className="absolute -top-3.5 left-1/2 -translate-x-1/2 px-2 py-0.5 rounded-full bg-amber-500 text-white text-[8px] font-bold shadow-md z-30 flex items-center gap-1">
-                        <span>NEXT IN FLOW ➔</span>
+                        <span>NEXT ➔</span>
                       </span>
                     )}
 
-                    {/* Left input terminal bead */}
-                    <div
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isExecuting) return;
-                        if (connectingSourceId && connectingSourceId !== node.id) {
-                          handleAddEdge(connectingSourceId, node.id);
-                          setConnectingSourceId(null);
-                          setConnectingMousePos(null);
-                        }
-                      }}
-                      className={`port-bead absolute -left-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full bg-slate-400 dark:bg-slate-600 border border-white dark:border-slate-900 group-hover:bg-cyan-500 transition-colors pointer-events-auto ${isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
-                        }`}
-                      title={isExecuting ? 'Locked during execution' : 'Input Port: Click to connect wire here'}
-                    />
+                    {/* 4-sided Connection Ports (Top, Bottom, Left, Right) */}
+                    {PORT_SIDES.map(({ side, posClass, title }) => {
+                      const isThisPortConnecting = connectingSource?.nodeId === node.id && connectingSource?.side === side;
+                      return (
+                        <div
+                          key={side}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (isExecuting) return;
 
-                    {/* Right output terminal bead (Click to start sequence wire) */}
-                    <div
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        if (isExecuting) return;
-                        if (connectingSourceId === node.id) {
-                          setConnectingSourceId(null);
-                          setConnectingMousePos(null);
-                        } else {
-                          setConnectingSourceId(node.id);
-                        }
-                      }}
-                      className={`port-bead absolute -right-1.5 top-1/2 -translate-y-1/2 w-3 h-3 rounded-full border border-white dark:border-slate-900 transition-all pointer-events-auto ${isExecuting ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
-                        } ${connectingSourceId === node.id
-                          ? 'bg-cyan-500 scale-125 ring-2 ring-cyan-400 animate-ping'
-                          : 'bg-slate-400 dark:bg-slate-600 group-hover:bg-cyan-500 hover:scale-125'
-                        }`}
-                      title={isExecuting ? 'Locked during execution' : 'Output Port: Click to link sequence to another activity'}
-                    />
+                            // 1. If rewiring an existing wire endpoint
+                            if (rewiringEdge) {
+                              recordHistory();
+                              setEdges((prev) =>
+                                prev.map((ed) => {
+                                  if (ed.id === rewiringEdge.edgeId) {
+                                    return rewiringEdge.end === 'from'
+                                      ? { ...ed, from: node.id, fromSide: side }
+                                      : { ...ed, to: node.id, toSide: side };
+                                  }
+                                  return ed;
+                                })
+                              );
+                              setRewiringEdge(null);
+                              setSelectedEdgeId(rewiringEdge.edgeId);
+                              setSaveToastMessage('Connection wire repositioned successfully');
+                              setTimeout(() => setSaveToastMessage(null), 2500);
+                              return;
+                            }
+
+                            // 2. If creating a new connection from a source port
+                            if (connectingSource) {
+                              if (connectingSource.nodeId === node.id && connectingSource.side === side) {
+                                setConnectingSource(null);
+                                setConnectingMousePos(null);
+                              } else if (connectingSource.nodeId !== node.id) {
+                                handleAddEdge(connectingSource.nodeId, node.id, connectingSource.side, side);
+                                setConnectingSource(null);
+                                setConnectingMousePos(null);
+                              } else {
+                                setConnectingSource({ nodeId: node.id, side });
+                              }
+                              return;
+                            }
+
+                            // 3. Initiate new wire link from this port
+                            setConnectingSource({ nodeId: node.id, side });
+                          }}
+                          className={`port-bead absolute ${posClass} w-3 h-3 rounded-full border border-white dark:border-slate-900 transition-all pointer-events-auto z-20 ${
+                            isExecuting ? 'cursor-not-allowed opacity-40' : 'cursor-pointer hover:scale-125'
+                          } ${
+                            isThisPortConnecting
+                              ? 'bg-cyan-500 scale-125 ring-2 ring-cyan-400 animate-ping'
+                              : rewiringEdge
+                                ? 'bg-amber-500 ring-2 ring-amber-400 hover:bg-amber-400'
+                                : 'bg-slate-400 dark:bg-slate-600 group-hover:bg-cyan-500'
+                          }`}
+                          title={isExecuting ? 'Locked during execution' : `${title}: Click to connect wire`}
+                        />
+                      );
+                    })}
 
                     {/* Top Row: Sequence Badge, Sigil Icon, Title & Delete */}
                     <div className="flex items-center justify-between gap-1 w-full">
@@ -3492,11 +4724,19 @@ export function WorkflowStudio({
           </div>
         </main>
 
-        {/* Right Node Inspector Panel */}
+        {/* Right Node & Wire Inspector Panel */}
         <AnimatePresence>
-          {selectedNode && (
-            <aside className="w-84 h-full border-l border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-md p-3.5 flex flex-col z-20 overflow-y-auto shadow-sm">
-              <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+          {(selectedNode || selectedEdge) && (
+            <motion.aside
+              initial={{ opacity: 0, x: 28 }}
+              animate={{ opacity: 1, x: 0 }}
+              exit={{ opacity: 0, x: 28 }}
+              transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
+              className="w-84 h-full border-l border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-md p-3.5 flex flex-col z-20 overflow-y-auto shadow-sm"
+            >
+              {selectedNode ? (
+                <>
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-2">
                   <Settings2 className="w-4 h-4 text-slate-600 dark:text-slate-400" />
                   <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
@@ -3505,8 +4745,9 @@ export function WorkflowStudio({
                 </div>
                 <button
                   type="button"
-                  onClick={() => setSelectedNodeId(null)}
+                  onClick={handleUnselectNode}
                   className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors cursor-pointer"
+                  title="Deselect activity and restore overview (Esc)"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
@@ -3866,7 +5107,166 @@ export function WorkflowStudio({
                   </button>
                 </div>
               </div>
-            </aside>
+            </>
+          ) : selectedEdge ? (
+                <div className="space-y-3.5 text-xs flex-1">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
+                    <div className="flex items-center gap-2">
+                      <LinkIcon className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                      <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                        Wire Connection Properties
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => setSelectedEdgeId(null)}
+                      className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 transition-colors cursor-pointer"
+                    >
+                      <X className="w-3.5 h-3.5" />
+                    </button>
+                  </div>
+
+                  {/* Wire Source Node and Side */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                      Source Activity & Port Side
+                    </label>
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                        {nodes.find((n) => n.id === selectedEdge.from)?.title || selectedEdge.from}
+                      </p>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['top', 'bottom', 'left', 'right'] as PortSide[]).map((side) => (
+                          <button
+                            key={side}
+                            type="button"
+                            onClick={() => {
+                              recordHistory();
+                              setEdges((prev) =>
+                                prev.map((e) => (e.id === selectedEdge.id ? { ...e, fromSide: side } : e))
+                              );
+                            }}
+                            className={`py-1 text-[10px] font-bold uppercase rounded-lg border transition-colors cursor-pointer ${
+                              (selectedEdge.fromSide || 'right') === side
+                                ? 'bg-cyan-500 text-white border-cyan-500'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {side}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Wire Target Node and Side */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                      Target Activity & Port Side
+                    </label>
+                    <div className="p-2.5 rounded-xl bg-slate-50 dark:bg-slate-800/60 border border-slate-200 dark:border-slate-700/80 space-y-2">
+                      <p className="font-semibold text-slate-900 dark:text-slate-100 truncate">
+                        {nodes.find((n) => n.id === selectedEdge.to)?.title || selectedEdge.to}
+                      </p>
+                      <div className="grid grid-cols-4 gap-1">
+                        {(['top', 'bottom', 'left', 'right'] as PortSide[]).map((side) => (
+                          <button
+                            key={side}
+                            type="button"
+                            onClick={() => {
+                              recordHistory();
+                              setEdges((prev) =>
+                                prev.map((e) => (e.id === selectedEdge.id ? { ...e, toSide: side } : e))
+                              );
+                            }}
+                            className={`py-1 text-[10px] font-bold uppercase rounded-lg border transition-colors cursor-pointer ${
+                              (selectedEdge.toSide || 'left') === side
+                                ? 'bg-cyan-500 text-white border-cyan-500'
+                                : 'bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 border-slate-300 dark:border-slate-700 hover:bg-slate-100 dark:hover:bg-slate-800'
+                            }`}
+                          >
+                            {side}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Wire Label */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                      Wire Label
+                    </label>
+                    <input
+                      type="text"
+                      value={selectedEdge.label || ''}
+                      placeholder="e.g. next, loop, success"
+                      onChange={(e) => {
+                        const val = e.target.value;
+                        setEdges((prev) =>
+                          prev.map((ed) => (ed.id === selectedEdge.id ? { ...ed, label: val } : ed))
+                        );
+                      }}
+                      className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs"
+                    />
+                  </div>
+
+                  {/* Wire Style Variant */}
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400 block mb-1">
+                      Wire Style
+                    </label>
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {(['default', 'emphasis', 'security', 'dashed'] as const).map((variant) => (
+                        <button
+                          key={variant}
+                          type="button"
+                          onClick={() => {
+                            recordHistory();
+                            setEdges((prev) =>
+                              prev.map((e) => (e.id === selectedEdge.id ? { ...e, variant } : e))
+                            );
+                          }}
+                          className={`py-1.5 px-2 rounded-xl text-left border text-[11px] font-semibold capitalize cursor-pointer ${
+                            (selectedEdge.variant || 'default') === variant
+                              ? 'bg-cyan-50 dark:bg-cyan-950/40 border-cyan-500 text-cyan-700 dark:text-cyan-300'
+                              : 'bg-white dark:bg-slate-900 border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          {variant}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Rewire & Delete Actions */}
+                  <div className="pt-2 space-y-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRewiringEdge({ edgeId: selectedEdge.id, end: 'to' });
+                      }}
+                      className="w-full py-1.5 px-3 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                    >
+                      <RefreshCw className="w-3.5 h-3.5" />
+                      <span>Rewire Target (Click Port on Canvas)</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => {
+                        handleDeleteEdge(selectedEdge.id);
+                        setSelectedEdgeId(null);
+                      }}
+                      className="w-full py-1.5 px-3 rounded-xl bg-rose-50 dark:bg-rose-950/30 hover:bg-rose-100 dark:hover:bg-rose-900/50 text-rose-600 dark:text-rose-400 border border-rose-300 dark:border-rose-800 font-semibold text-xs flex items-center justify-center gap-1.5 cursor-pointer transition-colors"
+                    >
+                      <Trash2 className="w-3.5 h-3.5" />
+                      <span>Delete Wire (Del)</span>
+                    </button>
+                  </div>
+                </div>
+              ) : null}
+            </motion.aside>
           )}
         </AnimatePresence>
       </div>
@@ -4022,88 +5422,146 @@ export function WorkflowStudio({
         )}
       </AnimatePresence>
 
-      {/* Dedicated Styled Modal for Adding a New Swimlane */}
+      {/* Sequence Group Add / Edit Modal (UiPath Style) */}
       <AnimatePresence>
-        {isAddLaneModalOpen && (
-          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-xs">
+        {sequenceModal.isOpen && (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs"
+            onClick={() => setSequenceModal((prev) => ({ ...prev, isOpen: false }))}
+          >
             <motion.div
               initial={{ scale: 0.95, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0.95, opacity: 0 }}
+              onClick={(e) => e.stopPropagation()}
               className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-5 shadow-2xl space-y-4"
             >
               <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
                 <div className="flex items-center gap-2">
-                  <Plus className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
+                  <Layers className="w-4 h-4 text-cyan-600 dark:text-cyan-400" />
                   <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                    Add Custom Swimlane
+                    {sequenceModal.mode === 'edit' ? 'Edit Sequence Group' : 'Add Sequence Group'}
                   </h3>
                 </div>
                 <button
                   type="button"
-                  onClick={() => setIsAddLaneModalOpen(false)}
-                  className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500"
+                  onClick={() => setSequenceModal((prev) => ({ ...prev, isOpen: false }))}
+                  className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
                 >
                   <X className="w-4 h-4" />
                 </button>
               </div>
 
+              {/* Sequence Name */}
               <div>
                 <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1.5">
-                  Swimlane Name
+                  Sequence Name
                 </label>
                 <input
                   type="text"
-                  value={newLaneLabelInput}
-                  onChange={(e) => setNewLaneLabelInput(e.target.value)}
-                  placeholder="e.g. Verification & Code Review"
+                  value={sequenceModal.label}
+                  onChange={(e) => setSequenceModal((prev) => ({ ...prev, label: e.target.value }))}
+                  placeholder="e.g. Planning & Tool Execution"
                   className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500"
                   autoFocus
                 />
               </div>
 
+              {/* Sequence Description */}
               <div>
                 <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1.5">
-                  Lane Style Variant
+                  Description
                 </label>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    onClick={() => setNewLaneVariantInput('default')}
-                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${newLaneVariantInput === 'default'
-                        ? 'border-cyan-500 bg-cyan-50 dark:bg-cyan-950/40 text-cyan-800 dark:text-cyan-200 font-semibold'
-                        : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                  >
-                    Standard Swimlane
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setNewLaneVariantInput('exception')}
-                    className={`p-2 rounded-xl border text-xs font-medium cursor-pointer transition-colors ${newLaneVariantInput === 'exception'
-                        ? 'border-rose-500 bg-rose-50 dark:bg-rose-950/40 text-rose-800 dark:text-rose-200 font-semibold'
-                        : 'border-slate-300 dark:border-slate-700 text-slate-700 dark:text-slate-300'
-                      }`}
-                  >
-                    Policy / Safety Guard
-                  </button>
+                <textarea
+                  value={sequenceModal.description}
+                  onChange={(e) => setSequenceModal((prev) => ({ ...prev, description: e.target.value }))}
+                  placeholder="Brief explanation of the tasks or purpose of this sequence"
+                  rows={2}
+                  className="w-full px-3 py-2 rounded-xl bg-slate-50 dark:bg-slate-800/80 border border-slate-300 dark:border-slate-700 text-xs font-normal text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 resize-none"
+                />
+              </div>
+
+              {/* Sequence Color / Status Level Selection */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <label className="text-[11px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
+                    Priority & Classification Level
+                  </label>
+                </div>
+                <div className="grid grid-cols-3 gap-2">
+                  {(['blue', 'yellow', 'red'] as SequenceColor[]).map((colKey) => {
+                    const theme = SEQUENCE_COLOR_THEMES[colKey];
+                    const isSelected = sequenceModal.color === colKey;
+                    const ringColor =
+                      colKey === 'blue'
+                        ? 'border-blue-500 bg-blue-50/70 dark:bg-blue-950/40 ring-2 ring-blue-500/25'
+                        : colKey === 'yellow'
+                          ? 'border-amber-500 bg-amber-50/70 dark:bg-amber-950/40 ring-2 ring-amber-500/25'
+                          : 'border-rose-500 bg-rose-50/70 dark:bg-rose-950/40 ring-2 ring-rose-500/25';
+                    const textSubtitle =
+                      colKey === 'blue'
+                        ? 'text-blue-600 dark:text-blue-400'
+                        : colKey === 'yellow'
+                          ? 'text-amber-600 dark:text-amber-400'
+                          : 'text-rose-600 dark:text-rose-400';
+
+                    return (
+                      <div key={colKey} className="relative group/opt">
+                        <button
+                          type="button"
+                          onClick={() => setSequenceModal((prev) => ({ ...prev, color: colKey }))}
+                          className={`w-full p-2.5 rounded-xl border text-left cursor-pointer transition-all flex flex-col justify-between ${
+                            isSelected
+                              ? ringColor
+                              : 'border-slate-200 dark:border-slate-700 hover:bg-slate-50 dark:hover:bg-slate-800'
+                          }`}
+                        >
+                          <div className="flex items-center justify-between mb-1">
+                            <div className="flex items-center gap-1.5">
+                              <span className={`w-2.5 h-2.5 rounded-full ${theme.dotBg} shadow-xs`} />
+                              <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
+                                {theme.label}
+                              </span>
+                            </div>
+                            <div
+                              className="text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 p-0.5"
+                              title={theme.tooltip}
+                            >
+                              <HelpCircle className="w-3.5 h-3.5" />
+                            </div>
+                          </div>
+                          <span className={`text-[9px] font-mono font-bold uppercase ${textSubtitle}`}>
+                            {theme.badgeLabel}
+                          </span>
+                        </button>
+
+                        {/* Interactive Tooltip Card on Hover */}
+                        <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 hidden group-hover/opt:block z-50 w-56 p-2 rounded-lg bg-slate-900/95 dark:bg-slate-800/95 text-slate-200 text-[10px] leading-relaxed shadow-xl border border-slate-700 backdrop-blur-xs pointer-events-none">
+                          <div className="font-bold text-cyan-400 mb-0.5">{theme.label} Sequence</div>
+                          <div>{theme.tooltip}</div>
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
 
+              {/* Modal Actions */}
               <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
                 <button
                   type="button"
-                  onClick={() => setIsAddLaneModalOpen(false)}
+                  onClick={() => setSequenceModal((prev) => ({ ...prev, isOpen: false }))}
                   className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
                 >
                   Cancel
                 </button>
                 <button
                   type="button"
-                  onClick={handleAddNewLane}
-                  className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 text-white text-xs font-semibold shadow-xs cursor-pointer"
+                  onClick={handleSaveSequenceModal}
+                  disabled={!sequenceModal.label.trim()}
+                  className="px-4 py-1.5 rounded-xl bg-cyan-600 hover:bg-cyan-700 disabled:opacity-40 text-white text-xs font-semibold shadow-xs cursor-pointer"
                 >
-                  Add Swimlane
+                  {sequenceModal.mode === 'edit' ? 'Save Changes' : 'Add Sequence'}
                 </button>
               </div>
             </motion.div>
@@ -4324,16 +5782,19 @@ export function WorkflowStudio({
         )}
       </AnimatePresence>
 
-      {/* Floating Save Toast Notification */}
+
+
+      {/* Floating Save Toast Notification in Top-Right Corner */}
       <AnimatePresence>
         {saveToastMessage && (
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: 20 }}
-            className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-2xl bg-slate-900/90 text-white dark:bg-white/95 dark:text-slate-900 shadow-xl border border-white/10 dark:border-slate-800 text-xs font-semibold flex items-center gap-2 backdrop-blur-md"
+            initial={{ opacity: 0, y: -16, scale: 0.95 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: -16, scale: 0.95 }}
+            transition={{ duration: 0.2, ease: 'easeOut' }}
+            className="fixed top-14 right-5 z-50 px-3.5 py-2 rounded-xl bg-slate-900/95 text-white dark:bg-slate-100 dark:text-slate-900 shadow-xl border border-slate-700/60 dark:border-slate-300/80 text-xs font-semibold flex items-center gap-2 backdrop-blur-md"
           >
-            <Check className="w-3.5 h-3.5 text-emerald-400 dark:text-emerald-600" />
+            <Check className="w-3.5 h-3.5 text-emerald-400 dark:text-emerald-600 shrink-0" />
             <span>{saveToastMessage}</span>
           </motion.div>
         )}
