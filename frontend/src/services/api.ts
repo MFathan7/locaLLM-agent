@@ -635,5 +635,30 @@ export const api = {
     } finally {
       clearTimeout(timeoutId);
     }
+  },
+
+  runWorkflowGraph: async (payload: {
+    nodes: any[];
+    edges: any[];
+    workspace?: string;
+    initial_state?: any;
+    execution_mode?: 'real' | 'simulation';
+  }): Promise<any> => {
+    try {
+      const res = await fetch(`${API_BASE}/workflow/run`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      if (res.ok) {
+        return await res.json();
+      }
+      const err = await res.json().catch(() => ({ error: 'Workflow execution failed' }));
+      throw new Error(err.error || 'Failed to execute workflow graph');
+    } catch (e: any) {
+      console.warn('Backend workflow execution warning, fallback to client runner:', e);
+      throw e;
+    }
   }
 };
+

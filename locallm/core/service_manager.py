@@ -214,6 +214,16 @@ def is_api_server_running(
     except Exception:
         pass
 
+    # 3. Process table check fallback for locallm serve
+    for proc in psutil.process_iter(["name", "cmdline"]):
+        try:
+            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
+            if "locallm" in cmdline and "serve" in cmdline:
+                _service_cache[cache_key] = (True, now)
+                return True
+        except (psutil.NoSuchProcess, psutil.AccessDenied):
+            continue
+
     _service_cache[cache_key] = (False, now)
     return False
 

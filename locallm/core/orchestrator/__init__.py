@@ -13,6 +13,7 @@ from locallm.core.orchestrator.specialists import (
     CoderSpecialist,
     ResearchSpecialist,
 )
+from locallm.core.orchestrator.graph_executor import WorkflowGraphExecutor
 from locallm.core.orchestrator.supervisor import SupervisorOrchestrator
 
 __all__ = [
@@ -27,4 +28,6 @@ __all__ = [
     "CoderSpecialist",
     "AuditorSpecialist",
     "SupervisorOrchestrator",
+    "WorkflowGraphExecutor",
 ]
+

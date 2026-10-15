@@ -1101,6 +1101,36 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
                 self._log_request_event("POST", path, 500, detail=str(exc))
+        if path in ("/api/workflow/run", "/v1/workflow/run"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                nodes = payload.get("nodes", [])
+                edges = payload.get("edges", [])
+                workspace = str(payload.get("workspace", "")).strip() or self.server.workspace or "default"
+                initial_state = payload.get("initial_state") or {}
+                execution_mode = str(payload.get("execution_mode", "real")).lower()
+
+                import importlib
+                import locallm.core.orchestrator.graph_executor as _ge_mod
+                importlib.reload(_ge_mod)
+                WorkflowGraphExecutor = _ge_mod.WorkflowGraphExecutor
+                with self.server._client_lock:
+                    active_client = self.server.client
+                executor = WorkflowGraphExecutor(self.server.config, active_client)
+                res = executor.run(
+                    nodes=nodes,
+                    edges=edges,
+                    initial_state=initial_state,
+                    workspace_name=workspace,
+                    execution_mode=execution_mode,
+                )
+                self._send_json_response(200, res)
+                self._log_request_event("POST", path, 200, detail=f"Executed workflow graph ({res.get('steps_executed', 0)} steps)")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+                self._log_request_event("POST", path, 500, detail=str(exc))
             return
 
         if path not in ("/v1/chat/completions", "/chat/completions", "/api/chat"):

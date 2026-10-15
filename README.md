@@ -266,34 +266,65 @@ locallm stop
 - **Signal Flow Architectural Canvas**:
   - Full-screen visual node orchestration studio accessible at `/workflow` (or directly via the sidebar button in a new tab).
   - **4-Phase Sequential Journey**: Horizontal timeline demarcating pipeline progression across the canvas:
-    - *Phase 1: Intake & Context*: Captures the user objective, prompt constraints, or external webhook payloads.
+    - *Phase 1: Intake & Context*: Captures user objectives, cron timers, or inbound messaging triggers.
     - *Phase 2: Planning & Policy Governance*: Supervisor decomposition coupled with safety circuit breakers and human approval gates.
-    - *Phase 3: Specialist Execution*: Autonomous specialist execution (Research Specialist, Coder Specialist, and Auditor Specialist).
-    - *Phase 4: Evidence & Blackboard*: Central state sink consolidating unified diffs, test logs, and final deliverables.
+    - *Phase 3: Specialist Execution*: Autonomous specialist execution (Coder Specialist, Researcher, Writer, and Critic / QA).
+    - *Phase 4: Evidence & Delivery*: Central state sink consolidating unified diffs, test logs, physical file exports, and messaging dispatchers.
   - **5-Lane Structured Taxonomy**:
-    - `ui`: User objective intake and external triggers.
-    - `agent`: Supervisor planner and specialist agent runtime.
-    - `policy`: Safety guards, permission barriers, and anti-loop circuit breakers.
-    - `tools`: Execution capabilities (terminal commands, filesystem operators, web fetch).
-    - `evidence`: Blackboard state sink and trace event stream.
+    - `ui`: User objective intake and external triggers (cron schedules, messaging webhooks).
+    - `agent`: Supervisor planner, specialist agent runtime, and model routers.
+    - `policy`: Safety guards, permission barriers, and quality gates (If/Else branching).
+    - `tools`: Execution capabilities (terminal commands, filesystem operators, live web and API fetchers).
+    - `evidence`: Blackboard state sink, document exporters, and messaging dispatchers.
+- **2-Port Topology Architecture (Dual-Port Paradigm)**:
+  - **Main Flow (Horizontal)**: Standard pipeline progression connecting `in` (left) to `out` (right) ports along the execution timeline.
+  - **Sub-Nodes & Resources (Vertical)**: Auxiliary specialists, dynamic model routers, tool runners, and blackboard state sinks connect directly into the Supervisor coordinator via `sub-in` (bottom) ports, creating clean, readable multi-agent coordination topologies without cluttering the main flow.
+- **Production-Grade Real Use-Case Presets**:
+  - **1. Full-Stack Code Audit & Auto-Refactor (QA Loop Pattern)**:
+    - *Main Flow*: `User Objective Input` -> `Task Decomposer` -> `Supervisor / Coordinator` -> `Critic / QA Agent` -> `Quality Gate (If/Else)` -> (`Chat & Artifact Output` on pass | Loopback to `Supervisor` with retry budget on fail).
+    - *Sub-Nodes*: `Dynamic Model Router`, `Blackboard Hub`, `Coder Agent` (connected to `Filesystem` & `Shell Runner`).
+    - *Deliverables*: Unified diffs and verified code refactoring logs.
+  - **2. Autonomous Market Intelligence & Strategy Digest (Consensus Pattern)**:
+    - *Main Flow*: `User Objective Input` -> `Supervisor / Coordinator` -> `Critic / QA Agent` -> `Document Exporter` -> `Messaging Dispatcher`.
+    - *Sub-Nodes*: `Researcher Agent` (with `Web Search`), `Analyst Agent` (with `Memory / Blackboard`), `Writer Agent`.
+    - *Deliverables*: Comprehensive intelligence briefing saved to `docs/market_intelligence_report.md` and dispatched to Telegram.
+  - **3. Automated Incident Response & Self-Healing**:
+    - *Main Flow*: `Messaging Inbound Trigger` -> `Supervisor / Coordinator` -> `Quality Gate (If/Else)` -> `Subprocess / Shell Runner` -> `Messaging Dispatcher`.
+    - *Sub-Nodes*: `Dynamic Model Router`, `Blackboard Hub`, `Auditor Specialist`.
+    - *Deliverables*: Automated incident triage, remediation script execution, and status alert broadcast.
+  - **4. Auto Grab Al-Qur'an & Tafsir (Live equran.id API v2 Integration)**:
+    - *Main Flow*: `Messaging Trigger` (Telegram / WhatsApp) -> `Supervisor / Coordinator` -> `Researcher Agent` -> `Writer Agent` -> `Critic / QA Agent` -> `Document Exporter` -> `Messaging Dispatcher`.
+    - *Sub-Nodes*: `Dynamic Model Router`, `Blackboard Hub`, `Web Search` (equran.id API bridge).
+    - *Highlights*: Connects live to `https://equran.id/api/v2/surat/{nomor}`, formats authentic Arabic calligraphy typography with verse markers, extracts Indonesian translation and surah metadata, embeds high-fidelity Murottal recitation audio streaming (Syaikh Misyari Rasyid Al-Afasi), exports clean Markdown to `docs/quran_surah_output.md` with instant browser auto-download, and sends rich HTML notifications to Telegram.
+  - **5. Scheduled System Audit & Human Approval Gate**:
+    - *Main Flow*: `Schedule Trigger` (Daily Cron) -> `Supervisor / Coordinator` -> `Chat & Artifact Output` (Action Required Notice) -> `Quality Gate (If/Else)` -> `Coder Agent` -> `Document Exporter` -> `Messaging Dispatcher`.
+    - *Sub-Nodes*: `Dynamic Model Router`, `Blackboard Hub`, `Subprocess / Shell Runner`.
+    - *Highlights*: Automated daily maintenance pipeline featuring a Human-in-the-Loop decision gate before applying patches, saving audit sign-offs to `docs/maintenance_audit_signoff.md` and broadcasting final status to Telegram.
+- **Real Graph Execution Engine (`graph_executor.py`)**:
+  - Live stateful pipeline runner executing node-by-node workflows via `POST /api/workflow/run`.
+  - Dispatches real HTTP requests to external APIs and captures live telemetry.
+  - Generates physical deliverable files directly into the `docs/` workspace directory.
+  - Seamlessly triggers browser file downloads upon pipeline completion.
+  - Dispatches live notifications to Telegram Bot chats via configured chat IDs.
+- **Activity Palette & Canvas Icon Fidelity**:
+  - 15+ specialized activities across Triggers, Orchestration, Agents, Governance, Tools, and Delivery.
+  - Exact Activity Catalog icon and color resolution, ensuring dragged nodes retain their authentic visual branding on the canvas.
 - **Freeform Canvas Panning & Precision Navigation**:
   - Drag and pan the canvas background freely with the mouse (`cursor-grab` / `cursor-grabbing`) to navigate large multi-agent DAGs.
   - Granular zoom scaling from 50% to 180% with synchronized dot-matrix grid movements.
   - Instant one-click **Reset View (100%)** button to recenter the canvas.
 - **Per-Agent Workspace Context Binding**:
   - Each agent node displays a dedicated workspace badge (`📁 ws: <name>`) directly on its canvas card.
-  - Granular selection via the **Activity & Agent Properties Drawer**: configure individual specialists to operate within specific workspaces (e.g. Research Specialist exploring `docs_ws` while Coder Specialist modifies files in `app_ws`).
-  - The backend supervisor orchestrator dispatches tools, skills, knowledge indexes, and memory isolated to each agent's assigned workspace.
+  - Granular selection via the **Activity & Agent Properties Drawer**: configure individual specialists to operate within specific workspaces.
 - **Dual Execution Engine (Real Live Engine vs Local Step Sim)**:
-  - **Live Engine (Real)**: Directly triggers background multi-agent execution via `POST /api/agent/run` (`async: true`) and polls real-time execution states via `/api/agent/status`.
-  - Active nodes pulse with an amber indicator (`amber-500` ping), cubic bezier connection lines animate with traveling signal waves, and completed nodes transition to emerald green (`emerald-500`).
-  - Integrated **Live Event Log Drawer**: Slides up to display a chronological audit trail of agent turns, tool invocations, and live output streams.
+  - **Live Engine (Real)**: Directly triggers backend execution via `POST /api/workflow/run` and updates active nodes with animated signal waves and status indicators.
   - **Step Sim Mode**: Deterministic local simulation mode to test and demonstrate pipeline topologies without GPU inference load.
 - **JSON Schema Workflow Export**:
   - Export complete workflow configurations with nodes, lanes, edges, and configurations into standardized `locallm-agent-workflow.json` files for version control and sharing.
 - **Calm, High-Contrast Theming (Dark & Light Mode)**:
   - Glare-free light theme built with soft slate surfaces (`#f1f5f9`), bold text contrast (`text-slate-900`/`text-slate-700`), and balanced grid dots.
   - Explicitly styled dark mode select menus and options ensuring zero text wash-out across all browsers and operating systems.
+
 
 ### 💻 Agentic Coding & Surgical Code Patching (Open Code Cockpit)
 - **Surgical File Patching (`patch_file`)**:
@@ -773,10 +804,16 @@ Each workspace maintains its metadata, persona overrides, and feature toggles in
 
 ## 🧪 Testing & Verification
 
-Run the test suite to verify code quality and platform compatibility:
+Run the test suites to verify backend functionality, multi-agent graph orchestration, and frontend end-to-end flows:
 
 ```bash
-# Discover and run all unit tests
+# 1. Run all Python unit and integration tests (250+ test suites)
+uv run pytest -q
+
+# 2. Run Playwright End-to-End Workflow Studio Automation Test
+uv run python scripts/verify_workflow_playwright.py
+
+# 3. Standard library unit tests discovery fallback
 python -m unittest discover -s tests -p "test_*.py"
 ```
 

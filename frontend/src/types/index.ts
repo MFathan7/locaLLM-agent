@@ -163,3 +163,39 @@ export interface SessionNotification {
   message: string;
 }
 
+export type PortSide = 'top' | 'bottom' | 'left' | 'right';
+export type PortRole = 'main_in' | 'main_out' | 'sub_in' | 'sub_out';
+
+export type ActivityCategory =
+  | 'triggers'
+  | 'orchestration'
+  | 'specialists'
+  | 'state_knowledge'
+  | 'tools_plugins'
+  | 'flow_control'
+  | 'outputs';
+
+export interface WorkflowNodePort {
+  side: PortSide;
+  role: PortRole;
+  title: string;
+  badgeLabel?: string;
+  posClass: string;
+}
+
+export interface WorkflowStatePayload {
+  objective: string;
+  workspace: string;
+  task_queue: string[];
+  current_subtask?: string;
+  findings: Array<{ topic: string; content: string; source?: string; timestamp?: string }>;
+  artifacts: Array<{ path: string; type?: string; content?: string }>;
+  modified_files: string[];
+  test_results: Array<{ command: string; success: boolean; summary: string }>;
+  verdict: { passed: boolean; score: number; feedback: string };
+  retry_count: number;
+  status: 'idle' | 'running' | 'success' | 'failed' | 'paused';
+  context_variables: Record<string, any>;
+  step_logs: Array<{ timestamp: string; agent: string; event_type: string; message: string }>;
+}
+

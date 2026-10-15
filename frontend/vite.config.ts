@@ -1754,6 +1754,48 @@ print(json.dumps({"success": ok, "message": msg, "installed": installed, "count"
           return;
         }
 
+        // 7.5 Dedicated Visual Agent Workflow Execution Runner
+        if (pathname === '/api/workflow/run' && req.method === 'POST') {
+          try {
+            const parsedBody = await parseJsonBody(req);
+            const pyScript = `
+import json, sys
+from locallm.config import load_config
+from locallm.core.orchestrator import WorkflowGraphExecutor
+
+payload = json.loads(sys.stdin.read())
+cfg = load_config()
+executor = WorkflowGraphExecutor(cfg)
+res = executor.run(
+    nodes=payload.get("nodes", []),
+    edges=payload.get("edges", []),
+    initial_state=payload.get("initial_state") or {},
+    workspace_name=payload.get("workspace", "default"),
+    execution_mode=payload.get("execution_mode", "real")
+)
+print(json.dumps(res))
+`;
+            const proc = child_process.spawnSync('uv', ['run', 'python', '-c', pyScript], {
+              input: JSON.stringify(parsedBody || {}),
+              encoding: 'utf-8',
+              timeout: 90000,
+              cwd: path.resolve(process.cwd(), '..')
+            });
+            if (proc.status === 0 && proc.stdout) {
+              const outJson = JSON.parse(proc.stdout.trim());
+              sendJson(res, 200, outJson);
+              return;
+            } else {
+              console.warn('Direct python execution stderr:', proc.stderr);
+              sendJson(res, 500, { error: proc.stderr || 'Execution failed' });
+              return;
+            }
+          } catch (err: any) {
+            sendJson(res, 500, { error: err.message });
+            return;
+          }
+        }
+
         // 8. Forward /api/agent/run and /api/agent/status to Python gateway server
         if (pathname === '/api/agent/run' || pathname === '/api/agent/status') {
           const cfg = loadConfigOnDisk();
