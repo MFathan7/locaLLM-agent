@@ -323,7 +323,7 @@ def stop_api_server_service(
     port: int = 8080,
 ) -> Tuple[bool, str]:
     """Stop running locaLLM API Gateway background process."""
-    stopped_count = 0
+    procs_to_terminate = []
 
     current_pid = os.getpid()
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
@@ -334,20 +334,40 @@ def stop_api_server_service(
             has_locallm = any("locallm" in arg for arg in raw_cmd if not arg.startswith("--workspace"))
             has_serve = "serve" in raw_cmd
             if (has_locallm and has_serve) or (any("api_server" in a for a in raw_cmd) and any("python" in a for a in raw_cmd)):
-                for child in proc.children(recursive=True):
-                    try:
-                        child.terminate()
-                    except (psutil.NoSuchProcess, psutil.AccessDenied):
-                        pass
-                proc.terminate()
-                stopped_count += 1
+                procs_to_terminate.append(proc)
         except (psutil.NoSuchProcess, psutil.AccessDenied):
             continue
 
+    if not procs_to_terminate:
+        return False, "No active API server process found to stop."
+
+    for proc in procs_to_terminate:
+        try:
+            for child in proc.children(recursive=True):
+                try:
+                    child.terminate()
+                except Exception:
+                    pass
+            proc.terminate()
+        except Exception:
+            pass
+
+    _, alive = psutil.wait_procs(procs_to_terminate, timeout=2.0)
+    for p in alive:
+        try:
+            p.kill()
+        except Exception:
+            pass
+
     _service_cache.clear()
-    if stopped_count > 0:
-        return True, f"Stopped {stopped_count} background API server process(es)."
-    return False, "No active API server process found to stop."
+    try:
+        from pathlib import Path
+        lock_f = Path.home() / ".locallm" / "telegram.lock"
+        lock_f.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    return True, f"Stopped {len(procs_to_terminate)} background API server process(es)."
 
 
 def get_all_services_status(

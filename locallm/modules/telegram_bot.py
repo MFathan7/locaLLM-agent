@@ -5,11 +5,13 @@ import base64
 from datetime import datetime
 import html
 import json
+import os
 from pathlib import Path
 import re
 import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
+import psutil
 import questionary
 from telegram import BotCommand, Update
 from telegram.ext import (
@@ -39,6 +41,97 @@ from locallm.core.workspace import (
     save_workspace_session,
 )
 from locallm.ui.theme import QUESTIONARY_STYLE, console
+
+
+_TELEGRAM_BOT_ACTIVE_LOCK = threading.Lock()
+_TELEGRAM_BOT_ACTIVE_IN_PROCESS = False
+
+
+def is_telegram_bot_running() -> Tuple[bool, Optional[int]]:
+    """Check if a Telegram bot instance is currently active (in this process or another)."""
+    global _TELEGRAM_BOT_ACTIVE_IN_PROCESS
+    if _TELEGRAM_BOT_ACTIVE_IN_PROCESS:
+        return True, os.getpid()
+
+    lock_file = Path.home() / ".locallm" / "telegram.lock"
+    if not lock_file.exists():
+        return False, None
+
+    try:
+        content = lock_file.read_text(encoding="utf-8").strip()
+        if not content:
+            lock_file.unlink(missing_ok=True)
+            return False, None
+
+        if content.startswith("{"):
+            data = json.loads(content)
+            pid = int(data.get("pid", 0))
+            saved_time = float(data.get("create_time", 0.0))
+        else:
+            pid = int(content)
+            saved_time = 0.0
+
+        if pid == os.getpid():
+            return _TELEGRAM_BOT_ACTIVE_IN_PROCESS, pid
+
+        if psutil.pid_exists(pid):
+            try:
+                proc = psutil.Process(pid)
+                if proc.is_running() and proc.status() != psutil.STATUS_ZOMBIE:
+                    if saved_time > 0:
+                        if abs(proc.create_time() - saved_time) < 2.0:
+                            return True, pid
+                    else:
+                        cmd = " ".join(proc.cmdline()).lower()
+                        if "locallm" in cmd or "telegram_bot" in cmd:
+                            return True, pid
+            except Exception:
+                pass
+
+        # Stale lockfile
+        lock_file.unlink(missing_ok=True)
+    except Exception:
+        pass
+    return False, None
+
+
+def acquire_telegram_bot_lock() -> bool:
+    """Acquire the Telegram bot PID lockfile with process create_time verification."""
+    global _TELEGRAM_BOT_ACTIVE_IN_PROCESS
+    with _TELEGRAM_BOT_ACTIVE_LOCK:
+        _TELEGRAM_BOT_ACTIVE_IN_PROCESS = True
+    lock_file = Path.home() / ".locallm" / "telegram.lock"
+    try:
+        proc = psutil.Process()
+        data = {
+            "pid": os.getpid(),
+            "create_time": proc.create_time(),
+            "timestamp": time.time(),
+        }
+        lock_file.parent.mkdir(parents=True, exist_ok=True)
+        lock_file.write_text(json.dumps(data), encoding="utf-8")
+        return True
+    except Exception:
+        return False
+
+
+def release_telegram_bot_lock() -> None:
+    """Release the Telegram bot PID lockfile if owned by this process."""
+    global _TELEGRAM_BOT_ACTIVE_IN_PROCESS
+    with _TELEGRAM_BOT_ACTIVE_LOCK:
+        _TELEGRAM_BOT_ACTIVE_IN_PROCESS = False
+    lock_file = Path.home() / ".locallm" / "telegram.lock"
+    try:
+        if lock_file.exists():
+            content = lock_file.read_text(encoding="utf-8").strip()
+            if content.startswith("{"):
+                data = json.loads(content)
+                if data.get("pid") == os.getpid():
+                    lock_file.unlink(missing_ok=True)
+            elif content == str(os.getpid()):
+                lock_file.unlink(missing_ok=True)
+    except Exception:
+        pass
 
 
 def _format_assistant_error_message(exc: Exception, backend_name: str = "Ollama") -> str:
@@ -245,6 +338,12 @@ def run_telegram_bot(config: LocaLLMConfig, client: OllamaClient) -> None:
         console.print(f"[danger]Error: Ollama service is not reachable at[/] {config.ollama_host}")
         return
 
+    is_running, existing_pid = is_telegram_bot_running()
+    if is_running:
+        console.print(f"\n[bold yellow]Notice:[/] locaLLM Telegram Bot is already running in background (PID {existing_pid}, via API Gateway).")
+        console.print("[dim]To run interactively in foreground, stop the background server first ('locallm stop' or via menu).[/]\n")
+        return
+
     token = config.telegram_token.strip()
     if not token:
         console.print("[warning]No Telegram Bot Token configured.[/]")
@@ -265,12 +364,15 @@ def run_telegram_bot(config: LocaLLMConfig, client: OllamaClient) -> None:
     console.print(f"[#aaaaaa]Active Model:[/] [bold green]{config.default_model}[/]")
     console.print("[#aaaaaa]Press Ctrl+C to stop the bot and return to menu.[/]\n")
 
+    acquire_telegram_bot_lock()
     try:
         asyncio.run(_start_bot_app(config, client, token))
     except (KeyboardInterrupt, SystemExit):
         console.print("\n[#aaaaaa]Telegram Bot stopped.[/]")
     except Exception as exc:
         console.print(f"\n[danger]Telegram Bot runtime error:[/] {exc}")
+    finally:
+        release_telegram_bot_lock()
 
 
 def _get_or_create_session(
@@ -816,6 +918,7 @@ async def _start_bot_app(
     client: OllamaClient,
     token: str,
     stop_event: Optional[asyncio.Event] = None,
+    quiet: bool = False,
 ) -> None:
     """Initialize and poll the telegram application with multimodal and tool support."""
     app = Application.builder().token(token).build()
@@ -1095,20 +1198,65 @@ async def _start_bot_app(
     await app.initialize()
     try:
         await app.bot.set_my_commands(BOT_COMMANDS)
-        console.print("[dim cyan][Telegram Menu][/] Registered commands menu list with Telegram.")
+        if not quiet:
+            console.print("[dim cyan][Telegram Menu][/] Registered commands menu list with Telegram.")
     except Exception as exc:
-        console.print(f"[dim yellow][Telegram Menu Notice][/] Could not register menu list: {exc}")
-
-    await app.start()
-    await app.updater.start_polling()
+        if not quiet:
+            console.print(f"[dim yellow][Telegram Menu Notice][/] Could not register menu list: {exc}")
 
     internal_stop = stop_event or asyncio.Event()
+
+    async def telegram_error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+        from telegram.error import Conflict
+        if isinstance(context.error, Conflict) or "terminated by other getUpdates" in str(context.error):
+            if not quiet:
+                console.print("[dim yellow][Telegram Bot Notice][/] Another bot instance is polling with this token. Halting duplicate polling loop.")
+            internal_stop.set()
+            return
+        if not quiet:
+            console.print(f"[dim yellow][Telegram Bot Error][/] {context.error}")
+
+    app.add_error_handler(telegram_error_handler)
+
+    acquire_telegram_bot_lock()
     try:
-        await internal_stop.wait()
+        def polling_error_callback(error: Any) -> None:
+            err_msg = str(error)
+            if "terminated by other getUpdates" in err_msg or "Conflict" in err_msg:
+                if not quiet:
+                    console.print("\n[dim yellow][Telegram Bot Notice][/] Another bot instance is polling with this token. Standing down duplicate loop.")
+                internal_stop.set()
+            else:
+                if not quiet:
+                    console.print(f"[dim yellow][Telegram Polling Error][/] {error}")
+
+        await app.start()
+        try:
+            await app.updater.start_polling(error_callback=polling_error_callback)
+        except Exception as exc:
+            if "terminated by other getUpdates" in str(exc) or "Conflict" in str(exc):
+                if not quiet:
+                    console.print("[dim yellow][Telegram Bot Notice][/] Polling conflict detected with another instance. Standing down.")
+                return
+            raise
+
+        try:
+            await internal_stop.wait()
+        finally:
+            try:
+                await app.updater.stop()
+            except Exception:
+                pass
+            try:
+                await app.stop()
+            except Exception:
+                pass
+            try:
+                await app.shutdown()
+            except Exception:
+                pass
     finally:
-        await app.updater.stop()
-        await app.stop()
-        await app.shutdown()
+        release_telegram_bot_lock()
 
 
 class TelegramBackgroundDaemon:
@@ -1127,6 +1275,11 @@ class TelegramBackgroundDaemon:
         if not token or self._running:
             return False
 
+        is_running, _ = is_telegram_bot_running()
+        if is_running:
+            return False
+
+        acquire_telegram_bot_lock()
         self._running = True
 
         def _runner():
@@ -1135,12 +1288,13 @@ class TelegramBackgroundDaemon:
             self._stop_event = asyncio.Event()
             try:
                 self._loop.run_until_complete(
-                    _start_bot_app(self.config, self.client, token, stop_event=self._stop_event)
+                    _start_bot_app(self.config, self.client, token, stop_event=self._stop_event, quiet=True)
                 )
             except Exception:
                 pass
             finally:
                 self._running = False
+                release_telegram_bot_lock()
                 try:
                     self._loop.close()
                 except Exception:
@@ -1152,6 +1306,7 @@ class TelegramBackgroundDaemon:
 
     def stop(self) -> None:
         self._running = False
+        release_telegram_bot_lock()
         if self._loop and self._stop_event and self._loop.is_running():
             self._loop.call_soon_threadsafe(self._stop_event.set)
         if self._thread and self._thread.is_alive():

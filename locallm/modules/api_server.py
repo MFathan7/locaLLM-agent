@@ -144,7 +144,8 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
                 from locallm.modules.telegram_bot import TelegramBackgroundDaemon
                 self.telegram_daemon = TelegramBackgroundDaemon(config=self.config, client=self.client)
                 self.telegram_daemon.start()
-            except Exception:
+            except Exception as exc:
+                console.print(f"[dim yellow][Telegram Daemon Startup Error][/] {exc}")
                 self.telegram_daemon = None
 
     def server_close(self) -> None:
@@ -2536,9 +2537,17 @@ _global_server_info: Dict[str, Any] = {}
 _global_server_lock = threading.Lock()
 
 
-def is_api_server_running() -> bool:
+def is_api_server_running(host: Optional[str] = None, port: Optional[int] = None) -> bool:
     """Return True if background API Gateway server is actively listening."""
-    return _global_server is not None
+    if _global_server is not None:
+        return True
+    try:
+        from locallm.core.service_manager import is_api_server_running as _probe_running
+        target_host = host or "127.0.0.1"
+        target_port = port or 8080
+        return _probe_running(target_host, target_port)
+    except Exception:
+        return False
 
 
 def get_api_server_info() -> Dict[str, Any]:
@@ -2564,6 +2573,10 @@ def start_background_api_server(
         api_key = getattr(config, "server_api_key", "")
         workspace = getattr(config, "active_workspace", "default")
         model = config.default_model
+
+        # Guard: Check if locaLLM API server is already actively running on the target port across processes
+        if is_api_server_running(target_host, requested_port):
+            return True, f"API server is already active at http://{target_host}:{requested_port}/v1", requested_port
 
         chosen_port, was_fallback = find_available_port(requested_port, target_host)
         server_address = (target_host, chosen_port)
@@ -2611,6 +2624,13 @@ def stop_background_api_server() -> Tuple[bool, str]:
 
     with _global_server_lock:
         if _global_server is None:
+            try:
+                from locallm.core.service_manager import stop_api_server_service
+                stopped, msg = stop_api_server_service()
+                if stopped:
+                    return True, msg
+            except Exception:
+                pass
             return False, "API server is not currently running."
 
         try:
