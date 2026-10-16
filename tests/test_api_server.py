@@ -471,6 +471,13 @@ class TestBackgroundAPIServerLifecycle(unittest.TestCase):
         self.assertEqual(info.get("port"), port)
         self.assertEqual(info.get("api_key"), "test-bg-key")
 
+        from locallm.modules.api_server import (
+            build_request_logs_table,
+            clear_api_request_logs,
+            get_api_request_logs,
+        )
+        clear_api_request_logs()
+
         # Verify background server accepts requests and buffers them quietly
         with httpx.Client(timeout=3.0) as client:
             res = client.get(f"http://127.0.0.1:{port}/health")

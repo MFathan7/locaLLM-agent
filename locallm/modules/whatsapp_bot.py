@@ -445,6 +445,17 @@ def process_whatsapp_message(
             "• `help`  / `/help`  : Show this command guide"
         )
 
+    # Check active workflow triggers
+    try:
+        from locallm.core.orchestrator.trigger_engine import get_trigger_engine
+        wf_res = get_trigger_engine().match_and_trigger_messaging("whatsapp", clean_number, message_text)
+        if wf_res and wf_res.get("executed"):
+            wf_title = wf_res.get("workflow_title") or "Workflow"
+            out_msg = wf_res.get("output_message") or "Workflow executed successfully."
+            return f"⚙️ *Workflow Executed:* `{wf_title}`\n\n{str(out_msg)}"
+    except Exception as e:
+        console.print(f"[dim yellow][Workflow Trigger Exception][/] {e}")
+
     session.add_user_message(message_text, images=[image_b64] if image_b64 else None)
 
     target_model = config.default_model

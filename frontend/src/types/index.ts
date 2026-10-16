@@ -175,6 +175,67 @@ export type ActivityCategory =
   | 'flow_control'
   | 'outputs';
 
+export type WorkflowLane = 'ui' | 'agent' | 'policy' | 'tools' | 'evidence' | string;
+export type SequenceColor = 'blue' | 'yellow' | 'red';
+
+export interface WorkflowLaneConfig {
+  id: string;
+  num: string;
+  label: string;
+  description?: string;
+  color?: SequenceColor;
+  x?: number;
+  y: number;
+  width?: number;
+  height: number;
+  variant?: 'default' | 'exception';
+}
+
+export interface WorkflowNode {
+  id: string;
+  lane: WorkflowLane;
+  category?: ActivityCategory;
+  type: 'frontend' | 'backend' | 'security' | 'messagebus' | 'database' | 'cloud' | 'external';
+  title: string;
+  subtitle: string;
+  tag?: string;
+  x: number;
+  y: number;
+  status?: 'idle' | 'running' | 'success' | 'error';
+  config: {
+    workspace?: string;
+    model?: string;
+    directive?: string;
+    tools?: string[];
+    query?: string;
+    condition?: string;
+    command?: string;
+    path?: string;
+    endpoint?: string;
+    timeout?: number;
+    max_retries?: number;
+    platform?: string;
+    cron?: string;
+    mode?: string;
+    channel?: string;
+    output_path?: string;
+    [key: string]: any;
+  };
+  properties?: import('./workflowPropertySchema').NodeProperties;
+}
+
+export interface WorkflowEdge {
+  id: string;
+  from: string;
+  to: string;
+  fromSide?: PortSide;
+  toSide?: PortSide;
+  kind?: 'main' | 'sub' | 'conditional';
+  conditionBranch?: 'true' | 'false' | 'loop' | 'done' | 'pass' | 'reject';
+  label?: string;
+  variant?: 'default' | 'emphasis' | 'security' | 'dashed';
+}
+
 export interface WorkflowNodePort {
   side: PortSide;
   role: PortRole;
@@ -198,4 +259,39 @@ export interface WorkflowStatePayload {
   context_variables: Record<string, any>;
   step_logs: Array<{ timestamp: string; agent: string; event_type: string; message: string }>;
 }
+
+export interface WorkflowDefinition {
+  id: string;
+  name: string;
+  description?: string;
+  isActive?: boolean;
+  nodes: WorkflowNode[];
+  edges: WorkflowEdge[];
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface WorkflowExecutionRecord {
+  run_id: string;
+  workflow_id: string;
+  workflow_title?: string;
+  trigger_source?: string;
+  status: 'success' | 'failed' | 'running';
+  started_at: string;
+  ended_at?: string;
+  duration_seconds: number;
+  steps_executed: number;
+  logs: Array<{
+    timestamp: string;
+    agent: string;
+    event_type: string;
+    message: string;
+    node_id?: string;
+  }>;
+  artifacts?: Array<{ name?: string; path?: string; content?: string }>;
+  state_summary?: Record<string, any>;
+  error?: string;
+}
+
+export * from './workflowPropertySchema';
 

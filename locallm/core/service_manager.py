@@ -1,6 +1,8 @@
 """Service manager to start, stop, and inspect local inference backends."""
 
+import os
 import shutil
+import socket
 import subprocess
 import time
 from typing import Dict, Optional, Tuple, Any
@@ -187,6 +189,7 @@ def is_api_server_running(
     max_cache_age: float = 3.0,
 ) -> bool:
     """Check if the local OpenAI-compatible API Gateway server is actively listening."""
+    import os
     import socket
     now = time.time()
     cache_key = f"api_server_{host}_{port}"
@@ -215,10 +218,15 @@ def is_api_server_running(
         pass
 
     # 3. Process table check fallback for locallm serve
-    for proc in psutil.process_iter(["name", "cmdline"]):
+    current_pid = os.getpid()
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
-            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
-            if "locallm" in cmdline and "serve" in cmdline:
+            if proc.pid == current_pid:
+                continue
+            raw_cmd = [str(arg).lower() for arg in (proc.info.get("cmdline") or [])]
+            has_locallm = any("locallm" in arg for arg in raw_cmd if not arg.startswith("--workspace"))
+            has_serve = "serve" in raw_cmd
+            if (has_locallm and has_serve) or (any("api_server" in a for a in raw_cmd) and any("python" in a for a in raw_cmd)):
                 _service_cache[cache_key] = (True, now)
                 return True
         except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -317,10 +325,15 @@ def stop_api_server_service(
     """Stop running locaLLM API Gateway background process."""
     stopped_count = 0
 
+    current_pid = os.getpid()
     for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
-            cmdline = " ".join(proc.info.get("cmdline") or []).lower()
-            if ("locallm" in cmdline and "serve" in cmdline) or ("api_server" in cmdline and "python" in cmdline):
+            if proc.pid == current_pid:
+                continue
+            raw_cmd = [str(arg).lower() for arg in (proc.info.get("cmdline") or [])]
+            has_locallm = any("locallm" in arg for arg in raw_cmd if not arg.startswith("--workspace"))
+            has_serve = "serve" in raw_cmd
+            if (has_locallm and has_serve) or (any("api_server" in a for a in raw_cmd) and any("python" in a for a in raw_cmd)):
                 for child in proc.children(recursive=True):
                     try:
                         child.terminate()

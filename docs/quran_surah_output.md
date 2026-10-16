@@ -82,4 +82,3 @@ Surat *Al Faatihah* (Pembukaan) yang diturunkan di Mekah dan terdiri dari 7 ayat
 ---
 
 
-<i>Laporan ini digenerate secara otomatis oleh locaLLM Multi-Agent Coordinator & equran.id v2 API.</i>

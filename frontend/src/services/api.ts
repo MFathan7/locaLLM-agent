@@ -1,4 +1,4 @@
-import type { LocaLLMConfig, ChatSession, Workspace, WorkspaceSkill, WorkspaceMemory, ModelInfo, SendOptions, Message, AttachedFile, StreamEvent } from '../types';
+import type { LocaLLMConfig, ChatSession, Workspace, WorkspaceSkill, WorkspaceMemory, ModelInfo, SendOptions, Message, AttachedFile, StreamEvent, WorkflowDefinition, WorkflowExecutionRecord } from '../types';
 import { sanitizeChatTitle, extractThinkingAndResponse } from '../utils/messageProcessor';
 
 const API_BASE = '/api';
@@ -659,6 +659,169 @@ export const api = {
       console.warn('Backend workflow execution warning, fallback to client runner:', e);
       throw e;
     }
+  },
+
+  getWorkflows: async (): Promise<WorkflowDefinition[]> => {
+    try {
+      const res = await fetch(`${API_BASE}/workflows`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch workflows from backend:', e);
+    }
+    return [];
+  },
+
+  getWorkflow: async (id: string): Promise<WorkflowDefinition | null> => {
+    try {
+      const res = await fetch(`${API_BASE}/workflows/${encodeURIComponent(id)}`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch workflow ${id}:`, e);
+    }
+    return null;
+  },
+
+  saveWorkflow: async (workflow: Partial<WorkflowDefinition>): Promise<WorkflowDefinition> => {
+    const res = await fetch(`${API_BASE}/workflows`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(workflow)
+    });
+    if (!res.ok) {
+      const err = await res.json().catch(() => ({ error: 'Failed to save workflow' }));
+      throw new Error(err.error || 'Failed to save workflow');
+    }
+    return await res.json();
+  },
+
+  deleteWorkflow: async (id: string): Promise<boolean> => {
+    try {
+      const res = await fetch(`${API_BASE}/workflows/${encodeURIComponent(id)}`, {
+        method: 'DELETE'
+      });
+      return res.ok;
+    } catch (e) {
+      console.warn(`Failed to delete workflow ${id}:`, e);
+      return false;
+    }
+  },
+
+  toggleWorkflowActive: async (id: string): Promise<WorkflowDefinition> => {
+    const res = await fetch(`${API_BASE}/workflows/${encodeURIComponent(id)}/toggle-active`, {
+      method: 'POST'
+    });
+    if (!res.ok) {
+      throw new Error('Failed to toggle workflow active status');
+    }
+    return await res.json();
+  },
+
+  getWorkflowHistory: async (workflowId?: string, limit: number = 50): Promise<WorkflowExecutionRecord[]> => {
+    try {
+      const query = workflowId ? `?workflow_id=${encodeURIComponent(workflowId)}&limit=${limit}` : `?limit=${limit}`;
+      const res = await fetch(`${API_BASE}/workflows/history${query}`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn('Failed to fetch execution history:', e);
+    }
+    return [];
+  },
+
+  getExecutionRecord: async (runId: string): Promise<WorkflowExecutionRecord | null> => {
+    try {
+      const res = await fetch(`${API_BASE}/workflows/history/${encodeURIComponent(runId)}`);
+      if (res.ok) {
+        return await res.json();
+      }
+    } catch (e) {
+      console.warn(`Failed to fetch execution record ${runId}:`, e);
+    }
+    return null;
+  },
+
+  runWorkflowStream: (
+    payload: {
+      workflow_id?: string;
+      workflow_title?: string;
+      nodes: any[];
+      edges: any[];
+      workspace?: string;
+      initial_state?: any;
+      execution_mode?: 'real' | 'simulation';
+    },
+    onEvent: (event: { event: string; data: any }) => void,
+    onError?: (err: any) => void
+  ): (() => void) => {
+    const controller = new AbortController();
+
+    (async () => {
+      try {
+        const res = await fetch(`${API_BASE}/workflow/run-stream`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal
+        });
+
+        if (!res.ok) {
+          const errData = await res.json().catch(() => ({ error: 'Stream initiation failed' }));
+          throw new Error(errData.error || `HTTP error ${res.status}`);
+        }
+
+        const reader = res.body?.getReader();
+        if (!reader) {
+          throw new Error('ReadableStream not supported by browser');
+        }
+
+        const decoder = new TextDecoder('utf-8');
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const parts = buffer.split('\n\n');
+          buffer = parts.pop() || '';
+
+          for (const block of parts) {
+            if (!block.trim()) continue;
+            let eventName = 'message';
+            let dataStr = '';
+
+            for (const line of block.split('\n')) {
+              if (line.startsWith('event: ')) {
+                eventName = line.slice(7).trim();
+              } else if (line.startsWith('data: ')) {
+                dataStr = line.slice(6);
+              }
+            }
+
+            if (dataStr) {
+              try {
+                const parsed = JSON.parse(dataStr);
+                onEvent({ event: eventName, data: parsed });
+              } catch {
+                onEvent({ event: eventName, data: dataStr });
+              }
+            }
+          }
+        }
+      } catch (err: any) {
+        if (err.name !== 'AbortError') {
+          console.error('SSE Stream error:', err);
+          onError?.(err);
+        }
+      }
+    })();
+
+    return () => controller.abort();
   }
 };
 

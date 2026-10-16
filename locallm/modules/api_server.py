@@ -130,6 +130,36 @@ class ThreadingOpenAIServer(socketserver.ThreadingMixIn, http.server.HTTPServer)
         self._client_cache: Dict[str, Any] = {}
         self._client_lock = threading.Lock()
         self._init_config_mtime()
+        try:
+            from locallm.core.orchestrator.trigger_engine import get_trigger_engine
+            self.trigger_engine = get_trigger_engine(config=self.config, client=self.client)
+            self.trigger_engine.start()
+        except Exception:
+            self.trigger_engine = None
+
+        self.telegram_daemon = None
+        tok = (getattr(self.config, "telegram_token", "") or "").strip()
+        if tok:
+            try:
+                from locallm.modules.telegram_bot import TelegramBackgroundDaemon
+                self.telegram_daemon = TelegramBackgroundDaemon(config=self.config, client=self.client)
+                self.telegram_daemon.start()
+            except Exception:
+                self.telegram_daemon = None
+
+    def server_close(self) -> None:
+        """Cleanly stop background engines and close HTTP socket."""
+        if getattr(self, "telegram_daemon", None):
+            try:
+                self.telegram_daemon.stop()
+            except Exception:
+                pass
+        if getattr(self, "trigger_engine", None):
+            try:
+                self.trigger_engine.stop()
+            except Exception:
+                pass
+        super().server_close()
 
     def _init_config_mtime(self) -> None:
         try:
@@ -379,6 +409,21 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json_response(500, {"error": str(exc)})
             return
 
+        if path.startswith("/api/workflows/") or path.startswith("/v1/workflows/"):
+            try:
+                wf_id = path.split("/")[-1]
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                ok = reg.delete_workflow(wf_id)
+                if ok:
+                    self._send_json_response(200, {"success": True, "message": f"Deleted workflow '{wf_id}'"})
+                    self._log_request_event("DELETE", path, 200, detail=f"Deleted workflow {wf_id}")
+                else:
+                    self._send_json_response(404, {"error": f"Workflow '{wf_id}' not found"})
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
         self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
         self._log_request_event("DELETE", path, 404)
 
@@ -523,6 +568,23 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json_response(500, {"error": str(exc)})
             return
 
+        if path.startswith("/api/workflows/") or path.startswith("/v1/workflows/"):
+            try:
+                import json
+                wf_id = path.split("/")[-1]
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                payload["id"] = wf_id
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                saved = reg.save_workflow(payload)
+                self._send_json_response(200, saved)
+                self._log_request_event("PUT", path, 200, detail=f"Updated workflow {wf_id}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
         self._send_openai_error(404, f"The requested endpoint '{path}' was not found.")
         self._log_request_event("PUT", path, 404)
 
@@ -596,6 +658,63 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._log_request_event("GET", path, 200, detail=f"{len(workspaces)} workspaces")
             except Exception as exc:
                 self._send_openai_error(500, f"Failed to retrieve workspaces: {exc}")
+            return
+
+        if path in ("/api/workflows", "/v1/workflows"):
+            try:
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                workflows = reg.list_workflows()
+                self._send_json_response(200, workflows)
+                self._log_request_event("GET", path, 200, detail=f"{len(workflows)} workflows")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to list workflows: {exc}")
+            return
+
+        if path in ("/api/workflows/history", "/v1/workflows/history"):
+            try:
+                from urllib.parse import parse_qs, urlparse
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                parsed_url = urlparse(self.path)
+                params = parse_qs(parsed_url.query)
+                target_wf = params.get("workflow_id", [""])[0] or None
+                limit = int(params.get("limit", [50])[0])
+                reg = get_workflow_registry()
+                history = reg.list_execution_history(workflow_id=target_wf, limit=limit)
+                self._send_json_response(200, history)
+                self._log_request_event("GET", path, 200, detail=f"{len(history)} execution records")
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve workflow history: {exc}")
+            return
+
+        if path.startswith("/api/workflows/history/") or path.startswith("/v1/workflows/history/"):
+            try:
+                run_id = path.split("/")[-1]
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                record = reg.get_execution_record(run_id)
+                if record:
+                    self._send_json_response(200, record)
+                    self._log_request_event("GET", path, 200, detail=f"Run record {run_id}")
+                else:
+                    self._send_json_response(404, {"error": f"Execution record '{run_id}' not found"})
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve execution record: {exc}")
+            return
+
+        if (path.startswith("/api/workflows/") or path.startswith("/v1/workflows/")) and not path.endswith("/history"):
+            try:
+                wf_id = path.split("/")[-1]
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                wf = reg.get_workflow(wf_id)
+                if wf:
+                    self._send_json_response(200, wf)
+                    self._log_request_event("GET", path, 200, detail=f"Workflow {wf_id}")
+                else:
+                    self._send_json_response(404, {"error": f"Workflow '{wf_id}' not found"})
+            except Exception as exc:
+                self._send_openai_error(500, f"Failed to retrieve workflow: {exc}")
             return
 
         if path in ("/api/workspaces/memory", "/v1/workspaces/memory") or (
@@ -1004,7 +1123,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 self._send_json_response(500, {"success": False, "error": str(exc)})
             return
 
-        # Agent execution endpoint (for n8n, webhooks, and external platforms)
+        # Agent execution endpoint (for webhooks, automated triggers, and external platforms)
         if path in ("/api/agent/run", "/v1/agent/run"):
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
@@ -1101,6 +1220,178 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
             except Exception as exc:
                 self._send_json_response(500, {"error": str(exc)})
                 self._log_request_event("POST", path, 500, detail=str(exc))
+        if path in ("/api/workflows", "/v1/workflows"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                saved = reg.save_workflow(payload)
+                self._send_json_response(200, saved)
+                self._log_request_event("POST", path, 200, detail=f"Saved workflow {saved.get('id')}")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+                self._log_request_event("POST", path, 500, detail=str(exc))
+            return
+
+        if path.endswith("/toggle-active") and (path.startswith("/api/workflows/") or path.startswith("/v1/workflows/")):
+            try:
+                parts = path.strip("/").split("/")
+                wf_id = parts[-2]
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                updated = reg.toggle_active(wf_id)
+                if updated:
+                    self._send_json_response(200, updated)
+                    self._log_request_event("POST", path, 200, detail=f"Toggled isActive {wf_id} -> {updated.get('isActive')}")
+                else:
+                    self._send_json_response(404, {"error": f"Workflow '{wf_id}' not found"})
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        if path.startswith("/api/webhook/") or path.startswith("/v1/webhook/"):
+            try:
+                slug = path.strip("/").split("/")[-1]
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                from locallm.core.orchestrator.trigger_engine import get_trigger_engine
+                engine = get_trigger_engine(self.server.config, self.server.client)
+                res = engine.match_and_trigger_webhook(slug, payload)
+                if res:
+                    self._send_json_response(200, res)
+                    self._log_request_event("POST", path, 200, detail=f"Webhook triggered workflow {res.get('workflow_id')}")
+                else:
+                    self._send_json_response(200, {
+                        "status": "received",
+                        "matched": False,
+                        "message": f"Webhook '{slug}' received, no active workflow matched",
+                    })
+                    self._log_request_event("POST", path, 200, detail=f"Webhook {slug} received (unmatched)")
+            except Exception as exc:
+                self._send_json_response(500, {"error": str(exc)})
+            return
+
+        if path in ("/api/workflow/run-stream", "/v1/workflow/run-stream"):
+            try:
+                content_length = int(self.headers.get("Content-Length", 0))
+                body_bytes = self.rfile.read(content_length) if content_length > 0 else b"{}"
+                payload = json.loads(body_bytes.decode("utf-8")) if body_bytes else {}
+                nodes = payload.get("nodes", [])
+                edges = payload.get("edges", [])
+                workspace = str(payload.get("workspace", "")).strip() or self.server.workspace or "default"
+                initial_state = payload.get("initial_state") or {}
+                execution_mode = str(payload.get("execution_mode", "real")).lower()
+                wf_id = payload.get("workflow_id") or payload.get("id") or "test-run"
+                wf_title = payload.get("title") or payload.get("name") or "Canvas Test Run"
+
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+                self.send_header("Cache-Control", "no-cache")
+                self.send_header("Transfer-Encoding", "chunked")
+                self._send_cors_headers()
+                self.end_headers()
+
+                def _send_chunk(chunk_bytes: bytes) -> None:
+                    if not chunk_bytes:
+                        return
+                    chunk_header = f"{len(chunk_bytes):X}\r\n".encode("ascii")
+                    self.wfile.write(chunk_header + chunk_bytes + b"\r\n")
+                    self.wfile.flush()
+
+                def _send_sse(event_name: str, data_obj: Any) -> None:
+                    raw = f"event: {event_name}\ndata: {json.dumps(data_obj, ensure_ascii=False)}\n\n"
+                    _send_chunk(raw.encode("utf-8"))
+
+                run_id = f"run-{uuid.uuid4().hex[:12]}"
+                start_time = datetime.now()
+
+                _send_sse("init", {
+                    "run_id": run_id,
+                    "workflow_id": wf_id,
+                    "workflow_title": wf_title,
+                    "total_nodes": len(nodes),
+                    "started_at": start_time.isoformat(),
+                })
+
+                import importlib
+                import locallm.core.orchestrator.graph_executor as _ge_mod
+                importlib.reload(_ge_mod)
+                WorkflowGraphExecutor = _ge_mod.WorkflowGraphExecutor
+                with self.server._client_lock:
+                    active_client = self.server.client
+                executor = WorkflowGraphExecutor(self.server.config, active_client)
+
+                def on_event(agent: str, event_type: str, message: str, meta: Dict[str, Any]) -> None:
+                    _send_sse("node_progress", {
+                        "agent": agent,
+                        "event_type": event_type,
+                        "message": message,
+                        "node_id": meta.get("node_id", ""),
+                        "status": meta.get("status", "running"),
+                        "duration": meta.get("duration"),
+                        "data": meta.get("data"),
+                        "step": meta.get("step", 0),
+                        "timestamp": datetime.now().strftime("%H:%M:%S"),
+                    })
+
+                res = executor.run(
+                    nodes=nodes,
+                    edges=edges,
+                    initial_state=initial_state,
+                    workspace_name=workspace,
+                    execution_mode=execution_mode,
+                    on_event=on_event,
+                )
+
+                duration = (datetime.now() - start_time).total_seconds()
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                history_rec = {
+                    "run_id": run_id,
+                    "workflow_id": wf_id,
+                    "workflow_title": wf_title,
+                    "trigger_source": "manual_test",
+                    "status": "success" if res.get("success") else "failed",
+                    "started_at": start_time.isoformat(),
+                    "ended_at": datetime.now().isoformat(),
+                    "duration_seconds": round(duration, 2),
+                    "steps_executed": res.get("steps_executed", 0),
+                    "logs": res.get("logs", []),
+                    "artifacts": res.get("state", {}).get("artifacts", []),
+                    "state_summary": {
+                        "objective": res.get("state", {}).get("objective"),
+                        "verdict": res.get("state", {}).get("verdict"),
+                        "findings_count": len(res.get("state", {}).get("findings", [])),
+                        "modified_files": res.get("state", {}).get("modified_files", []),
+                    }
+                }
+                reg.record_execution(history_rec)
+
+                _send_sse("completed", {
+                    "success": res.get("success", True),
+                    "run_id": run_id,
+                    "duration_seconds": round(duration, 2),
+                    "steps_executed": res.get("steps_executed", 0),
+                    "artifacts": res.get("state", {}).get("artifacts", []),
+                    "state_summary": history_rec["state_summary"],
+                    "state": res.get("state", {}),
+                })
+                self.wfile.write(b"0\r\n\r\n")
+                self.wfile.flush()
+                self._log_request_event("POST", path, 200, detail=f"Streamed workflow run ({res.get('steps_executed', 0)} steps)")
+            except Exception as exc:
+                try:
+                    _send_sse("error", {"error": str(exc)})
+                    self.wfile.write(b"0\r\n\r\n")
+                    self.wfile.flush()
+                except Exception:
+                    self._send_json_response(500, {"error": str(exc)})
+                self._log_request_event("POST", path, 500, detail=str(exc))
+            return
+
         if path in ("/api/workflow/run", "/v1/workflow/run"):
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
@@ -1111,7 +1402,10 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                 workspace = str(payload.get("workspace", "")).strip() or self.server.workspace or "default"
                 initial_state = payload.get("initial_state") or {}
                 execution_mode = str(payload.get("execution_mode", "real")).lower()
+                wf_id = payload.get("workflow_id") or payload.get("id") or "test-run"
+                wf_title = payload.get("title") or payload.get("name") or "Canvas Test Run"
 
+                start_time = datetime.now()
                 import importlib
                 import locallm.core.orchestrator.graph_executor as _ge_mod
                 importlib.reload(_ge_mod)
@@ -1126,6 +1420,34 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
                     workspace_name=workspace,
                     execution_mode=execution_mode,
                 )
+                duration = (datetime.now() - start_time).total_seconds()
+                run_id = f"run-{uuid.uuid4().hex[:12]}"
+
+                from locallm.core.orchestrator.registry import get_workflow_registry
+                reg = get_workflow_registry()
+                history_rec = {
+                    "run_id": run_id,
+                    "workflow_id": wf_id,
+                    "workflow_title": wf_title,
+                    "trigger_source": "manual_test",
+                    "status": "success" if res.get("success") else "failed",
+                    "started_at": start_time.isoformat(),
+                    "ended_at": datetime.now().isoformat(),
+                    "duration_seconds": round(duration, 2),
+                    "steps_executed": res.get("steps_executed", 0),
+                    "logs": res.get("logs", []),
+                    "artifacts": res.get("state", {}).get("artifacts", []),
+                    "state_summary": {
+                        "objective": res.get("state", {}).get("objective"),
+                        "verdict": res.get("state", {}).get("verdict"),
+                        "findings_count": len(res.get("state", {}).get("findings", [])),
+                        "modified_files": res.get("state", {}).get("modified_files", []),
+                    }
+                }
+                reg.record_execution(history_rec)
+                res["run_id"] = run_id
+                res["duration_seconds"] = round(duration, 2)
+
                 self._send_json_response(200, res)
                 self._log_request_event("POST", path, 200, detail=f"Executed workflow graph ({res.get('steps_executed', 0)} steps)")
             except Exception as exc:
@@ -1215,7 +1537,7 @@ class OpenAIAPIHandler(http.server.BaseHTTPRequestHandler):
         req_ws = self.headers.get("X-Workspace", "").strip() or self.server.workspace
         ws_context = load_workspace_context(req_ws) + base_directive
 
-        # Support model='agent:multi' or 'multi-agent' for 1-click n8n OpenAI Agent node integration
+        # Support model='agent:multi' or 'multi-agent' for 1-click external Agent integration
         if model_req.lower() in ("agent:multi", "multi-agent"):
             try:
                 from locallm.core.orchestrator import SupervisorOrchestrator
@@ -2188,7 +2510,7 @@ def run_api_server(
     ))
 
     console.print("[dim]Quickstart Integrations:[/]")
-    console.print(f"  [dim]• Open WebUI / Continue / Dify Base URL:[/] [bold]{base_url}[/]")
+    console.print(f"  [dim]• Web UI / Agent Gateway Base URL:[/] [bold]{base_url}[/]")
     if effective_api_key:
         console.print(f"  [dim]• API Key:[/] [bold]{effective_api_key}[/]")
     console.print(
@@ -2549,7 +2871,7 @@ def _display_server_client_info(
         ))
 
         console.print("[dim]Client Configuration Examples:[/]")
-        console.print(f"  [dim]• Open WebUI / Continue / Dify Base URL:[/] [bold]{base_url}[/]")
+        console.print(f"  [dim]• Web UI / Agent Gateway Base URL:[/] [bold]{base_url}[/]")
         console.print(
             f"  [dim]• Python OpenAI SDK Example:[/]\n"
             f"    [white]client = OpenAI(base_url=\"{base_url}\", api_key=\"{api_key or 'not-needed'}\")[/]\n"

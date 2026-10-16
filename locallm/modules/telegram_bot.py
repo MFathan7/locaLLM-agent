@@ -7,6 +7,7 @@ import html
 import json
 from pathlib import Path
 import re
+import threading
 import time
 from typing import Any, Dict, List, Optional, Set, Tuple
 import questionary
@@ -552,8 +553,19 @@ async def _process_and_reply(
                 f"• <b>Session ID:</b> <code>telegram_{user_id}</code>\n"
                 f"• <b>History Depth:</b> <code>{len(session.history)} messages</code>"
             )
-            await update.message.reply_text(stats_msg, parse_mode="HTML")
+    # Check active workflow triggers
+    try:
+        from locallm.core.orchestrator.trigger_engine import get_trigger_engine
+        raw_msg = update.message.text or update.message.caption or ""
+        wf_res = get_trigger_engine().match_and_trigger_messaging("telegram", str(user_id), raw_msg)
+        if wf_res and wf_res.get("executed"):
+            wf_title = wf_res.get("workflow_title") or "Workflow"
+            out_msg = wf_res.get("output_message") or "Workflow executed successfully."
+            reply_txt = f"⚙️ <b>Workflow Executed:</b> <code>{html.escape(str(wf_title))}</code>\n\n{html.escape(str(out_msg))}"
+            await update.message.reply_text(reply_txt, parse_mode="HTML")
             return
+    except Exception as e:
+        console.print(f"[dim yellow][Workflow Trigger Exception][/] {e}")
 
     target_model = config.default_model
     if config.default_model.lower() == "auto":
@@ -799,7 +811,12 @@ BOT_COMMANDS = [
 ]
 
 
-async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str) -> None:
+async def _start_bot_app(
+    config: LocaLLMConfig,
+    client: OllamaClient,
+    token: str,
+    stop_event: Optional[asyncio.Event] = None,
+) -> None:
     """Initialize and poll the telegram application with multimodal and tool support."""
     app = Application.builder().token(token).build()
 
@@ -1085,10 +1102,58 @@ async def _start_bot_app(config: LocaLLMConfig, client: OllamaClient, token: str
     await app.start()
     await app.updater.start_polling()
 
-    stop_event = asyncio.Event()
+    internal_stop = stop_event or asyncio.Event()
     try:
-        await stop_event.wait()
+        await internal_stop.wait()
     finally:
         await app.updater.stop()
         await app.stop()
         await app.shutdown()
+
+
+class TelegramBackgroundDaemon:
+    """Manages Telegram bot polling in a dedicated background daemon thread."""
+
+    def __init__(self, config: LocaLLMConfig, client: Any) -> None:
+        self.config = config
+        self.client = client
+        self._thread: Optional[threading.Thread] = None
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._stop_event: Optional[asyncio.Event] = None
+        self._running = False
+
+    def start(self) -> bool:
+        token = (getattr(self.config, "telegram_token", "") or "").strip()
+        if not token or self._running:
+            return False
+
+        self._running = True
+
+        def _runner():
+            self._loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(self._loop)
+            self._stop_event = asyncio.Event()
+            try:
+                self._loop.run_until_complete(
+                    _start_bot_app(self.config, self.client, token, stop_event=self._stop_event)
+                )
+            except Exception:
+                pass
+            finally:
+                self._running = False
+                try:
+                    self._loop.close()
+                except Exception:
+                    pass
+
+        self._thread = threading.Thread(target=_runner, daemon=True, name="TelegramBotDaemon")
+        self._thread.start()
+        return True
+
+    def stop(self) -> None:
+        self._running = False
+        if self._loop and self._stop_event and self._loop.is_running():
+            self._loop.call_soon_threadsafe(self._stop_event.set)
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=2.0)
+

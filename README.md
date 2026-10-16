@@ -218,6 +218,47 @@ locallm stop
 - **Resilient React Error Boundary**:
   - Built-in crash protection wrapping the application root with a Liquid Glass recovery screen, diagnostic details, and one-click session restore, completely eliminating white-screen state collapses.
 
+### 🌐 Visual Agent Workflow Studio (100% Real Production Orchestration)
+- **Zero-Variable Architecture (Implicit Data Flow)**:
+  - Eliminates manual `{{...}}` variable mapping. Outgoing data from predecessor nodes automatically and cleanly flows as contextual input into connected downstream nodes behind the scenes.
+  - Multi-input nodes automatically consolidate multi-branch predecessor contexts in topological sequence.
+- **100% Real Node Execution (Zero Mock / Zero Simulation)**:
+  - **Supervisor & Specialist Nodes**: Execute genuine LLM reasoning turns through the active inference provider and Model Router.
+  - **Tool & Research Nodes**: Perform authentic web searches, web crawling, and knowledge retrieval.
+  - **Data & Integration Nodes**: Run real sandboxed Python/Bash commands, execute genuine database queries, search vector knowledge embeddings, and dispatch real Telegram and WhatsApp bot messages.
+  - **Deliverable Generation**: Automatically author deliverables (e.g. Markdown reports, code diffs, logs) saved to disk and instantly downloadable.
+- **Persistent Workflow Registry & CRUD APIs**:
+  - Permanent file-backed storage (`~/.locallm/workflows/registry.json`) with atomic write guarantees.
+  - Complete RESTful CRUD APIs:
+    - `GET /api/workflows` — List all registered workflow definitions.
+    - `POST /api/workflows` — Create or update a workflow definition.
+    - `DELETE /api/workflows/:id` — Delete a workflow permanently.
+    - `POST /api/workflows/:id/toggle-active` — Atomically toggle `isActive` daemon execution state.
+  - **Exclusive Live Mode (Hardware-Aware Single Active Guard)**:
+    - Prevents local GPU/VRAM exhaustion and process thrashing by guaranteeing that **only one workflow is active at a time**.
+    - Activating any workflow automatically switches all other workflows to standby mode, ensuring dedicated inference headroom for active multi-agent pipelines.
+- **Multi-Source Background Triggers**:
+  - **Cron Schedule Runner**: Background engine automatically evaluates and executes active workflows based on standard cron schedules or intervals.
+  - **Public Webhook Endpoint**: Trigger active workflows instantly via `POST /api/webhook/<slug>` with external JSON payloads.
+  - **Inbound Messaging Bot Commands & Embedded Telegram Daemon**:
+    - Trigger active workflows directly from inbound Telegram or WhatsApp chats matching configured trigger commands or natural language objectives.
+    - `api_server` (`locallm serve`) automatically spawns an embedded `TelegramBackgroundDaemon` whenever a bot token is detected, eliminating the need to run a separate manual CLI runner.
+  - **Dynamic Scripture & Verse Range Filtering**:
+    - Intelligently parses complex queries (e.g. *"Tolong carikan surat Al-Ikhlas ayat 2 sampai 3 beserta artinya dan audio murottal"*).
+    - Prioritizes Surah name resolution before numeric matching to prevent verse indices from conflicting with Surah numbers.
+    - Dynamically queries the **equran.id API v2**, extracts and formats requested verse subsets (e.g. Ayat 2–3) with authentic Arabic typography and Indonesian translations, embeds high-fidelity Murottal recitation links, and dispatches directly to Telegram.
+- **UI Live Telemetry via Server-Sent Events (SSE)**:
+  - Real-time SSE streaming via `POST /api/workflow/run-stream`.
+  - Dynamic canvas glowing states: active executing node illuminated with cyan `ACTIVE` badge, outgoing wire glowing, and target node marked with orange `NEXT →`.
+  - Execution lock guards: canvas and toolbar controls lock securely during active runs to prevent state corruption, with native `beforeunload` warning dialogs for unsaved changes or active executions.
+- **Execution History & Telemetry Panel**:
+  - Comprehensive slide-over drawer accessible via the `History` button on the header toolbar.
+  - Displays persistent execution history records with trigger source badges (`manual`, `schedule`, `webhook`, `telegram`, `whatsapp`), status, duration, step counts, and stempel times.
+  - Interactive drill-down view with real-time terminal step trace logs and one-click downloads for all generated file deliverables.
+- **Progressive Disclosure & Configuration**:
+  - Clean Basic view with intelligent "Auto by AI" parameter inference for non-technical users.
+  - Collapsible Advanced Configuration drawer for power users (model overrides, temperature sliders, custom system prompts, timeout limits, and centered Continue on Error resilience switches).
+
 ### 🖥️ Real-Time Telemetry Header Banner
 - **Live System & Hardware Cockpit**: The Unicode header banner at the top of every screen automatically displays real-time hardware telemetry:
   - **Service & Ping**: Backend connectivity and live network ping latency (`● Service: ONLINE (1.8ms)`).
@@ -242,6 +283,7 @@ locallm stop
 - **Optional Bearer Token Authentication**: Secure your API gateway with custom keys (`--api-key <secret>` or `LOCALLM_API_KEY`).
 - **Server-Sent Events (SSE) Streaming**: Chunked token emission matching the OpenAI SSE streaming protocol with live usage metrics.
 - **Header Telemetry Badge & Lifecycle**: Displayed dynamically in the telemetry banner (`API :8080`), with complete daemon control via CLI (`locallm serve`) or `Settings -> API Server Gateway`.
+- **Embedded Telegram Bot Daemon**: When `telegram_token` is configured, `locallm serve` automatically initializes the `TelegramBackgroundDaemon`, allowing chat completion services, Web UI endpoints, and Telegram messaging triggers to run concurrently under a single server process without separate terminal windows.
 
 ### 🤝 Multi-Agent Coordination & Smart Capability Routing
 - **Hierarchical Supervisor-Specialist Architecture**: Combines a lead Supervisor with targeted specialist agents to tackle complex, multi-stage engineering tasks:
@@ -371,7 +413,7 @@ locallm stop
   - `always_allow`: Fully hands-free autonomous coding and terminal execution.
   - `ask`: Interactive approval prompt (`Allow Once`, `Always Allow`, `Deny`) before mutating actions.
   - `deny`: Read-only execution mode blocking all filesystem modifications and shell execution.
-- **Telegram Bot (`locallm telegram`)**: 24/7 bot daemon with per-user conversation memory, user ID whitelisting, Markdown-to-HTML formatting, and photo/document delivery tools.
+- **Telegram Bot (`locallm telegram` or embedded daemon)**: 24/7 bot listener with per-user conversation memory, user ID whitelisting, Markdown-to-HTML formatting, photo/document delivery tools, and automatic routing to active Agent Workflow Studio triggers. Runs standalone via CLI or automatically embedded inside `locallm serve`.
 - **WhatsApp Bot (`locallm whatsapp`)**: Terminal QR code pairing via Baileys bridge, multi-user memory, phone whitelist, group chat support, and automatic 15-digit LID resolution.
 - **Cross-Channel Parity**: Uniform context telemetry (`• Context: 2,681/8,192 (32.7%) • Speed: 37.8 tok/s`) and slash commands (`/stats`, `/model`, `/clear`, `/sessions`, `/help`, `/multi`) across CLI, Telegram, and WhatsApp.
 

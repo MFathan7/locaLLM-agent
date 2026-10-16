@@ -1,4 +1,4 @@
-"""Unit tests for WorkflowGraphExecutor (n8n + Multi-Agent Coordinator engine)."""
+"""Unit tests for WorkflowGraphExecutor (DAG & Multi-Agent Coordinator engine)."""
 
 import unittest
 from unittest.mock import MagicMock
@@ -235,7 +235,352 @@ class TestWorkflowGraphExecutor(unittest.TestCase):
         self.assertTrue(result["success"])
         self.assertGreaterEqual(result["steps_executed"], 4)
 
+    def test_dynamic_properties_and_runtime_interpolation(self):
+        """Verify dynamic properties resolution and {{variable}} / {{node.output}} interpolation."""
+        nodes = [
+            {
+                "id": "node-intake",
+                "category": "triggers",
+                "tag": "intake",
+                "title": "User Objective Input",
+                "properties": {
+                    "common": {
+                        "displayName": "Intake Trigger",
+                        "description": "Receives user request",
+                        "continueOnError": False,
+                        "timeoutSeconds": 30,
+                    },
+                    "inputs": {
+                        "query": "Autonomous Agent Architecture",
+                    },
+                    "options": {
+                        "mode": "standard",
+                    },
+                    "output": {
+                        "outputVariable": "user_objective",
+                    },
+                },
+            },
+            {
+                "id": "node-researcher",
+                "category": "specialists",
+                "tag": "researcher",
+                "title": "Deep Researcher Agent",
+                "properties": {
+                    "common": {
+                        "displayName": "Deep Researcher",
+                        "description": "Conducts deep analysis",
+                        "continueOnError": False,
+                        "timeoutSeconds": 60,
+                    },
+                    "inputs": {
+                        "searchQuery": "{{user_objective}} best practices",
+                        "systemPrompt": "Analyze topic: {{node-intake.output.query}}",
+                    },
+                    "options": {
+                        "model": "deepseek-r1:8b",
+                        "temperature": 0.4,
+                    },
+                    "output": {
+                        "outputVariable": "out_research_data",
+                    },
+                },
+            },
+            {
+                "id": "node-dispatcher",
+                "category": "outputs",
+                "tag": "messaging-dispatcher",
+                "title": "Messaging Dispatcher",
+                "properties": {
+                    "common": {
+                        "displayName": "Telegram Alert",
+                        "continueOnError": False,
+                        "timeoutSeconds": 15,
+                    },
+                    "inputs": {
+                        "recipient": "@engineering_lead",
+                        "messageTemplate": "Report for {{user_objective}}: Summary -> {{out_research_data.summary}}",
+                    },
+                    "options": {
+                        "channel": "slack",
+                    },
+                    "output": {
+                        "outputVariable": "out_notification",
+                    },
+                },
+            },
+        ]
+        edges = [
+            {"id": "e-dyn-1", "from": "node-intake", "to": "node-researcher", "fromSide": "right", "toSide": "left", "kind": "main"},
+            {"id": "e-dyn-2", "from": "node-researcher", "to": "node-dispatcher", "fromSide": "right", "toSide": "left", "kind": "main"},
+        ]
+
+        result = self.executor.run(nodes, edges, workspace_name="default", execution_mode="simulation")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["steps_executed"], 3)
+
+        context_vars = result["state"]["context_variables"]
+        # Verify custom outputVariable binding
+        self.assertIn("user_objective", context_vars)
+        self.assertIn("out_research_data", context_vars)
+        self.assertIn("out_notification", context_vars)
+
+        # Verify default node_id.output binding
+        self.assertIn("node-intake.output", context_vars)
+        self.assertIn("node-researcher.output", context_vars)
+
+        # Verify variable interpolation in downstream dispatcher message
+        dispatch_result = context_vars["out_notification"]
+        self.assertIn("Report for Autonomous Agent Architecture:", dispatch_result["message"])
+        self.assertIn("Summary ->", dispatch_result["message"])
+
+    def test_continue_on_error_flag_handling(self):
+        """Verify continueOnError allows workflow to proceed despite a node failure."""
+        class FailingExecutor(WorkflowGraphExecutor):
+            def _execute_single_node(self, *args, **kwargs):
+                node = args[0] if args else kwargs.get("node", {})
+                if isinstance(node, dict) and node.get("id") == "fail-node":
+                    raise RuntimeError("Simulated failure in test step")
+                return super()._execute_single_node(*args, **kwargs)
+
+        failing_executor = FailingExecutor(self.config, self.mock_client)
+
+        nodes_strict = [
+            {
+                "id": "node-start",
+                "category": "triggers",
+                "tag": "intake",
+                "title": "Start Node",
+                "properties": {"common": {"continueOnError": False}, "inputs": {"query": "Task"}, "options": {}, "output": {}},
+            },
+            {
+                "id": "fail-node",
+                "category": "specialists",
+                "tag": "coder",
+                "title": "Coder Step",
+                "properties": {"common": {"continueOnError": False}, "inputs": {}, "options": {}, "output": {}},
+            },
+            {
+                "id": "node-end",
+                "category": "outputs",
+                "tag": "chat-output",
+                "title": "End Node",
+                "properties": {"common": {"continueOnError": False}, "inputs": {}, "options": {}, "output": {}},
+            },
+        ]
+        edges = [
+            {"id": "ef-1", "from": "node-start", "to": "fail-node", "fromSide": "right", "toSide": "left", "kind": "main"},
+            {"id": "ef-2", "from": "fail-node", "to": "node-end", "fromSide": "right", "toSide": "left", "kind": "main"},
+        ]
+
+        # 1. With continueOnError = False, workflow should halt with success = False
+        res_fail = failing_executor.run(nodes_strict, edges, workspace_name="default", execution_mode="simulation")
+        self.assertFalse(res_fail["success"])
+        self.assertIn("Simulated failure in test step", res_fail.get("error", ""))
+
+        # 2. With continueOnError = True on fail-node, workflow should complete end-to-end
+        nodes_lenient = [
+            nodes_strict[0],
+            {
+                "id": "fail-node",
+                "category": "specialists",
+                "tag": "coder",
+                "title": "Coder Step",
+                "properties": {"common": {"continueOnError": True}, "inputs": {}, "options": {}, "output": {}},
+            },
+            nodes_strict[2],
+        ]
+        res_ok = failing_executor.run(nodes_lenient, edges, workspace_name="default", execution_mode="simulation")
+        self.assertTrue(res_ok["success"])
+        self.assertEqual(res_ok["steps_executed"], 3)
+
+    def test_property_schema_and_interpolation_helpers(self):
+        """Test recursive property interpolation and default property generation helpers."""
+        from locallm.core.orchestrator.property_schema import (
+            get_default_properties_for_tag,
+            interpolate_properties,
+            ensure_node_dynamic_properties,
+        )
+
+        props = get_default_properties_for_tag("researcher")
+        self.assertIn("common", props)
+        self.assertIn("inputs", props)
+        self.assertIn("options", props)
+        self.assertIn("output", props)
+        self.assertEqual(props["output"]["outputVariable"], "out_research_data")
+
+        # Test interpolation with nested dicts and fallback
+        template_props = {
+            "inputs": {
+                "prompt": "Hello {{user.name}}, your score is {{stats.score}}",
+                "unresolved": "{{unknown_var}}",
+            },
+            "options": {
+                "maxRetries": 3,
+                "enabled": True,
+            },
+        }
+        ctx = {
+            "user": {"name": "Alex"},
+            "stats": {"score": 98.5},
+        }
+        resolved = interpolate_properties(template_props, ctx)
+        self.assertEqual(resolved["inputs"]["prompt"], "Hello Alex, your score is 98.5")
+        self.assertEqual(resolved["inputs"]["unresolved"], "{{unknown_var}}")
+        self.assertEqual(resolved["options"]["maxRetries"], 3)
+        self.assertTrue(resolved["options"]["enabled"])
+
+        # Test legacy node fallback migration
+        legacy_node = {
+            "id": "legacy-1",
+            "tag": "online-web",
+            "category": "tools_plugins",
+            "title": "Legacy Search",
+            "config": {"query": "climate change"},
+        }
+        migrated = ensure_node_dynamic_properties(legacy_node)
+        self.assertIn("properties", migrated)
+        self.assertEqual(migrated["properties"]["inputs"]["query"], "climate change")
+
+    def test_zero_variable_implicit_data_flow(self):
+        """Verify seamless zero-variable data passing where edge connections implicitly transfer data."""
+        nodes = [
+            {
+                "id": "start-node",
+                "category": "triggers",
+                "tag": "intake",
+                "title": "Start Trigger",
+                "properties": {
+                    "common": {"displayName": "User Request"},
+                    "inputs": {"query": "Implicit Flow Optimization"},
+                    "options": {"parameterMode": "custom"},
+                    "output": {},
+                },
+            },
+            {
+                "id": "research-step",
+                "category": "specialists",
+                "tag": "researcher",
+                "title": "Autonomous Researcher",
+                "properties": {
+                    "common": {"displayName": "Auto Research"},
+                    "inputs": {},  # Completely empty - ZERO variables
+                    "options": {"parameterMode": "auto"},
+                    "output": {},
+                },
+            },
+            {
+                "id": "dispatch-step",
+                "category": "outputs",
+                "tag": "messaging-dispatcher",
+                "title": "Notification Dispatcher",
+                "properties": {
+                    "common": {"displayName": "Auto Dispatch"},
+                    "inputs": {},  # Completely empty - ZERO variables
+                    "options": {"parameterMode": "auto", "channel": "slack"},
+                    "output": {},
+                },
+            },
+        ]
+        edges = [
+            {"id": "e-auto-1", "from": "start-node", "to": "research-step", "fromSide": "right", "toSide": "left", "kind": "main"},
+            {"id": "e-auto-2", "from": "research-step", "to": "dispatch-step", "fromSide": "right", "toSide": "left", "kind": "main"},
+        ]
+
+        result = self.executor.run(nodes, edges, workspace_name="default", execution_mode="simulation")
+        self.assertTrue(result["success"])
+        self.assertEqual(result["steps_executed"], 3)
+
+        # Confirm research step automatically picked up the objective from predecessor
+        research_out = result["state"]["context_variables"].get("research-step.output")
+        self.assertIsNotNone(research_out)
+        self.assertEqual(research_out["query"], "Implicit Flow Optimization")
+
+        # Confirm dispatcher automatically incorporated upstream context
+        dispatch_out = result["state"]["context_variables"].get("dispatch-step.output")
+        self.assertIsNotNone(dispatch_out)
+        self.assertIn("Implicit Flow Optimization", dispatch_out["message"])
+
+    def test_multi_predecessor_context_merging(self):
+        """Verify multiple predecessor nodes entering one node merge their outputs cleanly."""
+        nodes = [
+            {
+                "id": "trigger-node",
+                "category": "triggers",
+                "tag": "intake",
+                "title": "Intake",
+                "properties": {"inputs": {"query": "Multi-agent audit"}, "options": {}},
+            },
+            {
+                "id": "spec-research",
+                "category": "specialists",
+                "tag": "researcher",
+                "title": "Market Analyst",
+                "properties": {"options": {"parameterMode": "auto"}},
+            },
+            {
+                "id": "spec-coder",
+                "category": "specialists",
+                "tag": "coder",
+                "title": "Code Specialist",
+                "properties": {"options": {"parameterMode": "auto"}},
+            },
+            {
+                "id": "merge-output",
+                "category": "outputs",
+                "tag": "messaging-dispatcher",
+                "title": "Final Broadcaster",
+                "properties": {"options": {"parameterMode": "auto", "channel": "slack"}},
+            },
+        ]
+        edges = [
+            {"id": "em-1", "from": "trigger-node", "to": "spec-research", "kind": "main"},
+            {"id": "em-2", "from": "trigger-node", "to": "spec-coder", "kind": "main"},
+            {"id": "em-3", "from": "spec-research", "to": "merge-output", "kind": "main"},
+            {"id": "em-4", "from": "spec-coder", "to": "merge-output", "kind": "main"},
+        ]
+
+        result = self.executor.run(nodes, edges, workspace_name="default", execution_mode="simulation")
+        self.assertTrue(result["success"])
+        self.assertGreaterEqual(result["steps_executed"], 4)
+
+        # Check final broadcaster output message contains merged context
+        dispatch_out = result["state"]["context_variables"].get("merge-output.output")
+        self.assertIsNotNone(dispatch_out)
+        self.assertIn("Multi-agent audit", dispatch_out["message"])
+
+    def test_auto_vs_custom_parameter_mode_override(self):
+        """Verify parameterMode = 'custom' prioritizes user inputs over automated defaults."""
+        nodes = [
+            {
+                "id": "trigger",
+                "category": "triggers",
+                "tag": "intake",
+                "title": "Trigger",
+                "properties": {"inputs": {"query": "Default Objective"}, "options": {}},
+            },
+            {
+                "id": "custom-research",
+                "category": "specialists",
+                "tag": "researcher",
+                "title": "Custom Analyst",
+                "properties": {
+                    "inputs": {"searchQuery": "Specific Custom Prompt Override"},
+                    "options": {"parameterMode": "custom"},
+                },
+            },
+        ]
+        edges = [
+            {"id": "ec-1", "from": "trigger", "to": "custom-research", "kind": "main"},
+        ]
+
+        result = self.executor.run(nodes, edges, workspace_name="default", execution_mode="simulation")
+        self.assertTrue(result["success"])
+        custom_out = result["state"]["context_variables"].get("custom-research.output")
+        self.assertEqual(custom_out["query"], "Specific Custom Prompt Override")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+

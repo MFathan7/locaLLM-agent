@@ -1754,44 +1754,98 @@ print(json.dumps({"success": ok, "message": msg, "installed": installed, "count"
           return;
         }
 
-        // 7.5 Dedicated Visual Agent Workflow Execution Runner
-        if (pathname === '/api/workflow/run' && req.method === 'POST') {
-          try {
-            const parsedBody = await parseJsonBody(req);
-            const pyScript = `
-import json, sys
-from locallm.config import load_config
-from locallm.core.orchestrator import WorkflowGraphExecutor
+        // 7.5 Visual Agent Workflow & Webhook Gateway (Real SSE Streaming & Persistent CRUD)
+        if (
+          pathname === '/api/workflows' ||
+          pathname.startsWith('/api/workflows/') ||
+          pathname.startsWith('/api/workflow/') ||
+          pathname.startsWith('/api/webhook/')
+        ) {
+          const cfg = loadConfigOnDisk();
+          const serverPort = cfg.server_port || 8080;
+          const apiKey = cfg.server_api_key || '';
 
-payload = json.loads(sys.stdin.read())
-cfg = load_config()
-executor = WorkflowGraphExecutor(cfg)
-res = executor.run(
-    nodes=payload.get("nodes", []),
-    edges=payload.get("edges", []),
-    initial_state=payload.get("initial_state") or {},
-    workspace_name=payload.get("workspace", "default"),
-    execution_mode=payload.get("execution_mode", "real")
-)
-print(json.dumps(res))
-`;
-            const proc = child_process.spawnSync('uv', ['run', 'python', '-c', pyScript], {
-              input: JSON.stringify(parsedBody || {}),
-              encoding: 'utf-8',
-              timeout: 90000,
-              cwd: path.resolve(process.cwd(), '..')
+          // Auto-start Python API server if not running
+          try {
+            const probe = await fetch(`http://127.0.0.1:${serverPort}/health`, { signal: AbortSignal.timeout(350) });
+            if (!probe.ok) throw new Error('Unhealthy');
+          } catch {
+            const baseDir = import.meta.dirname || path.resolve('.');
+            const repoRoot = path.resolve(baseDir, '..');
+            const isWin = process.platform === 'win32';
+            const venvPython = isWin
+              ? path.resolve(repoRoot, '.venv/Scripts/python.exe')
+              : path.resolve(repoRoot, '.venv/bin/python');
+            const pyBin = fs.existsSync(venvPython) ? venvPython : (isWin ? 'python.exe' : 'python3');
+
+            try {
+              child_process.spawn(pyBin, ['-m', 'locallm', 'serve', '--port', String(serverPort), '--detach'], {
+                cwd: repoRoot,
+                detached: true,
+                stdio: 'ignore'
+              }).unref();
+
+              for (let i = 0; i < 15; i++) {
+                await new Promise(r => setTimeout(r, 200));
+                try {
+                  const check = await fetch(`http://127.0.0.1:${serverPort}/health`, { signal: AbortSignal.timeout(350) });
+                  if (check.ok) break;
+                } catch { }
+              }
+            } catch { }
+          }
+
+          try {
+            const forwardUrl = `http://127.0.0.1:${serverPort}${req.url}`;
+            const fHeaders: Record<string, string> = {
+              'Content-Type': 'application/json',
+              ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {})
+            };
+            let fBody: any = undefined;
+            if (req.method === 'POST' || req.method === 'PUT') {
+              fBody = JSON.stringify(await parseJsonBody(req));
+            }
+
+            const gwRes = await fetch(forwardUrl, {
+              method: req.method,
+              headers: fHeaders,
+              body: fBody,
+              signal: AbortSignal.timeout(180000)
             });
-            if (proc.status === 0 && proc.stdout) {
-              const outJson = JSON.parse(proc.stdout.trim());
-              sendJson(res, 200, outJson);
-              return;
-            } else {
-              console.warn('Direct python execution stderr:', proc.stderr);
-              sendJson(res, 500, { error: proc.stderr || 'Execution failed' });
+
+            // Handle SSE streaming for /api/workflow/run-stream
+            if (pathname === '/api/workflow/run-stream' && gwRes.ok && gwRes.body) {
+              res.writeHead(200, {
+                'Content-Type': 'text/event-stream',
+                'Cache-Control': 'no-cache',
+                'Connection': 'keep-alive',
+                'Access-Control-Allow-Origin': '*'
+              });
+
+              const reader = gwRes.body.getReader();
+              const closeHandler = () => {
+                try { reader.cancel(); } catch { }
+              };
+              req.on('close', closeHandler);
+
+              try {
+                while (true) {
+                  const { done, value } = await reader.read();
+                  if (done) break;
+                  res.write(value);
+                }
+              } finally {
+                req.off('close', closeHandler);
+                res.end();
+              }
               return;
             }
+
+            const data = await gwRes.json().catch(() => ({}));
+            sendJson(res, gwRes.status, data);
+            return;
           } catch (err: any) {
-            sendJson(res, 500, { error: err.message });
+            sendJson(res, 502, { error: `Workflow Gateway error: ${err.message}` });
             return;
           }
         }

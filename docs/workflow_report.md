@@ -1,8 +1,8 @@
-# 📊 Market & Technical Intelligence Report
+# 📊 System & Technical Intelligence Report
 
-**Topic:** Analyze local LLM market
+**Topic:** You are an elite technical documentation specialist. Author comprehensive, structured reports.
 
-**Generated:** 2026-10-15 22:48:24
+**Generated:** 2026-10-16 13:22:17
 
 **Workspace:** `default`
 

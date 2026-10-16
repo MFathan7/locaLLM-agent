@@ -55,12 +55,25 @@ import {
   Package,
   FileDown,
   Copy,
-  Send
+  Send,
+  History
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { ThemeToggle } from './ThemeToggle';
 import { SettingsModal } from './SettingsModal';
-import type { Workspace, ModelInfo, LocaLLMConfig, PortSide, PortRole, ActivityCategory } from '../types';
+import type {
+  Workspace,
+  ModelInfo,
+  LocaLLMConfig,
+  PortSide,
+  PortRole,
+  ActivityCategory,
+  NodeProperties,
+  WorkflowDefinition,
+} from '../types';
+import { ensureNodeDynamicProperties } from '../types';
+import { ActivityPropertiesPanel } from './ActivityPropertiesPanel';
+import { WorkflowHistoryPanel } from './WorkflowHistoryPanel';
 import { api } from '../services/api';
 
 export type { PortSide, PortRole, ActivityCategory };
@@ -135,6 +148,7 @@ export interface WorkflowNode {
     output_path?: string;
     [key: string]: any;
   };
+  properties?: NodeProperties;
 }
 
 export interface WorkflowEdge {
@@ -144,7 +158,7 @@ export interface WorkflowEdge {
   fromSide?: PortSide;
   toSide?: PortSide;
   kind?: 'main' | 'sub' | 'conditional';
-  conditionBranch?: 'true' | 'false' | 'loop' | 'done';
+  conditionBranch?: 'true' | 'false' | 'loop' | 'done' | 'pass' | 'reject';
   label?: string;
   variant?: 'default' | 'emphasis' | 'security' | 'dashed';
 }
@@ -240,16 +254,11 @@ interface WorkflowStudioProps {
 export const NODE_WIDTH = 156;
 export const NODE_HEIGHT = 64;
 
-// Default UiPath-Style Sequence Groups Layout
-export const INITIAL_LANES: WorkflowLaneConfig[] = [
-  { id: 'ui', num: '01', label: 'User Interface Sequence', description: 'Handles user prompts, input validation, and conversational deliverables', color: 'blue', x: 30, y: 70, width: 1750, height: 135 },
-  { id: 'agent', num: '02', label: 'Agent Runtime Sequence', description: 'Cognitive reasoning loop, model inference, and tool call planning', color: 'blue', x: 30, y: 225, width: 1750, height: 145 },
-  { id: 'policy', num: '03', label: 'Policy & Guardrail Sequence', description: 'Safety screening, human authorization gates, and retry recovery loops', color: 'red', x: 30, y: 390, width: 1750, height: 135 },
-  { id: 'tools', num: '04', label: 'Tool Execution Sequence', description: 'Sandboxed code interpretation, terminal commands, and API execution', color: 'yellow', x: 30, y: 545, width: 1750, height: 145 },
-  { id: 'evidence', num: '05', label: 'Evidence & Context Sequence', description: 'Vector embeddings, short-term scratchpad, and memory grounding', color: 'blue', x: 30, y: 710, width: 1750, height: 135 }
-];
+// Default Sequence Groups Layout imported from workflowPresets to break circular dependency
+export { INITIAL_LANES } from './workflowPresets';
+import { INITIAL_LANES } from './workflowPresets';
 
-// UiPath-Style Sequence Visual Themes (Standard, Normal, Critical)
+// Sequence Visual Themes (Standard, Normal, Critical)
 export const SEQUENCE_COLOR_THEMES: Record<SequenceColor, {
   label: string;
   badgeLabel: string;
@@ -390,925 +399,8 @@ const ARCHIFY_TYPE_STYLES: Record<string, {
   }
 };
 
-// Workflow Presets Collection (3 Real Use Case Presets based on Multi-Agent Coordinator 2-Port Topology)
-const WORKFLOW_PRESETS: {
-  id: string;
-  name: string;
-  description: string;
-  lanes: WorkflowLaneConfig[];
-  nodes: WorkflowNode[];
-  edges: WorkflowEdge[];
-}[] = [
-  {
-    id: 'fullstack-code-audit',
-    name: 'Full-Stack Code Audit & Auto-Refactor',
-    description: 'QA Loop Pattern: automated repository audit with hierarchical decomposition, Coder Specialist tooling, Critic verification, and Quality Gate revision loops.',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'audit-intake',
-        lane: 'ui',
-        category: 'triggers',
-        type: 'frontend',
-        title: 'User Objective Input',
-        subtitle: 'Repository target & audit directives',
-        tag: 'intake',
-        x: 60,
-        y: 105,
-        status: 'idle',
-        config: {
-          query: 'Perform full-stack audit across backend modules and test suite. Detect failing assertions, memory bottlenecks, and syntax regressions, patch affected source files, and verify 100% test coverage with pytest.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-decomposer',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Task Decomposer (Planner)',
-        subtitle: 'Splits audit into ordered task queue',
-        tag: 'task-decomposer',
-        x: 320,
-        y: 265,
-        status: 'idle',
-        config: {
-          strategy: 'hierarchical',
-          max_subtasks: 4
-        }
-      },
-      {
-        id: 'audit-supervisor',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Supervisor / Coordinator',
-        subtitle: 'Multi-agent orchestration hub',
-        tag: 'supervisor',
-        x: 600,
-        y: 265,
-        status: 'idle',
-        config: {
-          directive: 'Coordinate code audit mission: query model router for high-VRAM coder, delegate patch generation to Coder Agent, aggregate AST diffs into Blackboard, and submit final candidate to QA Critic.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-critic',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'security',
-        title: 'Critic / QA Agent',
-        subtitle: 'Scores AST patches and test matrix',
-        tag: 'critic',
-        x: 880,
-        y: 265,
-        status: 'idle',
-        config: {
-          pass_threshold: 85,
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-gate',
-        lane: 'policy',
-        category: 'flow_control',
-        type: 'security',
-        title: 'Quality Gate (If/Else)',
-        subtitle: 'Pass deliverable or loop to Supervisor',
-        tag: 'quality-gate',
-        x: 1160,
-        y: 425,
-        status: 'idle',
-        config: {
-          max_retries: 3,
-          min_score: 85
-        }
-      },
-      {
-        id: 'audit-output',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'frontend',
-        title: 'Chat & Artifact Output',
-        subtitle: 'Verified patches, test logs, and diff receipts',
-        tag: 'chat-output',
-        x: 1440,
-        y: 105,
-        status: 'idle',
-        config: {
-          notify_user: true,
-          format: 'markdown'
-        }
-      },
-      {
-        id: 'audit-router',
-        lane: 'tools',
-        category: 'orchestration',
-        type: 'cloud',
-        title: 'Dynamic Model Router',
-        subtitle: 'Inspects GPU VRAM for coder model',
-        tag: 'model-router',
-        x: 440,
-        y: 585,
-        status: 'idle',
-        config: {
-          vram_threshold_mb: 8192,
-          fast_model: 'gemma4:12b',
-          deep_model: 'gemma4:26b'
-        }
-      },
-      {
-        id: 'audit-blackboard',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'Blackboard Hub (Shared State)',
-        subtitle: 'Shared AST diffs and test results',
-        tag: 'blackboard',
-        x: 600,
-        y: 745,
-        status: 'idle',
-        config: {
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-coder',
-        lane: 'tools',
-        category: 'specialists',
-        type: 'backend',
-        title: 'Coder Agent',
-        subtitle: 'Generates AST patches and code fixes',
-        tag: 'coder',
-        x: 760,
-        y: 585,
-        status: 'idle',
-        config: {
-          tools: ['patch_file', 'write_file', 'read_file', 'check_syntax'],
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-fs',
-        lane: 'evidence',
-        category: 'tools_plugins',
-        type: 'messagebus',
-        title: 'Filesystem',
-        subtitle: 'Local repository file sandbox',
-        tag: 'filesystem',
-        x: 760,
-        y: 745,
-        status: 'idle',
-        config: {
-          path: '.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'audit-shell',
-        lane: 'evidence',
-        category: 'tools_plugins',
-        type: 'messagebus',
-        title: 'Shell Runner',
-        subtitle: 'Executes pytest and syntax checks',
-        tag: 'subprocess',
-        x: 940,
-        y: 745,
-        status: 'idle',
-        config: {
-          command: 'pytest -q tests/',
-          workspace: 'default'
-        }
-      }
-    ],
-    edges: [
-      { id: 'ae-main-1', from: 'audit-intake', to: 'audit-decomposer', fromSide: 'right', toSide: 'left', kind: 'main', label: 'objective', variant: 'emphasis' },
-      { id: 'ae-main-2', from: 'audit-decomposer', to: 'audit-supervisor', fromSide: 'right', toSide: 'left', kind: 'main', label: 'task queue', variant: 'emphasis' },
-      { id: 'ae-main-3', from: 'audit-supervisor', to: 'audit-critic', fromSide: 'right', toSide: 'left', kind: 'main', label: 'code diffs & patches', variant: 'emphasis' },
-      { id: 'ae-main-4', from: 'audit-critic', to: 'audit-gate', fromSide: 'right', toSide: 'left', kind: 'main', label: 'verdict', variant: 'security' },
-      { id: 'ae-gate-pass', from: 'audit-gate', to: 'audit-output', fromSide: 'right', toSide: 'left', kind: 'conditional', conditionBranch: 'true', label: 'Pass (Score >= 85)', variant: 'emphasis' },
-      { id: 'ae-gate-loop', from: 'audit-gate', to: 'audit-supervisor', fromSide: 'left', toSide: 'bottom', kind: 'conditional', conditionBranch: 'loop', label: 'Revision Loop (retry <= 3)', variant: 'security' },
-      { id: 'ae-sub-router', from: 'audit-router', to: 'audit-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'vram model', variant: 'dashed' },
-      { id: 'ae-sub-blackboard', from: 'audit-blackboard', to: 'audit-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'shared state', variant: 'dashed' },
-      { id: 'ae-sub-coder', from: 'audit-coder', to: 'audit-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'code generator', variant: 'dashed' },
-      { id: 'ae-sub-fs', from: 'audit-fs', to: 'audit-coder', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'file patches', variant: 'dashed' },
-      { id: 'ae-sub-shell', from: 'audit-shell', to: 'audit-coder', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'test execution', variant: 'dashed' }
-    ]
-  },
-  {
-    id: 'deep-tech-intelligence',
-    name: 'Deep Tech & Market Intelligence Report',
-    description: 'Hub-and-Spoke Pattern: multi-source intelligence gathering, Blackboard data consolidation, and structured document publishing.',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'intel-intake',
-        lane: 'ui',
-        category: 'triggers',
-        type: 'frontend',
-        title: 'User Objective Input',
-        subtitle: 'Research mission & market scope',
-        tag: 'intake',
-        x: 60,
-        y: 105,
-        status: 'idle',
-        config: {
-          query: 'Conduct an exhaustive market and competitive intelligence report on open-weight local LLM orchestrators (Ollama, vLLM, llama.cpp, and locaLLM). Extract benchmark latency, hardware VRAM footprints, and feature matrices into the shared Blackboard, then generate an executive summary report.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'intel-supervisor',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Supervisor / Coordinator',
-        subtitle: 'Research coordination & subtask delegation',
-        tag: 'supervisor',
-        x: 380,
-        y: 265,
-        status: 'idle',
-        config: {
-          directive: 'Coordinate deep research: assign online retrieval tasks to Researcher Agent, cross-check against internal documentation via RAG Retriever, synchronize verified findings on the Blackboard, and dispatch data to Parallel Aggregator.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'intel-aggregator',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'messagebus',
-        title: 'Parallel Aggregator',
-        subtitle: 'Joins concurrent research streams',
-        tag: 'parallel-aggregator',
-        x: 720,
-        y: 265,
-        status: 'idle',
-        config: {
-          join_strategy: 'all_completed',
-          timeout: 90
-        }
-      },
-      {
-        id: 'intel-writer',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'frontend',
-        title: 'Writer Agent',
-        subtitle: 'Synthesizes findings into executive report',
-        tag: 'writer',
-        x: 1000,
-        y: 265,
-        status: 'idle',
-        config: {
-          format: 'markdown',
-          output_file: 'docs/market_intelligence_report.md'
-        }
-      },
-      {
-        id: 'intel-doc-exporter',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Document Exporter',
-        subtitle: 'Saves structured report to markdown file',
-        tag: 'doc-exporter',
-        x: 1320,
-        y: 75,
-        status: 'idle',
-        config: {
-          output_path: 'docs/market_intelligence_report.md',
-          format: 'markdown'
-        }
-      },
-      {
-        id: 'intel-chat-output',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'frontend',
-        title: 'Chat & Artifact Output',
-        subtitle: 'Displays key findings and download link',
-        tag: 'chat-output',
-        x: 1320,
-        y: 145,
-        status: 'idle',
-        config: {
-          notify_user: true
-        }
-      },
-      {
-        id: 'intel-router',
-        lane: 'tools',
-        category: 'orchestration',
-        type: 'cloud',
-        title: 'Dynamic Model Router',
-        subtitle: 'Assigns high-context reasoning LLM',
-        tag: 'model-router',
-        x: 240,
-        y: 585,
-        status: 'idle',
-        config: {
-          vram_threshold_mb: 12288,
-          fast_model: 'gemma4:12b',
-          deep_model: 'nemotron3-super'
-        }
-      },
-      {
-        id: 'intel-blackboard',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'Blackboard Hub (Shared State)',
-        subtitle: 'Benchmark telemetry and comparison matrix',
-        tag: 'blackboard',
-        x: 380,
-        y: 745,
-        status: 'idle',
-        config: {
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'intel-researcher',
-        lane: 'tools',
-        category: 'specialists',
-        type: 'messagebus',
-        title: 'Researcher Agent',
-        subtitle: 'Online data gathering and extraction',
-        tag: 'researcher',
-        x: 520,
-        y: 585,
-        status: 'idle',
-        config: {
-          tools: ['search_web', 'fetch_web', 'read_file'],
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'intel-web-search',
-        lane: 'evidence',
-        category: 'tools_plugins',
-        type: 'cloud',
-        title: 'Web Search',
-        subtitle: 'Queries online search engines',
-        tag: 'online-web',
-        x: 520,
-        y: 745,
-        status: 'idle',
-        config: {
-          provider: 'auto',
-          max_results: 8
-        }
-      },
-      {
-        id: 'intel-rag',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'RAG Retriever',
-        subtitle: 'Cross-references local docs and whitepapers',
-        tag: 'rag-retriever',
-        x: 680,
-        y: 745,
-        status: 'idle',
-        config: {
-          top_k: 5,
-          workspace: 'default'
-        }
-      }
-    ],
-    edges: [
-      { id: 'be-main-1', from: 'intel-intake', to: 'intel-supervisor', fromSide: 'right', toSide: 'left', kind: 'main', label: 'market prompt', variant: 'emphasis' },
-      { id: 'be-main-2', from: 'intel-supervisor', to: 'intel-aggregator', fromSide: 'right', toSide: 'left', kind: 'main', label: 'research streams', variant: 'emphasis' },
-      { id: 'be-main-3', from: 'intel-aggregator', to: 'intel-writer', fromSide: 'right', toSide: 'left', kind: 'main', label: 'consolidated facts', variant: 'emphasis' },
-      { id: 'be-main-4', from: 'intel-writer', to: 'intel-doc-exporter', fromSide: 'right', toSide: 'left', kind: 'main', label: 'export file', variant: 'default' },
-      { id: 'be-main-5', from: 'intel-writer', to: 'intel-chat-output', fromSide: 'right', toSide: 'left', kind: 'main', label: 'chat summary', variant: 'emphasis' },
-      { id: 'be-sub-router', from: 'intel-router', to: 'intel-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'vram model', variant: 'dashed' },
-      { id: 'be-sub-blackboard', from: 'intel-blackboard', to: 'intel-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'shared state', variant: 'dashed' },
-      { id: 'be-sub-researcher', from: 'intel-researcher', to: 'intel-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'intelligence feed', variant: 'dashed' },
-      { id: 'be-sub-search', from: 'intel-web-search', to: 'intel-researcher', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'live web queries', variant: 'dashed' },
-      { id: 'be-sub-rag', from: 'intel-rag', to: 'intel-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'workspace RAG', variant: 'dashed' }
-    ]
-  },
-  {
-    id: 'automated-ops-messaging',
-    name: 'Automated Ops & DB Assistant via Messaging',
-    description: 'Event-Driven Pattern: messaging bridge with semantic intent routing, executing fast database metrics and safe operational interventions with human approval.',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'ops-trigger',
-        lane: 'ui',
-        category: 'triggers',
-        type: 'external',
-        title: 'Messaging Trigger',
-        subtitle: 'Inbound Telegram & WhatsApp webhooks',
-        tag: 'messaging-trigger',
-        x: 60,
-        y: 105,
-        status: 'idle',
-        config: {
-          platform: 'telegram',
-          allowed_users: '@ops_admin, @lead_dev'
-        }
-      },
-      {
-        id: 'ops-intent',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'messagebus',
-        title: 'Semantic Intent Switch',
-        subtitle: 'Classifies query vs complex ops task',
-        tag: 'intent-switch',
-        x: 320,
-        y: 265,
-        status: 'idle',
-        config: {
-          branches: ['DATA_QUERY', 'OPS_COMPLEX']
-        }
-      },
-      {
-        id: 'ops-data-analyst',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'database',
-        title: 'Data/DB Analyst',
-        subtitle: 'Executes read-only SQL queries and summaries',
-        tag: 'data-analyst',
-        x: 620,
-        y: 205,
-        status: 'idle',
-        config: {
-          db_path: 'locallm_ops.db',
-          query: 'SELECT service, status, last_heartbeat FROM system_services ORDER BY last_heartbeat DESC LIMIT 10;'
-        }
-      },
-      {
-        id: 'ops-plugin-exec',
-        lane: 'tools',
-        category: 'tools_plugins',
-        type: 'messagebus',
-        title: 'Plugin Executor',
-        subtitle: 'Executes SQLite & Calendar plugin functions',
-        tag: 'plugin-executor',
-        x: 620,
-        y: 585,
-        status: 'idle',
-        config: {
-          plugin_id: 'sqlite_ops_calendar'
-        }
-      },
-      {
-        id: 'ops-supervisor',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Supervisor / Coordinator',
-        subtitle: 'Multi-step ops reasoning engine',
-        tag: 'supervisor',
-        x: 620,
-        y: 325,
-        status: 'idle',
-        config: {
-          directive: 'Evaluate incoming ops prompt from messaging channel: read user preferences and system history from Memory R/W, query live web status if needed, prepare execution plan, and request human approval prior to mutation.',
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'ops-memory',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'Memory R/W',
-        subtitle: 'Maintains persistent ops facts and runbooks',
-        tag: 'memory-rw',
-        x: 480,
-        y: 745,
-        status: 'idle',
-        config: {
-          scope: 'workspace',
-          mode: 'read_write'
-        }
-      },
-      {
-        id: 'ops-web-search',
-        lane: 'tools',
-        category: 'tools_plugins',
-        type: 'cloud',
-        title: 'Web Search',
-        subtitle: 'Checks external cloud status & incident boards',
-        tag: 'online-web',
-        x: 780,
-        y: 585,
-        status: 'idle',
-        config: {
-          provider: 'auto',
-          max_results: 5
-        }
-      },
-      {
-        id: 'ops-approval',
-        lane: 'policy',
-        category: 'flow_control',
-        type: 'security',
-        title: 'Human Approval',
-        subtitle: 'Pauses execution for admin confirmation',
-        tag: 'policy-gate',
-        x: 920,
-        y: 425,
-        status: 'idle',
-        config: {
-          policy: 'ask',
-          timeout_seconds: 120
-        }
-      },
-      {
-        id: 'ops-dispatcher',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Messaging Dispatcher',
-        subtitle: 'Dispatches answers & alerts to Telegram/WA',
-        tag: 'messaging-dispatcher',
-        x: 1240,
-        y: 105,
-        status: 'idle',
-        config: {
-          channel: 'telegram',
-          recipient: '@ops_admin'
-        }
-      }
-    ],
-    edges: [
-      { id: 'ce-main-trigger', from: 'ops-trigger', to: 'ops-intent', fromSide: 'right', toSide: 'left', kind: 'main', label: 'inbound chat', variant: 'emphasis' },
-      { id: 'ce-branch-db', from: 'ops-intent', to: 'ops-data-analyst', fromSide: 'right', toSide: 'left', kind: 'main', label: 'DATA_QUERY', variant: 'default' },
-      { id: 'ce-branch-ops', from: 'ops-intent', to: 'ops-supervisor', fromSide: 'right', toSide: 'left', kind: 'main', label: 'OPS_COMPLEX', variant: 'emphasis' },
-      { id: 'ce-db-output', from: 'ops-data-analyst', to: 'ops-dispatcher', fromSide: 'right', toSide: 'left', kind: 'main', label: 'query results', variant: 'default' },
-      { id: 'ce-ops-approval', from: 'ops-supervisor', to: 'ops-approval', fromSide: 'right', toSide: 'left', kind: 'main', label: 'mutation plan', variant: 'security' },
-      { id: 'ce-approval-output', from: 'ops-approval', to: 'ops-dispatcher', fromSide: 'right', toSide: 'left', kind: 'main', label: 'approved result', variant: 'emphasis' },
-      { id: 'ce-sub-plugin', from: 'ops-plugin-exec', to: 'ops-data-analyst', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'sqlite plugin', variant: 'dashed' },
-      { id: 'ce-sub-memory', from: 'ops-memory', to: 'ops-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'persistent state', variant: 'dashed' },
-      { id: 'ce-sub-search', from: 'ops-web-search', to: 'ops-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'service status', variant: 'dashed' }
-    ]
-  },
-  {
-    id: 'auto-grab-quran',
-    name: "Auto Grab Al-Qur'an & Tafsir (equran.id API)",
-    description: "Inbound Messaging Trigger -> NLU Surah Classifier -> API Fetcher (equran.id) -> Arabic Typography Staging -> Critic QA -> Telegram Dispatcher",
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'quran-trigger',
-        lane: 'ui',
-        category: 'triggers',
-        type: 'external',
-        title: 'Messaging Trigger',
-        subtitle: 'Inbound chat request from Telegram/WA',
-        tag: 'messaging-trigger',
-        x: 60,
-        y: 105,
-        status: 'idle',
-        config: {
-          platform: 'telegram',
-          query: 'Tolong carikan surat Al-Kahfi ayat 1 sampai 10 beserta artinya dan audio murottal'
-        }
-      },
-      {
-        id: 'quran-supervisor',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Supervisor / Coordinator',
-        subtitle: 'Extracts target surah & coordinates API fetch',
-        tag: 'supervisor',
-        x: 360,
-        y: 265,
-        status: 'idle',
-        config: {
-          directive: 'Identify requested Surah and verse range, query equran.id v2 API, and orchestrate Arabic typography formatting'
-        }
-      },
-      {
-        id: 'quran-api-fetcher',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'cloud',
-        title: 'Researcher Agent',
-        subtitle: 'Fetches Arabic text, audio & translation from equran.id',
-        tag: 'researcher',
-        x: 680,
-        y: 265,
-        status: 'idle',
-        config: {
-          api_base: 'https://equran.id/api/v2',
-          reciter: 'Misyari-Rasyid-Al-Afasi'
-        }
-      },
-      {
-        id: 'quran-writer',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'frontend',
-        title: 'Writer Agent',
-        subtitle: 'Formats calligraphy layout, translation & audio link',
-        tag: 'writer',
-        x: 980,
-        y: 265,
-        status: 'idle',
-        config: {
-          format: 'markdown',
-          output_file: 'docs/quran_surah_output.md'
-        }
-      },
-      {
-        id: 'quran-critic',
-        lane: 'policy',
-        category: 'specialists',
-        type: 'security',
-        title: 'Critic / QA Agent',
-        subtitle: 'Validates verse completeness & translation integrity',
-        tag: 'critic',
-        x: 1140,
-        y: 425,
-        status: 'idle',
-        config: {
-          pass_threshold: 90
-        }
-      },
-      {
-        id: 'quran-doc-exporter',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Document Exporter',
-        subtitle: 'Saves complete scripture to markdown file',
-        tag: 'doc-exporter',
-        x: 1320,
-        y: 75,
-        status: 'idle',
-        config: {
-          output_path: 'docs/quran_surah_output.md',
-          format: 'markdown'
-        }
-      },
-      {
-        id: 'quran-dispatcher',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Messaging Dispatcher',
-        subtitle: 'Dispatches holy verses & audio player to Telegram',
-        tag: 'messaging-dispatcher',
-        x: 1320,
-        y: 155,
-        status: 'idle',
-        config: {
-          channel: 'telegram',
-          recipient: '@telegram_user'
-        }
-      },
-      {
-        id: 'quran-router',
-        lane: 'tools',
-        category: 'orchestration',
-        type: 'cloud',
-        title: 'Dynamic Model Router',
-        subtitle: 'Routes to high-context Arabic reasoning model',
-        tag: 'model-router',
-        x: 240,
-        y: 585,
-        status: 'idle',
-        config: {
-          vram_threshold_mb: 8192,
-          fast_model: 'qwen3.5:9b',
-          deep_model: 'nemotron3-super'
-        }
-      },
-      {
-        id: 'quran-blackboard',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'Blackboard Hub (Shared State)',
-        subtitle: 'Stores cached verses, translations & reciter stream',
-        tag: 'blackboard',
-        x: 480,
-        y: 745,
-        status: 'idle',
-        config: {
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'quran-web-search',
-        lane: 'tools',
-        category: 'tools_plugins',
-        type: 'cloud',
-        title: 'Web Search',
-        subtitle: 'equran.id v2 API client bridge',
-        tag: 'online-web',
-        x: 680,
-        y: 585,
-        status: 'idle',
-        config: {
-          provider: 'equran.id',
-          api_url: 'https://equran.id/api/v2'
-        }
-      }
-    ],
-    edges: [
-      { id: 'qe-main-1', from: 'quran-trigger', to: 'quran-supervisor', fromSide: 'right', toSide: 'left', kind: 'main', label: 'inbound query', variant: 'emphasis' },
-      { id: 'qe-main-2', from: 'quran-supervisor', to: 'quran-api-fetcher', fromSide: 'right', toSide: 'left', kind: 'main', label: 'fetch surah', variant: 'emphasis' },
-      { id: 'qe-main-3', from: 'quran-api-fetcher', to: 'quran-writer', fromSide: 'right', toSide: 'left', kind: 'main', label: 'verses & audio', variant: 'default' },
-      { id: 'qe-main-4', from: 'quran-writer', to: 'quran-critic', fromSide: 'right', toSide: 'left', kind: 'main', label: 'verify format', variant: 'default' },
-      { id: 'qe-main-5', from: 'quran-critic', to: 'quran-doc-exporter', fromSide: 'right', toSide: 'left', kind: 'main', label: 'publish doc', variant: 'default' },
-      { id: 'qe-main-6', from: 'quran-doc-exporter', to: 'quran-dispatcher', fromSide: 'right', toSide: 'left', kind: 'main', label: 'send to telegram', variant: 'emphasis' },
-      { id: 'qe-sub-1', from: 'quran-router', to: 'quran-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'arabic model', variant: 'dashed' },
-      { id: 'qe-sub-2', from: 'quran-blackboard', to: 'quran-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'scripture cache', variant: 'dashed' },
-      { id: 'qe-sub-3', from: 'quran-web-search', to: 'quran-api-fetcher', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'equran.id v2 API', variant: 'dashed' }
-    ]
-  },
-  {
-    id: 'scheduled-audit-human-gate',
-    name: 'Scheduled System Audit & Human Approval Gate',
-    description: 'Recurring Schedule Trigger -> Coordinator pre-check -> Interactive Web Action Request -> Quality Gate (If/Else) -> Automated Patch Runner -> Telegram Notification',
-    lanes: INITIAL_LANES,
-    nodes: [
-      {
-        id: 'sched-trigger',
-        lane: 'ui',
-        category: 'triggers',
-        type: 'external',
-        title: 'Schedule Trigger',
-        subtitle: 'Cron timer: Daily 02:00 AM system audit',
-        tag: 'schedule-trigger',
-        x: 60,
-        y: 105,
-        status: 'idle',
-        config: {
-          cron: '0 2 * * *',
-          timezone: 'Asia/Jakarta'
-        }
-      },
-      {
-        id: 'sched-supervisor',
-        lane: 'agent',
-        category: 'orchestration',
-        type: 'backend',
-        title: 'Supervisor / Coordinator',
-        subtitle: 'Scans infrastructure health & stages maintenance update',
-        tag: 'supervisor',
-        x: 360,
-        y: 265,
-        status: 'idle',
-        config: {
-          directive: 'Scan system logs, database integrity, and package CVEs. Prepare automated patch plan and request admin sign-off.'
-        }
-      },
-      {
-        id: 'sched-action-notify',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'frontend',
-        title: 'Chat & Artifact Output',
-        subtitle: 'Notifies administrator that approval is required',
-        tag: 'chat-output',
-        x: 680,
-        y: 105,
-        status: 'idle',
-        config: {
-          notify_user: true,
-          message: 'Action Required: Pending maintenance update ready. Awaiting admin approval via web console.'
-        }
-      },
-      {
-        id: 'sched-approval-gate',
-        lane: 'policy',
-        category: 'flow_control',
-        type: 'security',
-        title: 'Quality Gate (If/Else)',
-        subtitle: 'Evaluates admin approval token before applying patch',
-        tag: 'quality-gate',
-        x: 720,
-        y: 425,
-        status: 'idle',
-        config: {
-          condition: 'admin_action_approved == true',
-          max_retries: 2,
-          pass_threshold: 85
-        }
-      },
-      {
-        id: 'sched-coder-agent',
-        lane: 'agent',
-        category: 'specialists',
-        type: 'backend',
-        title: 'Coder Agent',
-        subtitle: 'Applies authorized maintenance patches & migrations',
-        tag: 'coder',
-        x: 980,
-        y: 265,
-        status: 'idle',
-        config: {
-          tools: ['patch_file', 'write_file', 'execute_command'],
-          output_file: 'docs/maintenance_audit_signoff.md'
-        }
-      },
-      {
-        id: 'sched-doc-exporter',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Document Exporter',
-        subtitle: 'Archives verified maintenance sign-off log',
-        tag: 'doc-exporter',
-        x: 1320,
-        y: 75,
-        status: 'idle',
-        config: {
-          output_path: 'docs/maintenance_audit_signoff.md',
-          format: 'markdown'
-        }
-      },
-      {
-        id: 'sched-dispatcher',
-        lane: 'ui',
-        category: 'outputs',
-        type: 'external',
-        title: 'Messaging Dispatcher',
-        subtitle: 'Pushes execution summary alert to Telegram on-call',
-        tag: 'messaging-dispatcher',
-        x: 1320,
-        y: 155,
-        status: 'idle',
-        config: {
-          channel: 'telegram',
-          recipient: '@admin_ops'
-        }
-      },
-      {
-        id: 'sched-router',
-        lane: 'tools',
-        category: 'orchestration',
-        type: 'cloud',
-        title: 'Dynamic Model Router',
-        subtitle: 'Assigns low-latency telemetry analysis model',
-        tag: 'model-router',
-        x: 240,
-        y: 585,
-        status: 'idle',
-        config: {
-          vram_threshold_mb: 8192,
-          fast_model: 'qwen3.5:9b',
-          deep_model: 'nemotron3-super'
-        }
-      },
-      {
-        id: 'sched-blackboard',
-        lane: 'evidence',
-        category: 'state_knowledge',
-        type: 'database',
-        title: 'Blackboard Hub (Shared State)',
-        subtitle: 'Shared audit records & human authorization token',
-        tag: 'blackboard',
-        x: 520,
-        y: 745,
-        status: 'idle',
-        config: {
-          workspace: 'default'
-        }
-      },
-      {
-        id: 'sched-shell-runner',
-        lane: 'tools',
-        category: 'tools_plugins',
-        type: 'backend',
-        title: 'Subprocess / Shell Runner',
-        subtitle: 'Runs test suite & system maintenance commands',
-        tag: 'subprocess',
-        x: 980,
-        y: 585,
-        status: 'idle',
-        config: {
-          command: 'pytest -q && echo "Maintenance patches verified"'
-        }
-      }
-    ],
-    edges: [
-      { id: 'se-main-1', from: 'sched-trigger', to: 'sched-supervisor', fromSide: 'right', toSide: 'left', kind: 'main', label: 'cron tick (02:00)', variant: 'emphasis' },
-      { id: 'se-main-2', from: 'sched-supervisor', to: 'sched-action-notify', fromSide: 'right', toSide: 'left', kind: 'main', label: 'action required', variant: 'security' },
-      { id: 'se-main-3', from: 'sched-action-notify', to: 'sched-approval-gate', fromSide: 'right', toSide: 'left', kind: 'main', label: 'evaluate approval', variant: 'default' },
-      { id: 'se-main-4', from: 'sched-approval-gate', to: 'sched-coder-agent', fromSide: 'right', toSide: 'left', kind: 'main', label: 'APPROVED (Pass)', conditionBranch: 'pass', variant: 'emphasis' },
-      { id: 'se-main-5', from: 'sched-approval-gate', to: 'sched-supervisor', fromSide: 'left', toSide: 'bottom', kind: 'main', label: 'HOLD / REVISE (Loop)', conditionBranch: 'loop', variant: 'dashed' },
-      { id: 'se-main-6', from: 'sched-coder-agent', to: 'sched-doc-exporter', fromSide: 'right', toSide: 'left', kind: 'main', label: 'save audit log', variant: 'default' },
-      { id: 'se-main-7', from: 'sched-doc-exporter', to: 'sched-dispatcher', fromSide: 'right', toSide: 'left', kind: 'main', label: 'notify telegram', variant: 'emphasis' },
-      { id: 'se-sub-1', from: 'sched-router', to: 'sched-supervisor', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'telemetry model', variant: 'dashed' },
-      { id: 'se-sub-2', from: 'sched-blackboard', to: 'sched-approval-gate', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'approval token', variant: 'dashed' },
-      { id: 'se-sub-3', from: 'sched-shell-runner', to: 'sched-coder-agent', fromSide: 'top', toSide: 'bottom', kind: 'sub', label: 'run commands', variant: 'dashed' }
-    ]
-  }
-];
+export { WORKFLOW_PRESETS } from './workflowPresets';
+import { WORKFLOW_PRESETS } from './workflowPresets';
 
 // Activity catalog grouped strictly across 7 functional categories and LocaLLM lanes
 const ACTIVITY_CATALOG: {
@@ -1399,14 +491,14 @@ const ACTIVITY_CATALOG: {
           lane: 'ui',
           type: 'external' as const,
           title: 'Webhook Trigger',
-          subtitle: 'External HTTP payload trigger (e.g. GitHub/n8n)',
+          subtitle: 'External HTTP payload trigger (e.g. GitHub Actions / webhook)',
           tag: 'webhook',
           icon: Globe,
           color: 'text-slate-600 dark:text-slate-400',
           defaultConfig: { endpoint: '/api/v1/webhook', workspace: 'default' },
           doc: {
             role: 'External HTTP Trigger',
-            description: 'Automated external trigger via HTTP POST. Receives JSON payloads from external systems such as GitHub Actions, n8n, or internal dispatchers.',
+            description: 'Automated external trigger via HTTP POST. Receives JSON payloads from external systems such as GitHub Actions, webhooks, or internal dispatchers.',
             inputs: ['HTTP POST request with JSON payload'],
             outputs: ['Normalized event payload formatted for agent execution'],
             configFields: [
@@ -2171,11 +1263,11 @@ export function WorkflowStudio({
       if (active) {
         const parsed = JSON.parse(active);
         if (parsed.nodes && Array.isArray(parsed.nodes) && parsed.nodes.length > 0) {
-          return parsed.nodes;
+          return parsed.nodes.map(ensureNodeDynamicProperties);
         }
       }
     } catch { }
-    return WORKFLOW_PRESETS[0].nodes;
+    return WORKFLOW_PRESETS[0].nodes.map(ensureNodeDynamicProperties);
   });
 
   const [edges, setEdges] = useState<WorkflowEdge[]>(() => {
@@ -2213,7 +1305,7 @@ export function WorkflowStudio({
   const unhoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const baseCameraRef = useRef<{ zoom: number; pan: { x: number; y: number } } | null>(null);
 
-  // Sequence Drag & Resize State (UiPath-Style Grouping & Resizing)
+  // Sequence Drag & Resize State (Sequence Grouping & Resizing)
   const [draggingSequenceId, setDraggingSequenceId] = useState<string | null>(null);
   const [resizingSequenceId, setResizingSequenceId] = useState<string | null>(null);
 
@@ -2278,6 +1370,12 @@ export function WorkflowStudio({
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
   const [saveWorkflowNameInput, setSaveWorkflowNameInput] = useState<string>('');
 
+  // Unsaved changes & baseline snapshot tracking
+  const lastSavedSnapshotRef = useRef<string>('');
+  const [isUnsavedConfirmModalOpen, setIsUnsavedConfirmModalOpen] = useState<boolean>(false);
+  const [pendingNavigationAction, setPendingNavigationAction] = useState<(() => void) | null>(null);
+  const [unsavedModalReason, setUnsavedModalReason] = useState<'leave' | 'switch'>('leave');
+
   // Sequence Add & Edit Modal State
   const [sequenceModal, setSequenceModal] = useState<{
     isOpen: boolean;
@@ -2331,7 +1429,6 @@ export function WorkflowStudio({
   // Real Model API Checking (Strictly from API, no hardcoded models)
   const [apiModels, setApiModels] = useState<ModelInfo[]>(models || []);
   const [isLoadingModels, setIsLoadingModels] = useState<boolean>(false);
-  const [isCustomModelActive, setIsCustomModelActive] = useState<boolean>(false);
 
   // Execution engine & visual flow animation state
   const [isExecuting, setIsExecuting] = useState<boolean>(false);
@@ -2376,8 +1473,8 @@ export function WorkflowStudio({
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [workspaceList, setWorkspaceList] = useState<Workspace[]>(workspaces);
 
-  // Saved workflows in localStorage
-  const [savedWorkflows, setSavedWorkflows] = useState<{ name: string; date: string; nodes: WorkflowNode[]; edges: WorkflowEdge[]; lanes?: WorkflowLaneConfig[] }[]>(() => {
+  // Saved workflows in persistent server registry (with local cache fallback)
+  const [savedWorkflows, setSavedWorkflows] = useState<{ id?: string; name: string; date: string; isActive?: boolean; nodes: WorkflowNode[]; edges: WorkflowEdge[]; lanes?: WorkflowLaneConfig[] }[]>(() => {
     try {
       const stored = localStorage.getItem('locallm_saved_workflows');
       return stored ? JSON.parse(stored) : [];
@@ -2385,6 +1482,52 @@ export function WorkflowStudio({
       return [];
     }
   });
+
+  const [activeWorkflowId, setActiveWorkflowId] = useState<string>('fullstack-code-audit');
+  const [isWorkflowActive, setIsWorkflowActive] = useState<boolean>(false);
+  const [isHistoryPanelOpen, setIsHistoryPanelOpen] = useState<boolean>(false);
+  const streamAbortFnRef = useRef<(() => void) | null>(null);
+
+  // Sync workflows from server registry on mount
+  useEffect(() => {
+    let isMounted = true;
+    api.getWorkflows().then((serverWfs) => {
+      if (!isMounted || !Array.isArray(serverWfs) || serverWfs.length === 0) return;
+      const formatted = serverWfs.map((sw) => ({
+        id: sw.id,
+        name: sw.name,
+        date: sw.updated_at ? new Date(sw.updated_at).toLocaleDateString() : 'Server',
+        isActive: Boolean(sw.isActive),
+        nodes: (sw.nodes || []).map(ensureNodeDynamicProperties),
+        edges: sw.edges || [],
+        lanes: (sw as any).lanes,
+      }));
+      setSavedWorkflows(formatted);
+
+      // Match active workflow
+      const matched = formatted.find(
+        (w) => w.name.toLowerCase() === activeWorkflowTitle.toLowerCase() || w.id === activeWorkflowId
+      );
+      if (matched && matched.id) {
+        setActiveWorkflowId(matched.id);
+        setIsWorkflowActive(Boolean(matched.isActive));
+      }
+    }).catch((err) => {
+      console.warn('Failed to load server workflows, using local cache:', err);
+    });
+    return () => { isMounted = false; };
+  }, []);
+
+  // Update active status and ID when active workflow changes
+  useEffect(() => {
+    const matched = savedWorkflows.find(
+      (w) => w.name.toLowerCase() === activeWorkflowTitle.toLowerCase() || (w as any).id === activeWorkflowId
+    );
+    if (matched) {
+      if ((matched as any).id) setActiveWorkflowId((matched as any).id);
+      setIsWorkflowActive(Boolean((matched as any).isActive));
+    }
+  }, [activeWorkflowTitle, savedWorkflows]);
 
   const isPanningCanvasRef = useRef<boolean>(false);
   const canvasPanStartRef = useRef<{ startX: number; startY: number; panX: number; panY: number }>({
@@ -2859,16 +2002,6 @@ export function WorkflowStudio({
     return selectedNode ? findActivityCatalogItem(selectedNode) : undefined;
   }, [selectedNode]);
 
-  // Check if current selected node model is custom
-  useEffect(() => {
-    if (selectedNode?.config?.model) {
-      const isKnown = apiModels.some((m) => m.id === selectedNode.config.model);
-      setIsCustomModelActive(!isKnown);
-    } else {
-      setIsCustomModelActive(false);
-    }
-  }, [selectedNode?.id, selectedNode?.config?.model, apiModels]);
-
   // Calculate topological / execution sequence numbering for all nodes (#1, #2, #3...)
   const nodeSequenceNumbers = useMemo(() => {
     const seqMap = new Map<string, number>();
@@ -3264,56 +2397,214 @@ export function WorkflowStudio({
     setLanes(next.lanes);
   }, [isExecuting, historyFuture, nodes, edges, lanes]);
 
-  // Save workflow: direct save with "Success to save" toast if already saved, or modal dialog if new
-  const handleSaveWorkflowAction = useCallback(() => {
+  const currentSnapshot = useMemo(() => {
+    return JSON.stringify({
+      title: activeWorkflowTitle,
+      lanes,
+      nodes,
+      edges
+    });
+  }, [activeWorkflowTitle, lanes, nodes, edges]);
+
+  // Sync initial snapshot baseline on first load
+  useEffect(() => {
+    if (!lastSavedSnapshotRef.current && nodes.length > 0) {
+      lastSavedSnapshotRef.current = currentSnapshot;
+    }
+  }, [currentSnapshot, nodes.length]);
+
+  const hasUnsavedChanges = Boolean(
+    lastSavedSnapshotRef.current && currentSnapshot !== lastSavedSnapshotRef.current
+  );
+
+  // Native browser reload / close guard (analogous to form POST dirty dialog)
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (isExecuting) {
+        e.preventDefault();
+        e.returnValue = 'Pipeline is actively running. Leaving or reloading will abort execution.';
+        return e.returnValue;
+      }
+      if (hasUnsavedChanges) {
+        e.preventDefault();
+        e.returnValue = 'You have unsaved changes in your workflow. Are you sure you want to reload?';
+        return e.returnValue;
+      }
+    };
+
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    return () => {
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+    };
+  }, [hasUnsavedChanges, isExecuting]);
+
+  // Navigation & Page Switching Protections
+  const handleBackClick = useCallback(() => {
+    if (isExecuting) {
+      setSaveToastMessage('Pipeline Running: Cannot navigate away while execution is active.');
+      setTimeout(() => setSaveToastMessage(null), 3000);
+      return;
+    }
+    if (hasUnsavedChanges) {
+      setUnsavedModalReason('leave');
+      setPendingNavigationAction(() => () => {
+        window.location.href = '/';
+      });
+      setIsUnsavedConfirmModalOpen(true);
+      return;
+    }
+    window.location.href = '/';
+  }, [isExecuting, hasUnsavedChanges]);
+
+  const requestSwitchWorkflow = useCallback((action: () => void) => {
+    if (isExecuting) {
+      setSaveToastMessage('Pipeline Running: Cannot switch workflow while execution is active.');
+      setTimeout(() => setSaveToastMessage(null), 3000);
+      return;
+    }
+    if (hasUnsavedChanges) {
+      setUnsavedModalReason('switch');
+      setPendingNavigationAction(() => action);
+      setIsUnsavedConfirmModalOpen(true);
+      return;
+    }
+    action();
+  }, [isExecuting, hasUnsavedChanges]);
+
+  // Save workflow: persists directly to backend registry, and updates in-memory/local cache
+  const handleSaveWorkflowAction = useCallback(async () => {
     const isSaved = savedWorkflows.some(
-      (w) => w.name.toLowerCase() === activeWorkflowTitle.toLowerCase()
+      (w) => w.name.toLowerCase() === activeWorkflowTitle.toLowerCase() || (w as any).id === activeWorkflowId
     );
     if (isSaved) {
-      const item = {
-        name: activeWorkflowTitle,
-        date: new Date().toLocaleDateString(),
-        lanes,
-        nodes,
-        edges
-      };
-      const updated = [item, ...savedWorkflows.filter((w) => w.name !== item.name)];
-      setSavedWorkflows(updated);
+      const targetId = activeWorkflowId || activeWorkflowTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
       try {
-        localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
-      } catch { }
-      setSaveToastMessage('Success to save');
-      setTimeout(() => setSaveToastMessage(null), 2500);
+        const payload: Partial<WorkflowDefinition> = {
+          id: targetId,
+          name: activeWorkflowTitle,
+          isActive: isWorkflowActive,
+          nodes,
+          edges,
+        };
+        const saved = await api.saveWorkflow(payload);
+        setActiveWorkflowId(saved.id);
+        const item = {
+          id: saved.id,
+          name: saved.name || activeWorkflowTitle,
+          date: new Date().toLocaleDateString(),
+          isActive: Boolean(saved.isActive),
+          lanes,
+          nodes,
+          edges,
+        };
+        const updated = [item, ...savedWorkflows.filter((w) => w.name !== item.name && (w as any).id !== item.id)];
+        setSavedWorkflows(updated);
+        try {
+          localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
+        } catch { }
+        lastSavedSnapshotRef.current = JSON.stringify({
+          title: item.name,
+          lanes,
+          nodes,
+          edges,
+        });
+        setSaveToastMessage('Saved to Server Registry');
+        setTimeout(() => setSaveToastMessage(null), 2500);
+      } catch (err: any) {
+        console.error('Failed to save workflow:', err);
+        setSaveToastMessage('Failed to save to server');
+        setTimeout(() => setSaveToastMessage(null), 2500);
+      }
     } else {
       setSaveWorkflowNameInput(activeWorkflowTitle);
       setIsSaveModalOpen(true);
     }
-  }, [activeWorkflowTitle, lanes, nodes, edges, savedWorkflows]);
+  }, [activeWorkflowId, activeWorkflowTitle, isWorkflowActive, lanes, nodes, edges, savedWorkflows]);
 
   const handleOpenSaveDialog = useCallback(() => {
     setSaveWorkflowNameInput(activeWorkflowTitle);
     setIsSaveModalOpen(true);
   }, [activeWorkflowTitle]);
 
-  const handleConfirmSaveWorkflow = useCallback((name: string) => {
+  const handleConfirmSaveWorkflow = useCallback(async (name: string) => {
     if (!name.trim()) return;
-    const item = {
-      name: name.trim(),
-      date: new Date().toLocaleDateString(),
-      lanes,
-      nodes,
-      edges
-    };
-    const updated = [item, ...savedWorkflows.filter((w) => w.name !== item.name)];
-    setSavedWorkflows(updated);
+    const cleanName = name.trim();
+    const targetId = cleanName.toLowerCase().replace(/[^a-z0-9]+/g, '-');
     try {
-      localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
-    } catch { }
-    setActiveWorkflowTitle(item.name);
-    setIsSaveModalOpen(false);
-    setSaveToastMessage('Success to save');
-    setTimeout(() => setSaveToastMessage(null), 2500);
-  }, [lanes, nodes, edges, savedWorkflows]);
+      const payload: Partial<WorkflowDefinition> = {
+        id: targetId,
+        name: cleanName,
+        isActive: isWorkflowActive,
+        nodes,
+        edges,
+      };
+      const saved = await api.saveWorkflow(payload);
+      setActiveWorkflowTitle(cleanName);
+      setActiveWorkflowId(saved.id);
+      const item = {
+        id: saved.id,
+        name: cleanName,
+        date: new Date().toLocaleDateString(),
+        isActive: Boolean(saved.isActive),
+        lanes,
+        nodes,
+        edges,
+      };
+      const updated = [item, ...savedWorkflows.filter((w) => w.name !== cleanName && (w as any).id !== targetId)];
+      setSavedWorkflows(updated);
+      try {
+        localStorage.setItem('locallm_saved_workflows', JSON.stringify(updated));
+      } catch { }
+      lastSavedSnapshotRef.current = JSON.stringify({
+        title: cleanName,
+        lanes,
+        nodes,
+        edges,
+      });
+      setIsSaveModalOpen(false);
+      setSaveToastMessage('Saved to Server Registry');
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    } catch (err: any) {
+      console.error('Failed to save workflow:', err);
+      setSaveToastMessage('Failed to save to server');
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    }
+  }, [isWorkflowActive, lanes, nodes, edges, savedWorkflows]);
+
+  // Toggle workflow live/active status for background triggers
+  const handleToggleWorkflowActive = useCallback(async () => {
+    const targetId = activeWorkflowId || activeWorkflowTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    try {
+      // If workflow not saved on server yet, save it first
+      const isExisting = savedWorkflows.some((w) => (w as any).id === targetId || w.name.toLowerCase() === activeWorkflowTitle.toLowerCase());
+      if (!isExisting) {
+        await api.saveWorkflow({
+          id: targetId,
+          name: activeWorkflowTitle,
+          isActive: false,
+          nodes,
+          edges,
+        });
+      }
+      const updated = await api.toggleWorkflowActive(targetId);
+      const nextActive = Boolean(updated.isActive);
+      setIsWorkflowActive(nextActive);
+      setActiveWorkflowId(targetId);
+      setSavedWorkflows((prev) =>
+        prev.map((w) =>
+          (w as any).id === targetId || w.name.toLowerCase() === activeWorkflowTitle.toLowerCase()
+            ? { ...w, id: targetId, isActive: nextActive }
+            : (nextActive ? { ...w, isActive: false } : w)
+        )
+      );
+      setSaveToastMessage(`Workflow ${nextActive ? 'Live & Active' : 'Deactivated'}`);
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    } catch (err: any) {
+      console.error('Failed to toggle workflow active status:', err);
+      setSaveToastMessage('Failed to toggle status');
+      setTimeout(() => setSaveToastMessage(null), 2500);
+    }
+  }, [activeWorkflowId, activeWorkflowTitle, isWorkflowActive, nodes, edges, savedWorkflows]);
 
   // Global Keyboard shortcuts: Ctrl+S (Save), Del (Delete Selected), Ctrl+Z (Undo), Ctrl+Shift+Z / Ctrl+Y (Redo), and Arrow Keys (Nudge)
   useEffect(() => {
@@ -3646,7 +2937,7 @@ export function WorkflowStudio({
 
     const assignedModel = apiModels.length > 0 ? (apiModels.find((m) => m.id !== 'auto')?.id || apiModels[0]?.id) : 'auto';
 
-    const newNode: WorkflowNode = {
+    const newNode: WorkflowNode = ensureNodeDynamicProperties({
       id: newId,
       lane: actualLane,
       category: template.category,
@@ -3662,7 +2953,7 @@ export function WorkflowStudio({
         workspace: activeWorkspace || 'default',
         model: assignedModel
       }
-    };
+    });
 
     setNodes((prev) => [...prev, newNode]);
     setSelectedNodeId(newId);
@@ -3705,6 +2996,36 @@ export function WorkflowStudio({
     );
   };
 
+  // Update dynamic node properties and synchronize legacy config
+  const handleUpdateNodeProperties = useCallback((nodeId: string, nextProperties: NodeProperties) => {
+    if (isExecuting) return;
+    recordHistory();
+    setNodes((prev) =>
+      prev.map((n) => {
+        if (n.id !== nodeId) return n;
+        const nextConfig = {
+          ...n.config,
+          ...nextProperties.inputs,
+          ...nextProperties.options,
+        };
+        if (nextProperties.inputs.systemPrompt !== undefined) nextConfig.system_prompt = nextProperties.inputs.systemPrompt;
+        if (nextProperties.inputs.messageTemplate !== undefined) nextConfig.template = nextProperties.inputs.messageTemplate;
+        if (nextProperties.inputs.shellCommand !== undefined) nextConfig.command = nextProperties.inputs.shellCommand;
+        if (nextProperties.inputs.sqlQuery !== undefined) nextConfig.query = nextProperties.inputs.sqlQuery;
+        if (nextProperties.inputs.searchQuery !== undefined) nextConfig.query = nextProperties.inputs.searchQuery;
+        if (nextProperties.inputs.filePath !== undefined) nextConfig.path = nextProperties.inputs.filePath;
+
+        return {
+          ...n,
+          title: nextProperties.common.displayName || n.title,
+          subtitle: nextProperties.common.description || n.subtitle,
+          properties: nextProperties,
+          config: nextConfig
+        };
+      })
+    );
+  }, [isExecuting, recordHistory]);
+
   // Add edge connection between two nodes with support for 4-sided ports
   const handleAddEdge = (
     fromId: string,
@@ -3745,7 +3066,7 @@ export function WorkflowStudio({
     setEdges((prev) => prev.filter((e) => e.id !== edgeId));
   };
 
-  // --- UiPath-Style Sequence Management (Add, Edit, Reorder, Delete, Group Drag, Resize) ---
+  // --- Sequence Management (Add, Edit, Reorder, Delete, Group Drag, Resize) ---
   const handleOpenAddSequenceModal = () => {
     if (isExecuting) return;
     setSequenceModal({
@@ -3955,63 +3276,99 @@ export function WorkflowStudio({
 
   // Workflow preset selection
   const handleLoadPreset = (presetId: string) => {
-    setIsWorkflowMenuOpen(false);
-    const p = WORKFLOW_PRESETS.find((pr) => pr.id === presetId);
-    if (p) {
-      setActiveWorkflowTitle(p.name);
-      setLanes(p.lanes || INITIAL_LANES);
-      setNodes(p.nodes);
-      setEdges(p.edges);
-      setSelectedNodeId(p.nodes[0]?.id || null);
-    }
+    requestSwitchWorkflow(() => {
+      setIsWorkflowMenuOpen(false);
+      const p = WORKFLOW_PRESETS.find((pr) => pr.id === presetId);
+      if (p) {
+        setActiveWorkflowTitle(p.name);
+        setActiveWorkflowId(p.id);
+        const existingSaved = savedWorkflows.find(
+          (w) => (w as any).id === p.id || w.name.toLowerCase() === p.name.toLowerCase()
+        );
+        setIsWorkflowActive(Boolean(existingSaved?.isActive));
+        const nextLanes = p.lanes || INITIAL_LANES;
+        const nextNodes = p.nodes.map(ensureNodeDynamicProperties);
+        const nextEdges = p.edges;
+        setLanes(nextLanes);
+        setNodes(nextNodes);
+        setEdges(nextEdges);
+        setSelectedNodeId(p.nodes[0]?.id || null);
+        lastSavedSnapshotRef.current = JSON.stringify({
+          title: p.name,
+          lanes: nextLanes,
+          nodes: nextNodes,
+          edges: nextEdges
+        });
+      }
+    });
   };
 
   // New Blank Workflow creation
   const handleCreateNewWorkflow = () => {
-    setIsWorkflowMenuOpen(false);
-    setActiveWorkflowTitle('New Custom Workflow');
-    const freshLanes = computeLanePositions(INITIAL_LANES);
-    setLanes(freshLanes);
-    const rootNode: WorkflowNode = {
-      id: 'user-objective-start',
-      lane: 'ui',
-      type: 'frontend',
-      title: 'User Objective',
-      subtitle: 'Task prompt and primary mission',
-      tag: 'intake',
-      x: 60,
-      y: 101,
-      status: 'idle',
-      config: {
-        query: 'Analyze project repository and implement requested features',
-        workspace: activeWorkspace || 'default',
-        model: apiModels[0]?.id || 'auto'
-      }
-    };
-    setNodes([rootNode]);
-    setEdges([]);
-    setSelectedNodeId('user-objective-start');
+    requestSwitchWorkflow(() => {
+      setIsWorkflowMenuOpen(false);
+      setActiveWorkflowTitle('New Custom Workflow');
+      const freshLanes = computeLanePositions(INITIAL_LANES);
+      setLanes(freshLanes);
+      const rootNode: WorkflowNode = ensureNodeDynamicProperties({
+        id: 'user-objective-start',
+        lane: 'ui',
+        type: 'frontend',
+        title: 'User Objective',
+        subtitle: 'Task prompt and primary mission',
+        tag: 'intake',
+        x: 60,
+        y: 101,
+        status: 'idle',
+        config: {
+          query: 'Analyze project repository and implement requested features',
+          workspace: activeWorkspace || 'default',
+          model: apiModels[0]?.id || 'auto'
+        }
+      });
+      setNodes([rootNode]);
+      setEdges([]);
+      setSelectedNodeId('user-objective-start');
+      lastSavedSnapshotRef.current = JSON.stringify({
+        title: 'New Custom Workflow',
+        lanes: freshLanes,
+        nodes: [rootNode],
+        edges: []
+      });
+    });
   };
-
-
 
   // Load saved workflow (Preserves exact saved positions)
   const handleLoadSavedWorkflow = (saved: typeof savedWorkflows[0]) => {
-    setIsWorkflowMenuOpen(false);
-    setActiveWorkflowTitle(saved.name);
-    if (saved.lanes && Array.isArray(saved.lanes)) {
-      setLanes(saved.lanes);
-    }
-    setNodes(saved.nodes);
-    setEdges(saved.edges);
-    setSelectedNodeIds([]);
-    setSelectedLaneIds([]);
+    requestSwitchWorkflow(() => {
+      setIsWorkflowMenuOpen(false);
+      setActiveWorkflowTitle(saved.name);
+      if (saved.id) setActiveWorkflowId(saved.id);
+      setIsWorkflowActive(Boolean(saved.isActive));
+      const nextLanes = saved.lanes && Array.isArray(saved.lanes) ? saved.lanes : lanes;
+      const nextNodes = (saved.nodes || []).map(ensureNodeDynamicProperties);
+      const nextEdges = saved.edges;
+      setLanes(nextLanes);
+      setNodes(nextNodes);
+      setEdges(nextEdges);
+      setSelectedNodeIds([]);
+      setSelectedLaneIds([]);
+      lastSavedSnapshotRef.current = JSON.stringify({
+        title: saved.name,
+        lanes: nextLanes,
+        nodes: nextNodes,
+        edges: nextEdges
+      });
+    });
   };
 
-  // Delete saved workflow
-  const handleDeleteSavedWorkflow = (e: React.MouseEvent, name: string) => {
+  // Delete saved workflow from server registry and local cache
+  const handleDeleteSavedWorkflow = async (e: React.MouseEvent, nameOrId: string) => {
     e.stopPropagation();
-    const filtered = savedWorkflows.filter((w) => w.name !== name);
+    const target = savedWorkflows.find((w) => w.name === nameOrId || w.id === nameOrId);
+    const targetId = target?.id || nameOrId.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    await api.deleteWorkflow(targetId).catch(() => {});
+    const filtered = savedWorkflows.filter((w) => w.name !== nameOrId && w.id !== targetId);
     setSavedWorkflows(filtered);
     try {
       localStorage.setItem('locallm_saved_workflows', JSON.stringify(filtered));
@@ -4047,7 +3404,8 @@ export function WorkflowStudio({
         y: n.y,
         width: NODE_WIDTH,
         height: NODE_HEIGHT,
-        config: n.config
+        config: n.config,
+        properties: n.properties
       })),
       edges: edges.map((e) => ({
         id: e.id,
@@ -4087,7 +3445,7 @@ export function WorkflowStudio({
             }));
             setLanes(computeLanePositions(parsedLanes));
           }
-          const importedNodes: WorkflowNode[] = parsed.nodes.map((n: any) => ({
+          const importedNodes: WorkflowNode[] = parsed.nodes.map((n: any) => ensureNodeDynamicProperties({
             id: n.id || `node-${Math.random().toString(36).substr(2, 6)}`,
             lane: n.lane || 'agent',
             type: n.type || 'backend',
@@ -4097,7 +3455,8 @@ export function WorkflowStudio({
             x: n.x || 100,
             y: n.y || 250,
             status: 'idle',
-            config: n.config || {}
+            config: n.config || {},
+            properties: n.properties
           }));
           const importedEdges: WorkflowEdge[] = (parsed.edges || []).map((edge: any) => ({
             id: edge.id || `e-${Math.random().toString(36).substr(2, 6)}`,
@@ -4108,8 +3467,15 @@ export function WorkflowStudio({
           }));
           setNodes(importedNodes);
           setEdges(importedEdges);
-          setActiveWorkflowTitle(parsed.meta?.title || file.name.replace('.json', ''));
+          const nextTitle = parsed.meta?.title || file.name.replace('.json', '');
+          setActiveWorkflowTitle(nextTitle);
           setSelectedNodeId(importedNodes[0]?.id || null);
+          lastSavedSnapshotRef.current = JSON.stringify({
+            title: nextTitle,
+            lanes,
+            nodes: importedNodes,
+            edges: importedEdges
+          });
         }
       } catch (err) {
         alert('Invalid workflow JSON file');
@@ -4143,48 +3509,6 @@ export function WorkflowStudio({
     setActiveExecutingNodeId(null);
     setNextTargetNodeId(null);
     setActiveFlowEdgeId(null);
-
-    // Compute topological sequence of ALL nodes in the workflow
-    const inDegree = new Map<string, number>();
-    nodes.forEach((n) => inDegree.set(n.id, 0));
-    edges.forEach((e) => {
-      inDegree.set(e.to, (inDegree.get(e.to) || 0) + 1);
-    });
-
-    const visited = new Set<string>();
-    const orderedNodes: WorkflowNode[] = [];
-    const queue: string[] = nodes
-      .filter((n) => (inDegree.get(n.id) || 0) === 0)
-      .map((n) => n.id);
-
-    if (queue.length === 0 && nodes.length > 0) {
-      queue.push(nodes[0].id);
-    }
-
-    while (queue.length > 0) {
-      const currId = queue.shift()!;
-      if (!visited.has(currId)) {
-        visited.add(currId);
-        const found = nodes.find((n) => n.id === currId);
-        if (found) orderedNodes.push(found);
-
-        const downstream = edges.filter((e) => e.from === currId).map((e) => e.to);
-        downstream.forEach((nxt) => {
-          if (!visited.has(nxt)) queue.push(nxt);
-        });
-      }
-    }
-
-    // Append any disconnected nodes so EVERY single activity executes
-    nodes.forEach((n) => {
-      if (!visited.has(n.id)) {
-        visited.add(n.id);
-        orderedNodes.push(n);
-      }
-    });
-
-    const signal = executionAbortRef.current.signal;
-
     const logEvent = (agent: string, event_type: string, message: string) => {
       setExecutionLogs((prev) => [
         ...prev,
@@ -4200,350 +3524,137 @@ export function WorkflowStudio({
     logEvent(
       'System',
       'init',
-      `Pipeline started: "${activeWorkflowTitle}" (${orderedNodes.length} activities, engine: ${executionMode})`
+      `Connecting to pipeline stream: "${activeWorkflowTitle}" (${nodes.length} nodes, engine: ${executionMode}) [Manual Canvas Test Run]`
     );
 
     try {
-      // 1. Trigger backend execution (guarantees physical files saved to disk and Telegram delivered)
-      let backendTaskPromise: Promise<any> | null = null;
-      backendTaskPromise = api.runWorkflowGraph({
-        nodes,
-        edges,
-        workspace: activeWorkspace || 'default',
-        execution_mode: executionMode
-      }).catch((err) => {
-        console.warn('Backend graph runner returned error, falling back to local simulation:', err);
-        return null;
-      });
+      const abortFn = api.runWorkflowStream(
+        {
+          workflow_id: activeWorkflowId || 'custom',
+          workflow_title: activeWorkflowTitle,
+          nodes,
+          edges,
+          workspace: activeWorkspace || 'default',
+          execution_mode: executionMode,
+        },
+        ({ event, data }) => {
+          if (event === 'init') {
+            logEvent('System', 'init', `Workflow engine initialized: Run ID ${data.run_id}`);
+          } else if (event === 'node_progress') {
+            const nodeId = data.node_id;
+            const nodeStatus = data.status || 'running';
+            const agentName = data.agent || 'Coordinator';
+            const eventType = data.event_type || 'step';
+            const logMsg = data.message || `Node activity ${nodeStatus}`;
 
-      // 2. Client-side visual state machine tracking
-      let stepCounter = 0;
-      let loopRetryCount = 0;
-      let lastCriticScore = 90;
-      let lastCriticPassed = true;
+            logEvent(agentName, eventType, logMsg);
 
-      for (let i = 0; i < orderedNodes.length; i++) {
-        if (!isExecutingRef.current || signal.aborted) break;
+            if (nodeId) {
+              setActiveExecutingNodeId(nodeId);
+              setNodes((prev) =>
+                prev.map((n) => (n.id === nodeId ? { ...n, status: nodeStatus } : n))
+              );
 
-        const currNode = orderedNodes[i];
-        const nextNode = orderedNodes[i + 1] || null;
-        stepCounter++;
+              // Trace edge connection to next node
+              const outgoingEdge = edges.find((e) => e.from === nodeId);
+              if (outgoingEdge) {
+                setActiveFlowEdgeId(outgoingEdge.id);
+                setNextTargetNodeId(outgoingEdge.to);
+              }
+            }
+          } else if (event === 'completed') {
+            setIsExecuting(false);
+            isExecutingRef.current = false;
+            setActiveExecutingNodeId(null);
+            setNextTargetNodeId(null);
+            setActiveFlowEdgeId(null);
 
-        // Find connector edge to downstream target
-        const outgoingEdges = edges.filter((e) => e.from === currNode.id);
-        const targetEdge =
-          outgoingEdges.find((e) => nextNode && e.to === nextNode.id) ||
-          outgoingEdges[0] ||
-          null;
+            // Mark any remaining idle/running nodes as success on clean finish
+            setNodes((prev) =>
+              prev.map((n) => (n.status === 'running' || (data.success && n.status === 'idle') ? { ...n, status: 'success' } : n))
+            );
 
-        // Set live active execution indicators
-        setActiveExecutingNodeId(currNode.id);
-        if (targetEdge) {
-          setNextTargetNodeId(targetEdge.to);
-          setActiveFlowEdgeId(targetEdge.id);
-        } else if (nextNode) {
-          setNextTargetNodeId(nextNode.id);
-          setActiveFlowEdgeId(null);
-        } else {
+            logEvent(
+              'System',
+              data.success ? 'success' : 'warning',
+              `Pipeline finished in ${data.duration_seconds}s (${data.steps_executed} steps executed).`
+            );
+
+            // Process artifacts
+            const rawArtifacts = data.artifacts || [];
+            const finalArtifacts: WorkflowArtifact[] = rawArtifacts.map((a: any, i: number) => ({
+              name: a.name || a.path?.split('/').pop() || `artifact_${i + 1}.txt`,
+              path: a.path || '',
+              rel_path: a.path?.replace(/^.*locaLLM-agent\//, '') || a.name || 'deliverable.txt',
+              size: (a.content || '').length,
+              type: 'document',
+              content: a.content || ''
+            }));
+            setGeneratedArtifacts(finalArtifacts);
+
+            const primaryArtifact = finalArtifacts[0];
+            if (primaryArtifact && primaryArtifact.content) {
+              triggerFileDownload(primaryArtifact.name, primaryArtifact.content);
+              logEvent('System', 'download', `Deliverable "${primaryArtifact.name}" generated & downloaded.`);
+            }
+
+            // Toast notification
+            setCompletionToast({
+              show: true,
+              title: data.success ? 'Workflow Finished Successfully' : 'Workflow Finished with Warnings',
+              message: `Completed ${data.steps_executed} steps in ${data.duration_seconds}s.`,
+              fileName: primaryArtifact?.name,
+              filePath: primaryArtifact?.path || primaryArtifact?.rel_path,
+              downloadContent: primaryArtifact?.content,
+              timestamp: new Date().toLocaleTimeString()
+            });
+
+            // Browser Web Notification
+            if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
+              try {
+                new Notification(`locaLLM: ${activeWorkflowTitle}`, {
+                  body: `Pipeline completed in ${data.duration_seconds}s!`,
+                  icon: '/favicon.ico'
+                });
+              } catch (e) {
+                console.warn('Web notification error:', e);
+              }
+            }
+          } else if (event === 'error') {
+            setIsExecuting(false);
+            isExecutingRef.current = false;
+            setActiveExecutingNodeId(null);
+            setNextTargetNodeId(null);
+            setActiveFlowEdgeId(null);
+            logEvent('System', 'error', `Execution error: ${data.error || 'Server error'}`);
+          }
+        },
+        (streamErr) => {
+          setIsExecuting(false);
+          isExecutingRef.current = false;
+          setActiveExecutingNodeId(null);
           setNextTargetNodeId(null);
           setActiveFlowEdgeId(null);
+          logEvent('System', 'error', `Connection error: ${streamErr.message}`);
         }
+      );
 
-        // Mark current node running
-        setNodes((prev) =>
-          prev.map((n) => (n.id === currNode.id ? { ...n, status: 'running' } : n))
-        );
-
-        logEvent(
-          currNode.title,
-          'start',
-          `Step #${stepCounter} [${currNode.lane.toUpperCase()}]: ${currNode.subtitle || currNode.title}`
-        );
-
-        const nodeTag = (currNode.tag || '').toLowerCase();
-        const nodeCat = (currNode.category || '').toLowerCase();
-        const nodeTitle = currNode.title.toLowerCase();
-
-        // A. Triggers (User Objective, Messaging, Schedule, Webhook)
-        if (nodeTag === 'schedule-trigger' || nodeTitle.includes('schedule')) {
-          await new Promise((r) => setTimeout(r, 650));
-          logEvent(
-            currNode.title,
-            'scheduled_tick',
-            `Schedule Trigger fired: cron [${currNode.config?.cron || '0 2 * * *'}] (${currNode.config?.timezone || 'Asia/Jakarta'}). Initiating automated routine.`
-          );
-        } else if (nodeTag === 'messaging-trigger' || nodeTitle.includes('messaging trigger')) {
-          await new Promise((r) => setTimeout(r, 650));
-          logEvent(
-            currNode.title,
-            'inbound_message',
-            `Received inbound chat from [${(currNode.config?.platform || 'telegram').toUpperCase()}]: "${currNode.config?.query || 'Tolong carikan surat Al-Kahfi ayat 1 sampai 10'}"`
-          );
-        } else if (nodeTag === 'intake' || nodeCat === 'triggers' || nodeTitle.includes('objective')) {
-          await new Promise((r) => setTimeout(r, 650));
-          logEvent(
-            currNode.title,
-            'intake',
-            `Objective initialized: "${currNode.config?.query || 'Analyze project codebase'}"`
-          );
-        }
-        // B. Model Router
-        else if (nodeTag === 'model-router' || nodeTitle.includes('model router')) {
-          await new Promise((r) => setTimeout(r, 600));
-          logEvent(
-            currNode.title,
-            'routing',
-            `Dynamic Model Router inspected VRAM: selected model "${currNode.config?.fast_model || 'qwen3.5:9b'}" based on task complexity & GPU headroom.`
-          );
-        }
-        // C. Task Decomposer / Planner
-        else if (nodeTag === 'task-decomposer' || nodeTitle.includes('decomposer') || nodeTitle.includes('planner')) {
-          await new Promise((r) => setTimeout(r, 850));
-          logEvent(
-            currNode.title,
-            'planning',
-            `Decomposed mission into sequenced subtasks: [1. Context Investigation, 2. Execution / Patching, 3. Quality Verification].`
-          );
-        }
-        // D. Researcher (Supports equran.id API & RAG)
-        else if (nodeTag === 'researcher' || nodeTitle.includes('researcher')) {
-          await new Promise((r) => setTimeout(r, 950));
-          const isQuran = activeWorkflowTitle.toLowerCase().includes('qur') || (currNode.config?.api_base || '').includes('equran');
-          if (isQuran) {
-            logEvent(
-              currNode.title,
-              'quran_api',
-              `equran.id v2 API: Successfully fetched holy scripture, Indonesian translation, and Murottal audio stream (Misyari Rasyid).`
-            );
-          } else {
-            logEvent(
-              currNode.title,
-              'research_done',
-              `Research Specialist investigated sources and consolidated verified findings into Blackboard state.`
-            );
-          }
-        }
-        // E. Critic QA
-        else if (nodeTag === 'critic' || nodeTitle.includes('critic') || nodeTitle.includes('qa')) {
-          await new Promise((r) => setTimeout(r, 1000));
-          lastCriticScore = loopRetryCount === 0 ? 94 : 98;
-          lastCriticPassed = lastCriticScore >= (currNode.config?.pass_threshold || 80);
-          logEvent(
-            currNode.title,
-            'evaluating',
-            `Critic QA evaluated deliverable. Score: ${lastCriticScore}/100 · Verdict: ${lastCriticPassed ? 'PASS' : 'REVISE'}.`
-          );
-        }
-        // F. Quality Gate (If/Else with Revision / Human Approval Gate)
-        else if (nodeTag === 'quality-gate' || nodeTitle.includes('quality gate')) {
-          const maxRetries = currNode.config?.max_retries || 2;
-          const isHumanGate = (currNode.config?.condition || '').includes('admin') || activeWorkflowTitle.toLowerCase().includes('approval');
-          if (isHumanGate) {
-            logEvent(
-              currNode.title,
-              'evaluating',
-              `Evaluating Human-in-the-Loop condition: [${currNode.config?.condition || 'admin_action_approved == true'}].`
-            );
-            await new Promise((r) => setTimeout(r, 850));
-            logEvent(
-              currNode.title,
-              'authorized',
-              `✓ Administrator sign-off validated via Web Console. Forwarding execution token to production rollout.`
-            );
-          } else {
-            logEvent(
-              currNode.title,
-              'evaluating',
-              `Evaluating Critic verdict (Score: ${lastCriticScore}). Policy: ${lastCriticPassed ? 'Pass to Output' : 'Loop to Revision'}.`
-            );
-            await new Promise((r) => setTimeout(r, 850));
-
-            if (!lastCriticPassed && loopRetryCount < maxRetries) {
-              loopRetryCount++;
-              logEvent(
-                currNode.title,
-                'loop_retry',
-                `Quality threshold not met. Triggering revision loop (${loopRetryCount}/${maxRetries}) back to Coordinator.`
-              );
-            } else {
-              logEvent(
-                currNode.title,
-                'authorized',
-                `Quality Gate cleared (${lastCriticScore}/100). Forwarding token to Output stream.`
-              );
-            }
-          }
-        }
-        // F. Sub-Task Iterator
-        else if (nodeTag === 'task-iterator' || nodeTitle.includes('iterator')) {
-          await new Promise((r) => setTimeout(r, 700));
-          logEvent(
-            currNode.title,
-            'iteration_step',
-            `Sub-Task Iterator popped active subtask item from queue and dispatched to specialist.`
-          );
-        }
-        // G. Agent reasoning
-        else if (currNode.lane === 'agent' || Boolean(currNode.config?.directive)) {
-          const modelToUse = currNode.config?.model || config?.default_model || 'auto';
-          const directive = currNode.config?.directive || currNode.subtitle || currNode.title;
-
-          logEvent(
-            currNode.title,
-            'thinking',
-            `Processing on ${currentBackend} with model "${modelToUse}"...`
-          );
-          await new Promise((r) => setTimeout(r, 650));
-          logEvent(currNode.title, 'done', `Agent completed directive: "${directive.slice(0, 75)}..."`);
-        }
-        // H. Tools
-        else if (currNode.lane === 'tools' || nodeTag === 'subprocess' || nodeTag === 'filesystem') {
-          const cmd = currNode.config?.command || 'pytest -q';
-          logEvent(currNode.title, 'tool_start', `Executing command: \`${cmd}\``);
-          await new Promise((r) => setTimeout(r, 1100));
-          logEvent(
-            currNode.title,
-            'tool_done',
-            `Process completed (exit code 0): verified test matrix and syntax checks.`
-          );
-        }
-        // I. Evidence & State
-        else if (currNode.lane === 'evidence' || nodeTag === 'blackboard' || nodeTag === 'rag-retriever') {
-          logEvent(
-            currNode.title,
-            'aggregating',
-            `Synchronizing state & knowledge: aggregated findings and diff patches.`
-          );
-          await new Promise((r) => setTimeout(r, 1000));
-          logEvent(
-            currNode.title,
-            'complete',
-            `Synthesis archived to evidence store.`
-          );
-        }
-        // J. Outputs
-        else {
-          await new Promise((r) => setTimeout(r, 800));
-          logEvent(
-            currNode.title,
-            'done',
-            `Deliverable formatted and ready for user inspection.`
-          );
-        }
-
-        if (!isExecutingRef.current || signal.aborted) break;
-
-        // Mark current node success
-        setNodes((prev) =>
-          prev.map((n) => (n.id === currNode.id ? { ...n, status: 'success' } : n))
-        );
-
-        // Visual traveling pulse pause
-        await new Promise((r) => setTimeout(r, 550));
-      }
-
-      // Await backend response if real mode was running
-      let bRes: any = null;
-      if (backendTaskPromise) {
-        try {
-          bRes = await backendTaskPromise;
-          if (bRes?.state?.objective) {
-            logEvent('BackendExecutor', 'sync', `Backend synchronized state: ${bRes.steps_executed} steps confirmed.`);
-          }
-        } catch { }
-      }
-
-      if (isExecutingRef.current && !signal.aborted) {
-        logEvent(
-          'System',
-          'success',
-          `Pipeline completed successfully across all ${orderedNodes.length} activities.`
-        );
-
-        // Process generated artifacts
-        let finalArtifacts: WorkflowArtifact[] = bRes?.state?.artifacts || [];
-        if (finalArtifacts.length === 0) {
-          const exporterNode = orderedNodes.find(
-            (n) => (n.tag || '').toLowerCase() === 'doc-exporter' || (n.category || '').toLowerCase() === 'outputs'
-          );
-          const outputPath = exporterNode?.config?.output_path || exporterNode?.config?.output_file || 'docs/market_intelligence_report.md';
-          const fileName = outputPath.split('/').pop() || 'report.md';
-          const content = `# 📊 locaLLM Workflow Deliverable: ${activeWorkflowTitle}\n\nGenerated: ${new Date().toLocaleString()}\nWorkspace: ${activeWorkspace || 'default'}\n\n## 1. Executive Summary\nAll ${orderedNodes.length} workflow activities completed successfully with 0 errors.\n`;
-          finalArtifacts = [
-            {
-              name: fileName,
-              path: `/home/fathan/Documents/Python Project/locaLLM-agent/${outputPath}`,
-              rel_path: outputPath,
-              size: content.length,
-              type: 'document',
-              content
-            }
-          ];
-        }
-
-        setGeneratedArtifacts(finalArtifacts);
-
-        const primaryArtifact = finalArtifacts[0];
-        const fileName = primaryArtifact?.name || primaryArtifact?.path?.split('/').pop() || primaryArtifact?.rel_path?.split('/').pop() || 'deliverable_report.md';
-        if (primaryArtifact) {
-          primaryArtifact.name = fileName;
-        }
-        if (primaryArtifact && primaryArtifact.content) {
-          triggerFileDownload(fileName, primaryArtifact.content);
-          logEvent('System', 'download', `Deliverable "${fileName}" generated & auto-downloaded to your browser.`);
-        }
-
-        const tgDispatch = bRes?.state?.context_variables?.telegram_dispatch;
-        let tgStatusText = '';
-        if (tgDispatch) {
-          if (tgDispatch.success) {
-            tgStatusText = `Telegram Delivered: ${tgDispatch.recipient} (${tgDispatch.detail})`;
-            logEvent('MessagingDispatcher', 'telegram_sent', `✓ ${tgStatusText}`);
-          } else {
-            tgStatusText = `Telegram Status: ${tgDispatch.detail}`;
-            logEvent('MessagingDispatcher', 'telegram_status', `ℹ ${tgStatusText}`);
-          }
-        }
-
-        // Browser Web Notification
-        if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'granted') {
-          try {
-            new Notification(`locaLLM: ${activeWorkflowTitle}`, {
-              body: `Pipeline completed! Saved to ${primaryArtifact?.rel_path || primaryArtifact?.name}.\n${tgStatusText || ''}`,
-              icon: '/favicon.ico'
-            });
-          } catch (e) {
-            console.warn('Web notification error:', e);
-          }
-        }
-
-        // Floating Toast Notification
-        setCompletionToast({
-          show: true,
-          title: 'Workflow Finished Successfully',
-          message: `All ${orderedNodes.length} activities completed. Output file saved to disk and auto-downloaded.`,
-          fileName: primaryArtifact?.name,
-          filePath: primaryArtifact?.path || primaryArtifact?.rel_path,
-          downloadContent: primaryArtifact?.content,
-          telegramStatus: tgStatusText,
-          timestamp: new Date().toLocaleTimeString()
-        });
-      }
+      streamAbortFnRef.current = abortFn;
     } catch (err: any) {
-      if (err.name !== 'AbortError') {
-        console.warn('Pipeline execution encountered an error:', err);
-      }
-    } finally {
       setIsExecuting(false);
       isExecutingRef.current = false;
       setActiveExecutingNodeId(null);
       setNextTargetNodeId(null);
       setActiveFlowEdgeId(null);
-      setActiveTaskId(null);
+      logEvent('System', 'error', `Failed to start stream: ${err.message}`);
     }
   };
 
   const handleStopFlow = () => {
+    if (streamAbortFnRef.current) {
+      streamAbortFnRef.current();
+      streamAbortFnRef.current = null;
+    }
     if (executionAbortRef.current) {
       executionAbortRef.current.abort();
     }
@@ -4731,9 +3842,10 @@ export function WorkflowStudio({
         <div className="flex items-center gap-2">
           <button
             type="button"
-            onClick={() => (window.location.href = '/')}
-            className="p-1.5 rounded-lg text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer"
-            title="Return to Chat"
+            disabled={isExecuting}
+            onClick={handleBackClick}
+            className="p-1.5 rounded-lg text-slate-700 dark:text-slate-300 hover:text-slate-900 dark:hover:text-white hover:bg-slate-200/70 dark:hover:bg-slate-800 transition-colors flex items-center gap-1.5 text-xs font-medium cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={isExecuting ? 'Cannot navigate away while pipeline execution is in progress' : 'Return to Chat'}
           >
             <ArrowLeft className="w-3.5 h-3.5" />
             <span className="hidden sm:inline">Back</span>
@@ -4745,15 +3857,20 @@ export function WorkflowStudio({
           <div ref={workflowMenuRef} className="relative">
             <button
               type="button"
+              disabled={isExecuting}
               onClick={() => {
                 setIsWorkflowMenuOpen((v) => !v);
                 setIsPlatformMenuOpen(false);
               }}
-              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-slate-100 transition-colors cursor-pointer"
-              title="Switch or create workflow"
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-xl bg-slate-100 dark:bg-slate-800/80 hover:bg-slate-200 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 text-xs font-bold text-slate-900 dark:text-slate-100 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+              title={isExecuting ? 'Cannot switch workflows while pipeline is executing' : 'Switch or create workflow'}
             >
-              <Workflow className="w-3.5 h-3.5 text-cyan-600 dark:text-cyan-400" />
-              <span className="truncate max-w-[140px] sm:max-w-[200px]">{activeWorkflowTitle}</span>
+              <h1 className="truncate max-w-[140px] sm:max-w-[200px] text-xs font-bold text-inherit m-0 inline">
+                {activeWorkflowTitle}
+              </h1>
+              {hasUnsavedChanges && (
+                <span className="w-2 h-2 rounded-full bg-amber-500 animate-pulse shrink-0" title="Unsaved changes" />
+              )}
               <ChevronDown className="w-3 h-3 text-slate-500" />
             </button>
 
@@ -4837,11 +3954,16 @@ export function WorkflowStudio({
                     <button
                       type="button"
                       onClick={handleSaveWorkflowAction}
-                      className="px-2 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200 flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer"
-                      title="Save workflow to local storage (Ctrl+S)"
+                      className={`px-2 py-1.5 rounded-xl flex items-center justify-center gap-1 text-[11px] font-semibold cursor-pointer transition-all ${
+                        hasUnsavedChanges
+                          ? 'bg-emerald-50 dark:bg-emerald-950/50 border border-emerald-500/50 text-emerald-700 dark:text-emerald-300 shadow-2xs'
+                          : 'bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-800 dark:text-slate-200'
+                      }`}
+                      title="Save workflow to server registry (Ctrl+S)"
                     >
                       <Save className="w-3 h-3 text-emerald-600" />
                       <span>Save Flow</span>
+                      {hasUnsavedChanges && <span className="w-1.5 h-1.5 rounded-full bg-amber-500 shrink-0" />}
                       <span className="text-[9px] font-mono opacity-60 ml-0.5">Ctrl+S</span>
                     </button>
                   </div>
@@ -4849,6 +3971,37 @@ export function WorkflowStudio({
               )}
             </AnimatePresence>
           </div>
+
+          {/* Active / Background Live Toggle Switch */}
+          <button
+            type="button"
+            onClick={handleToggleWorkflowActive}
+            disabled={isExecuting}
+            className={`flex items-center gap-2 px-2.5 py-1 rounded-xl text-xs font-semibold border transition-all cursor-pointer ${
+              isWorkflowActive
+                ? 'bg-emerald-500/10 border-emerald-500/40 text-emerald-700 dark:text-emerald-400 shadow-2xs'
+                : 'bg-slate-100 dark:bg-slate-800/80 border-slate-300 dark:border-slate-700 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
+            }`}
+            title={
+              isWorkflowActive
+                ? 'Workflow is Live & Active: Listening for cron schedules, incoming webhooks, and messaging triggers'
+                : 'Workflow is Inactive: Click to activate background listening'
+            }
+          >
+            <span
+              className={`w-2 h-2 rounded-full ${
+                isWorkflowActive ? 'bg-emerald-500 animate-pulse' : 'bg-slate-400'
+              }`}
+            />
+            <span className="hidden sm:inline">{isWorkflowActive ? 'Live / Active' : 'Inactive'}</span>
+            <span
+              className={`w-6 h-3.5 rounded-full p-0.5 transition-colors flex items-center ${
+                isWorkflowActive ? 'bg-emerald-500 justify-end' : 'bg-slate-300 dark:bg-slate-600 justify-start'
+              }`}
+            >
+              <span className="w-2.5 h-2.5 rounded-full bg-white shadow-2xs" />
+            </span>
+          </button>
         </div>
 
         {/* Center Canvas Scale & Navigation Controls */}
@@ -5060,12 +4213,24 @@ export function WorkflowStudio({
             )}
           </button>
 
+          {/* Execution History & Telemetry Button */}
+          <button
+            type="button"
+            onClick={() => setIsHistoryPanelOpen(true)}
+            className="px-2.5 py-1.5 rounded-xl text-xs font-medium border bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border-slate-300 dark:border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer active:scale-[0.98]"
+            title="View Workflow Execution History & Telemetry"
+          >
+            <History className="w-3.5 h-3.5 text-cyan-500" />
+            <span className="hidden lg:inline">History</span>
+          </button>
+
           {/* Export JSON */}
           <button
             type="button"
+            disabled={isExecuting}
             onClick={handleExportWorkflowJson}
-            className="hidden sm:flex px-2 py-1.5 rounded-xl text-xs font-medium bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 transition-colors items-center gap-1 cursor-pointer"
-            title="Export Archify Workflow JSON"
+            className="hidden sm:flex px-2 py-1.5 rounded-xl text-xs font-medium bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 transition-colors items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={isExecuting ? 'Execution in progress - Export disabled' : 'Export Archify Workflow JSON'}
           >
             <Download className="w-3.5 h-3.5" />
             <span>Export</span>
@@ -5074,9 +4239,10 @@ export function WorkflowStudio({
           {/* Import JSON */}
           <button
             type="button"
+            disabled={isExecuting}
             onClick={() => fileInputRef.current?.click()}
-            className="hidden sm:flex px-2 py-1.5 rounded-xl text-xs font-medium bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 transition-colors items-center gap-1 cursor-pointer"
-            title="Import Workflow JSON"
+            className="hidden sm:flex px-2 py-1.5 rounded-xl text-xs font-medium bg-white dark:bg-slate-900 text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 border border-slate-300 dark:border-slate-700 transition-colors items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+            title={isExecuting ? 'Execution in progress - Import disabled' : 'Import Workflow JSON'}
           >
             <Upload className="w-3.5 h-3.5" />
             <span>Import</span>
@@ -5096,6 +4262,7 @@ export function WorkflowStudio({
             <button
               type="button"
               onClick={handleStartFlow}
+              title="Manual Canvas Test Run (Immediate verification of graph execution)"
               className="px-3 py-1.5 rounded-xl text-xs font-semibold bg-slate-900 dark:bg-white text-white dark:text-slate-950 hover:opacity-90 shadow-xs flex items-center gap-1.5 transition-all cursor-pointer active:scale-[0.98]"
             >
               <Play className="w-3.5 h-3.5 fill-current" />
@@ -5403,7 +4570,7 @@ export function WorkflowStudio({
               transformOrigin: '0 0'
             }}
           >
-            {/* 1. UiPath-Style Sequence Containers Layer (Grouping, Draggable, Resizable) */}
+            {/* 1. Sequence Containers Layer (Grouping, Draggable, Resizable) */}
             <div className="absolute inset-0 pointer-events-none z-[1]">
               {lanes.map((lane, idx) => {
                 const laneColorKey: SequenceColor = lane.color || (lane.variant === 'exception' ? 'red' : 'blue');
@@ -6126,652 +5293,44 @@ export function WorkflowStudio({
               animate={{ opacity: 1, x: 0 }}
               exit={{ opacity: 0, x: 28 }}
               transition={{ duration: 0.22, ease: [0.16, 1, 0.3, 1] }}
-              className="w-84 h-full border-l border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-md p-3.5 flex flex-col z-20 overflow-y-auto shadow-sm"
+              className="w-92 h-full border-l border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/90 backdrop-blur-md p-3.5 flex flex-col z-20 overflow-y-auto shadow-sm"
             >
               {selectedNode ? (
-                <>
-                  <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
-                <div className="flex items-center gap-2">
-                  <Settings2 className="w-4 h-4 text-slate-600 dark:text-slate-400" />
-                  <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                    Activity & Sequence Properties
-                  </span>
-                </div>
-                <button
-                  type="button"
-                  onClick={handleUnselectNode}
-                  className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 dark:text-slate-400 transition-colors cursor-pointer"
-                  title="Deselect activity and restore overview (Esc)"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
-              </div>
-
-              <div className="py-3 space-y-3.5 text-xs flex-1">
-                {/* Execution Lock Banner */}
-                {isExecuting && (
-                  <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px] flex items-center gap-2">
-                    <Lock className="w-4 h-4 shrink-0 text-amber-600 dark:text-amber-400" />
-                    <span>Workflow is executing in read-only mode. Stop execution to edit parameters.</span>
-                  </div>
-                )}
-
-                {/* Title */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1">
-                    Activity Label
-                  </label>
-                  <input
-                    type="text"
-                    disabled={isExecuting}
-                    value={selectedNode.title}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setNodes((prev) =>
-                        prev.map((n) => (n.id === selectedNode.id ? { ...n, title: val } : n))
-                      );
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 disabled:opacity-50 disabled:cursor-not-allowed text-xs font-semibold text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs"
-                  />
-                </div>
-
-                {/* Activity Guide & Documentation Card */}
-                {selectedCatalogItem && (
-                  <div className="p-3 rounded-2xl bg-cyan-50/70 dark:bg-cyan-950/25 border border-cyan-200/80 dark:border-cyan-800/60 space-y-2">
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-1.5 text-cyan-800 dark:text-cyan-300 font-bold text-[11px]">
-                        <BookOpen className="w-3.5 h-3.5 shrink-0" />
-                        <span>Activity Documentation</span>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => setDetailDocItem(selectedCatalogItem)}
-                        className="text-[10px] text-cyan-700 dark:text-cyan-400 hover:underline font-semibold cursor-pointer flex items-center gap-0.5"
-                        title="Open full documentation modal"
-                      >
-                        <span>Details</span>
-                        <ChevronRight className="w-3 h-3" />
-                      </button>
-                    </div>
-
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="text-[9.5px] font-mono px-1.5 py-0.5 rounded-md bg-white dark:bg-slate-900 border border-cyan-300 dark:border-cyan-700/60 text-cyan-800 dark:text-cyan-300 font-semibold">
-                        {selectedCatalogItem.doc.role}
-                      </span>
-                      <span className="text-[9.5px] font-mono px-1.5 py-0.5 rounded-md bg-slate-200/70 dark:bg-slate-800 text-slate-700 dark:text-slate-300">
-                        Lane: {selectedNode.lane}
-                      </span>
-                    </div>
-
-                    <p className="text-[11px] leading-relaxed text-slate-700 dark:text-slate-300">
-                      {selectedCatalogItem.doc.description}
-                    </p>
-
-                    <div className="pt-1.5 border-t border-cyan-200/60 dark:border-cyan-800/40 text-[10px] text-slate-600 dark:text-slate-400 space-y-1">
-                      <p>
-                        <strong className="text-slate-800 dark:text-slate-200">Inputs:</strong>{' '}
-                        {selectedCatalogItem.doc.inputs.join(', ')}
-                      </p>
-                      <p>
-                        <strong className="text-slate-800 dark:text-slate-200">Outputs:</strong>{' '}
-                        {selectedCatalogItem.doc.outputs.join(', ')}
-                      </p>
-                    </div>
-                  </div>
-                )}
-
-                {/* AI Model Selection Dropdown (Available for EVERY activity) */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                      AI Model ({currentBackend})
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => fetchModelsFromApi(currentBackend)}
-                      className="text-[9.5px] font-mono text-cyan-600 dark:text-cyan-400 hover:underline flex items-center gap-0.5 cursor-pointer"
-                      title="Reload models from API"
-                    >
-                      <RefreshCw className={`w-2.5 h-2.5 ${isLoadingModels ? 'animate-spin' : ''}`} />
-                      <span>Refresh</span>
-                    </button>
-                  </div>
-
-                  <select
-                    value={isCustomModelActive ? '__custom__' : selectedNode.config.model || config?.default_model || 'auto'}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      if (val === '__custom__') {
-                        setIsCustomModelActive(true);
-                      } else {
-                        setIsCustomModelActive(false);
-                        setNodes((prev) =>
-                          prev.map((n) =>
-                            n.id === selectedNode.id
-                              ? { ...n, config: { ...n.config, model: val } }
-                              : n
-                          )
-                        );
-                      }
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                  >
-                    {apiModels.length === 0 ? (
-                      <option value="" disabled>
-                        {isLoadingModels ? 'Loading models from API...' : `No models found on ${currentBackend}`}
-                      </option>
-                    ) : (
-                      <optgroup label={`Models discovered on ${currentBackend}`}>
-                        {apiModels.map((m) => (
-                          <option key={m.id} value={m.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                            {m.id} ({m.provider || currentBackend})
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {selectedNode.config.model && !apiModels.some((m) => m.id === selectedNode.config.model) && !isCustomModelActive && (
-                      <option value={selectedNode.config.model} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                        {selectedNode.config.model} (Custom assigned)
-                      </option>
-                    )}
-                    <option value="__custom__" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 font-sans">
-                      ✏️ Custom model name...
-                    </option>
-                  </select>
-
-                  {isCustomModelActive && (
-                    <div className="mt-2">
-                      <input
-                        type="text"
-                        placeholder="e.g. nemotron3-super or custom-model"
-                        value={selectedNode.config.model || ''}
-                        onChange={(e) => {
-                          const val = e.target.value;
-                          setNodes((prev) =>
-                            prev.map((n) =>
-                              n.id === selectedNode.id
-                                ? { ...n, config: { ...n.config, model: val } }
-                                : n
-                            )
-                          );
-                        }}
-                        className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs"
-                        autoFocus
-                      />
-                    </div>
-                  )}
-                </div>
-
-                {/* Target Workspace Selector */}
-                <div>
-                  <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1">
-                    Target Workspace
-                  </label>
-                  <select
-                    value={selectedNode.config.workspace || activeWorkspace || 'default'}
-                    onChange={(e) => {
-                      const val = e.target.value;
-                      setNodes((prev) =>
-                        prev.map((n) =>
-                          n.id === selectedNode.id
-                            ? { ...n, config: { ...n.config, workspace: val } }
-                            : n
-                        )
-                      );
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 text-xs font-mono focus:outline-none focus:border-cyan-500 shadow-2xs"
-                  >
-                    {workspaceList.map((ws) => (
-                      <option key={ws.name} value={ws.name} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                        {ws.name}
-                      </option>
-                    ))}
-                    {!workspaceList.some((w) => w.name === 'default') && (
-                      <option value="default" className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                        default
-                      </option>
-                    )}
-                  </select>
-                </div>
-
-                {/* Swimlane Association & Snap to Center */}
-                <div>
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400">
-                      Swimlane Association
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => handleSnapNodeToLaneCenter(selectedNode.id)}
-                      className="text-[9.5px] font-medium text-cyan-600 dark:text-cyan-400 hover:underline cursor-pointer"
-                    >
-                      Snap to Center
-                    </button>
-                  </div>
-                  <select
-                    value={selectedNode.lane}
-                    onChange={(e) => {
-                      const lId = e.target.value;
-                      const laneCfg = lanes.find((cfg) => cfg.id === lId) || lanes[0];
-                      setNodes((prev) =>
-                        prev.map((n) =>
-                          n.id === selectedNode.id
-                            ? {
-                              ...n,
-                              lane: lId,
-                              y: Math.round(laneCfg.y + (laneCfg.height - NODE_HEIGHT) / 2)
-                            }
-                            : n
-                        )
-                      );
-                    }}
-                    className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100 border border-slate-300 dark:border-slate-700 text-xs focus:outline-none focus:border-cyan-500 shadow-2xs"
-                  >
-                    {lanes.map((l) => (
-                      <option key={l.id} value={l.id} className="bg-white dark:bg-slate-900 text-slate-900 dark:text-slate-100">
-                        {l.num} / {l.label}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                {/* Activity Sequence Section */}
-                <div className="pt-2 border-t border-slate-200 dark:border-slate-800">
-                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1.5">
-                    Activity Sequence & Dependencies
-                  </span>
-
-                  {/* Outgoing Next Steps */}
-                  <div className="space-y-1.5 mb-2">
-                    <p className="text-[10px] text-slate-500 dark:text-slate-400 font-medium">Next Steps (Outgoing):</p>
-                    {edges.filter((e) => e.from === selectedNode.id).length === 0 ? (
-                      <p className="text-[10px] italic text-slate-400">No outgoing sequence connections</p>
-                    ) : (
-                      edges
-                        .filter((e) => e.from === selectedNode.id)
-                        .map((edge) => {
-                          const target = nodes.find((n) => n.id === edge.to);
-                          return (
-                            <div
-                              key={edge.id}
-                              className="p-1.5 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-between text-[11px]"
-                            >
-                              <div className="min-w-0">
-                                <span className="font-semibold text-slate-900 dark:text-slate-100 truncate block">
-                                  → {target?.title || edge.to}
-                                </span>
-                                <span className="text-[9.5px] font-mono text-cyan-600 dark:text-cyan-400">
-                                  label: &quot;{edge.label || 'next'}&quot;
-                                </span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => handleDeleteEdge(edge.id)}
-                                className="p-1 rounded text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
-                                title="Remove connection"
-                              >
-                                <Trash2 className="w-3 h-3" />
-                              </button>
-                            </div>
-                          );
-                        })
-                    )}
-                  </div>
-
-                  {/* Add Next Step Dropdown */}
-                  <div>
-                    <select
-                      value=""
-                      onChange={(e) => {
-                        if (e.target.value) {
-                          handleAddEdge(selectedNode.id, e.target.value);
-                        }
-                      }}
-                      className="w-full px-2.5 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-xs font-semibold text-slate-700 dark:text-slate-200 cursor-pointer focus:outline-none"
-                    >
-                      <option value="">+ Connect to Next Activity...</option>
-                      {nodes
-                        .filter((n) => n.id !== selectedNode.id && !edges.some((e) => e.from === selectedNode.id && e.to === n.id))
-                        .map((n) => (
-                          <option key={n.id} value={n.id}>
-                            → {n.title} ({n.lane})
-                          </option>
-                        ))}
-                    </select>
-                  </div>
-                </div>
-
-                {/* Dynamic Activity Parameters & Configuration */}
-                {selectedCatalogItem?.doc?.configFields && selectedCatalogItem.doc.configFields.length > 0 ? (
-                  <div className="pt-2 border-t border-slate-200 dark:border-slate-800 space-y-3">
-                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block">
-                      Activity Parameters & Configuration
-                    </span>
-                    {selectedCatalogItem.doc.configFields.map((field) => {
-                      const paramKey = field.param;
-                      const rawVal = selectedNode.config?.[paramKey];
-                      const currentVal = rawVal !== undefined ? rawVal : field.defaultValue;
-                      const isNumeric =
-                        typeof field.defaultValue === 'number' ||
-                        (!isNaN(Number(field.defaultValue)) && typeof field.defaultValue !== 'boolean');
-                      const isLongText = paramKey === 'query' || paramKey === 'directive' || paramKey === 'prompt';
-                      const isPlatform = paramKey === 'platform';
-                      const isStrategy = paramKey === 'strategy';
-                      const isJoinStrategy = paramKey === 'join_strategy';
-                      const isScope = paramKey === 'scope';
-                      const isMode = paramKey === 'mode';
-                      const isPolicy = paramKey === 'policy';
-                      const isFormat = paramKey === 'format';
-
-                      return (
-                        <div key={paramKey} className="space-y-1">
-                          <div className="flex items-center justify-between">
-                            <label className="text-[10px] font-semibold text-slate-700 dark:text-slate-300">
-                              {paramKey}
-                            </label>
-                            {field.defaultValue !== undefined && (
-                              <span className="text-[9px] font-mono text-slate-400">
-                                default: {String(field.defaultValue)}
-                              </span>
-                            )}
-                          </div>
-                          <p className="text-[9.5px] text-slate-500 dark:text-slate-400 leading-tight">
-                            {field.desc}
-                          </p>
-
-                          {isLongText ? (
-                            <textarea
-                              rows={3}
-                              disabled={isExecuting}
-                              value={currentVal !== undefined ? String(currentVal) : ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 resize-none shadow-2xs disabled:opacity-50"
-                            />
-                          ) : isPlatform ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'telegram')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="telegram">Telegram Bot</option>
-                              <option value="whatsapp">WhatsApp Bridge</option>
-                              <option value="discord">Discord Webhook</option>
-                            </select>
-                          ) : isStrategy ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'hierarchical')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="hierarchical">Hierarchical (Coordinator &rarr; Specialists)</option>
-                              <option value="sequential">Sequential (Linear Pipeline)</option>
-                              <option value="dynamic">Dynamic (Autonomous Router)</option>
-                            </select>
-                          ) : isJoinStrategy ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'all_completed')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="all_completed">Wait for all parallel tasks</option>
-                              <option value="first_success">First success response</option>
-                            </select>
-                          ) : isScope ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'workspace')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="workspace">Workspace scoped</option>
-                              <option value="global">Global scoped</option>
-                            </select>
-                          ) : isMode ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'read_write')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="read_write">Read & Write</option>
-                              <option value="read">Read Only</option>
-                              <option value="write">Write Only</option>
-                            </select>
-                          ) : isPolicy ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'ask')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="ask">Ask for confirmation (Human-in-the-Loop)</option>
-                              <option value="auto">Auto-approve (Autonomous)</option>
-                            </select>
-                          ) : isFormat ? (
-                            <select
-                              disabled={isExecuting}
-                              value={String(currentVal || 'markdown')}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs cursor-pointer"
-                            >
-                              <option value="markdown">Markdown (.md)</option>
-                              <option value="json">JSON structured (.json)</option>
-                              <option value="html">HTML web view (.html)</option>
-                              <option value="chat">Direct Chat</option>
-                            </select>
-                          ) : isNumeric ? (
-                            <input
-                              type="number"
-                              disabled={isExecuting}
-                              value={currentVal !== undefined ? Number(currentVal) : 0}
-                              onChange={(e) => {
-                                const num = parseFloat(e.target.value) || 0;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: num } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs disabled:opacity-50"
-                            />
-                          ) : Array.isArray(currentVal) ? (
-                            <div className="space-y-1">
-                              <input
-                                type="text"
-                                disabled={isExecuting}
-                                value={currentVal.join(', ')}
-                                onChange={(e) => {
-                                  const arr = e.target.value
-                                    .split(',')
-                                    .map((s) => s.trim())
-                                    .filter(Boolean);
-                                  setNodes((prev) =>
-                                    prev.map((n) =>
-                                      n.id === selectedNode.id
-                                        ? { ...n, config: { ...n.config, [paramKey]: arr } }
-                                        : n
-                                    )
-                                  );
-                                }}
-                                className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs font-mono text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs disabled:opacity-50"
-                                placeholder="item1, item2, item3"
-                              />
-                              <div className="flex flex-wrap gap-1">
-                                {currentVal.map((item: string, idx: number) => (
-                                  <span
-                                    key={idx}
-                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300"
-                                  >
-                                    {item}
-                                  </span>
-                                ))}
-                              </div>
-                            </div>
-                          ) : (
-                            <input
-                              type="text"
-                              disabled={isExecuting}
-                              value={currentVal !== undefined ? String(currentVal) : ''}
-                              onChange={(e) => {
-                                const val = e.target.value;
-                                setNodes((prev) =>
-                                  prev.map((n) =>
-                                    n.id === selectedNode.id
-                                      ? { ...n, config: { ...n.config, [paramKey]: val } }
-                                      : n
-                                  )
-                                );
-                              }}
-                              className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 shadow-2xs disabled:opacity-50"
-                              placeholder={String(field.defaultValue || '')}
-                            />
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <>
-                    {/* Fallback for nodes without catalog configFields */}
-                    {selectedNode.config.query !== undefined && (
-                      <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1">
-                          Objective Task Prompt
-                        </label>
-                        <textarea
-                          rows={3}
-                          value={selectedNode.config.query}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setNodes((prev) =>
-                              prev.map((n) =>
-                                n.id === selectedNode.id
-                                  ? { ...n, config: { ...n.config, query: val } }
-                                  : n
-                              )
-                            );
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 resize-none shadow-2xs"
-                        />
-                      </div>
-                    )}
-
-                    {selectedNode.config.directive !== undefined && (
-                      <div>
-                        <label className="text-[10px] font-bold uppercase tracking-wider text-slate-600 dark:text-slate-400 block mb-1">
-                          Directive Strategy
-                        </label>
-                        <textarea
-                          rows={3}
-                          value={selectedNode.config.directive}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setNodes((prev) =>
-                              prev.map((n) =>
-                                n.id === selectedNode.id
-                                  ? { ...n, config: { ...n.config, directive: val } }
-                                  : n
-                              )
-                            );
-                          }}
-                          className="w-full px-2.5 py-1.5 rounded-xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-700 text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:border-cyan-500 resize-none shadow-2xs"
-                        />
-                      </div>
-                    )}
-                  </>
-                )}
-
-                <div className="pt-2">
-                  <button
-                    type="button"
-                    disabled={isExecuting}
-                    onClick={() => handleRequestDeleteNode(selectedNode)}
-                    className="w-full py-2 px-3 rounded-xl border border-red-500/30 text-red-600 dark:text-red-400 hover:bg-red-500/10 disabled:opacity-40 disabled:cursor-not-allowed text-xs font-semibold transition-colors flex items-center justify-center gap-1.5 cursor-pointer active:scale-[0.98]"
-                  >
-                    <Trash2 className="w-3.5 h-3.5" />
-                    <span>Delete Activity Node</span>
-                  </button>
-                </div>
-              </div>
-            </>
-          ) : selectedEdge ? (
+                <ActivityPropertiesPanel
+                  node={selectedNode}
+                  nodes={nodes}
+                  edges={edges}
+                  lanes={lanes}
+                  isExecuting={isExecuting}
+                  apiModels={apiModels}
+                  isLoadingModels={isLoadingModels}
+                  currentBackend={currentBackend}
+                  workspaceList={workspaceList}
+                  activeWorkspace={activeWorkspace}
+                  onUpdateProperties={handleUpdateNodeProperties}
+                  onUpdateNodeTitle={(id, title) => {
+                    setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, title } : n)));
+                  }}
+                  onUpdateNodeLane={(id, laneId) => {
+                    const laneCfg = lanes.find((l) => l.id === laneId) || lanes[0];
+                    setNodes((prev) =>
+                      prev.map((n) =>
+                        n.id === id
+                          ? { ...n, lane: laneId, y: Math.round(laneCfg.y + (laneCfg.height - NODE_HEIGHT) / 2) }
+                          : n
+                      )
+                    );
+                  }}
+                  onSnapLane={handleSnapNodeToLaneCenter}
+                  onRequestDeleteNode={handleRequestDeleteNode}
+                  onFetchModels={fetchModelsFromApi}
+                  onClose={handleUnselectNode}
+                  onOpenDocs={(cat) => setDetailDocItem(cat)}
+                  catalogItem={selectedCatalogItem}
+                  onAddEdge={handleAddEdge}
+                  onDeleteEdge={handleDeleteEdge}
+                />
+              ) : selectedEdge ? (
                 <div className="space-y-3.5 text-xs flex-1">
                   <div className="flex items-center justify-between pb-3 border-b border-slate-200 dark:border-slate-800">
                     <div className="flex items-center gap-2">
@@ -7392,7 +5951,96 @@ export function WorkflowStudio({
         )}
       </AnimatePresence>
 
-      {/* Sequence Group Add / Edit Modal (UiPath Style) */}
+      {/* Unsaved Changes Confirmation Modal */}
+      <AnimatePresence>
+        {isUnsavedConfirmModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs">
+            <motion.div
+              initial={{ scale: 0.95, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              exit={{ scale: 0.95, opacity: 0 }}
+              className="w-full max-w-md rounded-2xl bg-white dark:bg-slate-900 border border-slate-300 dark:border-slate-800 p-5 shadow-2xl space-y-4"
+            >
+              <div className="flex items-center justify-between pb-2 border-b border-slate-200 dark:border-slate-800">
+                <div className="flex items-center gap-2">
+                  <div className="p-1 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                    <AlertTriangle className="w-4 h-4" />
+                  </div>
+                  <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                    Unsaved Changes Detected
+                  </h3>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUnsavedConfirmModalOpen(false);
+                    setPendingNavigationAction(null);
+                  }}
+                  className="p-1 rounded-lg hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                >
+                  <X className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="space-y-2 text-xs text-slate-600 dark:text-slate-300">
+                <p>
+                  You have unsaved modifications in <span className="font-semibold text-slate-900 dark:text-slate-100">&quot;{activeWorkflowTitle}&quot;</span>.
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                  {unsavedModalReason === 'leave'
+                    ? 'Navigating back to Chat will discard your unsaved canvas changes.'
+                    : 'Switching or resetting workflows will discard your unsaved canvas changes.'}
+                </p>
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUnsavedConfirmModalOpen(false);
+                    setPendingNavigationAction(null);
+                  }}
+                  className="px-3 py-1.5 rounded-xl border border-slate-300 dark:border-slate-700 text-xs font-medium text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsUnsavedConfirmModalOpen(false);
+                    if (pendingNavigationAction) {
+                      const action = pendingNavigationAction;
+                      setPendingNavigationAction(null);
+                      action();
+                    }
+                  }}
+                  className="px-3.5 py-1.5 rounded-xl border border-rose-500/30 bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-semibold cursor-pointer"
+                >
+                  Discard &amp; Continue
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    handleSaveWorkflowAction();
+                    setIsUnsavedConfirmModalOpen(false);
+                    if (pendingNavigationAction) {
+                      const action = pendingNavigationAction;
+                      setPendingNavigationAction(null);
+                      action();
+                    }
+                  }}
+                  className="px-4 py-1.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white text-xs font-semibold shadow-xs cursor-pointer flex items-center gap-1.5"
+                >
+                  <Save className="w-3.5 h-3.5" />
+                  <span>Save &amp; Continue</span>
+                </button>
+              </div>
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+
+      {/* Sequence Group Add / Edit Modal */}
       <AnimatePresence>
         {sequenceModal.isOpen && (
           <div
@@ -7782,6 +6430,14 @@ export function WorkflowStudio({
         }}
         isSyncing={isConfigSyncing}
         onRefreshModels={onRefreshModels}
+      />
+
+      {/* Workflow Execution History & Telemetry Slide-over Drawer */}
+      <WorkflowHistoryPanel
+        isOpen={isHistoryPanelOpen}
+        onClose={() => setIsHistoryPanelOpen(false)}
+        activeWorkflowId={activeWorkflowId}
+        activeWorkflowTitle={activeWorkflowTitle}
       />
     </div>
   );
